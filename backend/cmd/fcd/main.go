@@ -11,6 +11,7 @@ import (
 
 	"file-converter/backend/internal/engine"
 	"file-converter/backend/internal/jobs"
+	"file-converter/backend/internal/registry"
 	"file-converter/backend/internal/server"
 	"file-converter/backend/internal/transport"
 )
@@ -36,10 +37,11 @@ func main() {
 	defer cleanup()
 	imageEngine := engine.NewImageMagick(nil)
 	enginePath, _ := imageEngine.Available()
-	// The engine is created once and shared so executable discovery is cached.
-	manager := jobs.NewManager(imageEngine)
+	engines := registry.New()
+	engines.Register(imageEngine)
+	manager := jobs.NewManagerWithRegistry(engines)
 	defer manager.Close()
-	srv := server.New(server.Dependencies{Jobs: manager, Engine: enginePath, Version: "0.1.0"})
+	srv := server.New(server.Dependencies{Jobs: manager, Registry: engines, Engine: enginePath, Version: "0.1.0"})
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	go func() { <-stop; _ = listener.Close() }()

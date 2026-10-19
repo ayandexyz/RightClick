@@ -22,6 +22,16 @@ type ImageMagick struct {
 
 func NewImageMagick(runner Runner) *ImageMagick { return &ImageMagick{runner: runner} }
 
+func (e *ImageMagick) ID() string { return "imagemagick" }
+
+func (e *ImageMagick) Supports(source, target formats.Format) bool {
+	return isImageFormat(source) && isImageFormat(target)
+}
+
+func isImageFormat(format formats.Format) bool {
+	return format == formats.PNG || format == formats.JPEG || format == formats.WebP
+}
+
 func (e *ImageMagick) Available() (string, error) {
 	if e.executable != "" {
 		return e.executable, nil

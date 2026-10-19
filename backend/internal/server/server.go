@@ -11,12 +11,14 @@ import (
 	"file-converter/backend/internal/formats"
 	"file-converter/backend/internal/jobs"
 	"file-converter/backend/internal/protocol"
+	"file-converter/backend/internal/registry"
 )
 
 type Dependencies struct {
-	Jobs    *jobs.Manager
-	Engine  string
-	Version string
+	Jobs     *jobs.Manager
+	Registry *registry.Registry
+	Engine   string
+	Version  string
 }
 
 type Server struct {
@@ -104,7 +106,11 @@ func (s *Server) handle(conn net.Conn) {
 		}
 		switch req.Method {
 		case "hello":
-			if write(protocol.Response{ID: req.ID, Result: map[string]any{"server": "fcd", "version": s.deps.Version, "protocol": 1, "engines": []map[string]any{{"id": "imagemagick", "available": s.deps.Engine != ""}}}}) != nil {
+			engines := []map[string]any{{"id": "imagemagick", "available": s.deps.Engine != ""}}
+			if s.deps.Registry != nil {
+				engines = s.deps.Registry.Status()
+			}
+			if write(protocol.Response{ID: req.ID, Result: map[string]any{"server": "fcd", "version": s.deps.Version, "protocol": 1, "engines": engines}}) != nil {
 				return
 			}
 		case "targets":
@@ -117,7 +123,13 @@ func (s *Server) handle(conn net.Conn) {
 				}
 				continue
 			}
-			targets, err := formats.Targets(p.Files)
+			var targets []protocol.Target
+			var err error
+			if s.deps.Registry != nil {
+				targets, err = s.deps.Registry.TargetsForFiles(p.Files)
+			} else {
+				targets, err = formats.Targets(p.Files)
+			}
 			if err != nil {
 				if writeError(write, req.ID, "unsupported", err.Error()) != nil {
 					return
