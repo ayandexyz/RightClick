@@ -28,8 +28,8 @@ type ErrorValue struct {
 
 // Event is a server-to-client event with no id.
 type Event struct {
-	Event string      `json:"event"`
-	Data  interface{} `json:"data"`
+	Name string      `json:"event"`
+	Data interface{} `json:"data"`
 }
 
 // Target represents a conversion target returned by the targets method.

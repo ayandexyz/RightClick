@@ -12,6 +12,7 @@ func TestValidateRequest(t *testing.T) {
 		req      *Request
 		wantCode string
 		wantMsg  string
+		wantNil  bool
 	}{
 		{
 			name: "valid hello",
@@ -23,7 +24,7 @@ func TestValidateRequest(t *testing.T) {
 					"protocol": 1,
 				}),
 			},
-			wantCode: "",
+			wantNil: true,
 		},
 		{
 			name: "hello missing client",
@@ -59,7 +60,7 @@ func TestValidateRequest(t *testing.T) {
 					"files": []string{absolutePath("/tmp/test.png")},
 				}),
 			},
-			wantCode: "",
+			wantNil: true,
 		},
 		{
 			name: "targets empty files",
@@ -95,7 +96,7 @@ func TestValidateRequest(t *testing.T) {
 					"preset": "jpg",
 				}),
 			},
-			wantCode: "",
+			wantNil: true,
 		},
 		{
 			name: "convert missing preset",
@@ -147,7 +148,7 @@ func TestValidateRequest(t *testing.T) {
 					"on_conflict": "rename",
 				}),
 			},
-			wantCode: "",
+			wantNil: true,
 		},
 		{
 			name: "convert relative output_dir",
@@ -172,7 +173,7 @@ func TestValidateRequest(t *testing.T) {
 					"job": "job-123",
 				}),
 			},
-			wantCode: "",
+			wantNil: true,
 		},
 		{
 			name: "cancel missing job",
@@ -191,7 +192,7 @@ func TestValidateRequest(t *testing.T) {
 				Method: "jobs",
 				Params: json.RawMessage(`{}`),
 			},
-			wantCode: "",
+			wantNil: true,
 		},
 		{
 			name: "valid subscribe request",
@@ -200,7 +201,7 @@ func TestValidateRequest(t *testing.T) {
 				Method: "subscribe",
 				Params: json.RawMessage(`{}`),
 			},
-			wantCode: "",
+			wantNil: true,
 		},
 		{
 			name: "unknown method",
@@ -226,14 +227,21 @@ func TestValidateRequest(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			code, msg := ValidateRequest(tt.req)
-			if code != tt.wantCode {
-				t.Errorf("ValidateRequest() code = %q, want %q", code, tt.wantCode)
-			}
-			if tt.wantMsg != "" && msg != tt.wantMsg {
-				if !contains(msg, tt.wantMsg) {
-					t.Errorf("ValidateRequest() msg = %q, want to contain %q", msg, tt.wantMsg)
+			err := ValidateRequest(tt.req)
+			if tt.wantNil {
+				if err != nil {
+					t.Errorf("ValidateRequest() = %+v, want nil", err)
 				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("ValidateRequest() = nil, want error with code %q", tt.wantCode)
+			}
+			if err.Error.Code != tt.wantCode {
+				t.Errorf("ValidateRequest() code = %q, want %q", err.Error.Code, tt.wantCode)
+			}
+			if tt.wantMsg != "" && !contains(err.Error.Message, tt.wantMsg) {
+				t.Errorf("ValidateRequest() msg = %q, want to contain %q", err.Error.Message, tt.wantMsg)
 			}
 		})
 	}
@@ -245,13 +253,23 @@ func TestSupportedPresets(t *testing.T) {
 		t.Error("SupportedPresets() returned empty list")
 	}
 
-	// Check that common formats are present
+	// Check that common formats are present and have proper Target structure
 	required := []string{"png", "jpg", "pdf", "mp4", "mp3"}
 	for _, r := range required {
 		found := false
 		for _, p := range presets {
-			if p == r {
+			if p.Preset == r {
 				found = true
+				// Verify Target fields are populated
+				if p.Label == "" {
+					t.Errorf("preset %q has empty Label", r)
+				}
+				if p.Format == "" {
+					t.Errorf("preset %q has empty Format", r)
+				}
+				if p.Category == "" {
+					t.Errorf("preset %q has empty Category", r)
+				}
 				break
 			}
 		}

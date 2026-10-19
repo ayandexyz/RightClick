@@ -90,7 +90,7 @@ func TestEncodeMessage(t *testing.T) {
 		{
 			name: "event",
 			msg: Event{
-				Event: "job.updated",
+				Name: "job.updated",
 				Data: map[string]string{
 					"id": "job-123",
 				},
