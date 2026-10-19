@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"file-converter/backend/internal/formats"
 	"file-converter/backend/internal/protocol"
@@ -67,7 +68,21 @@ func (e *ImageMagick) Convert(ctx context.Context, source string, sourceFormat f
 	if e.runner != nil {
 		return e.runner(ctx, executable, args)
 	}
-	return exec.CommandContext(ctx, executable, args...).Run()
+	cmd := exec.Command(executable, args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	wait := make(chan error, 1)
+	go func() { wait <- cmd.Wait() }()
+	select {
+	case err := <-wait:
+		return err
+	case <-ctx.Done():
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		<-wait
+		return ctx.Err()
+	}
 }
 
 type OutputPlan struct {
