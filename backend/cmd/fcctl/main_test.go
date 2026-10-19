@@ -31,3 +31,11 @@ func TestFormatEventHumanReadable(t *testing.T) {
 		t.Fatalf("unexpected output: %q", line)
 	}
 }
+
+func TestFormatFailedEventIncludesPerFileError(t *testing.T) {
+	message := wireEvent{Event: "job.finished", Data: jobData{ID: "job-1", State: "failed", Files: []fileData{{Source: "/tmp/missing.png", State: "failed", Error: &fileError{Code: "unsupported", Message: "file not found"}}}}}
+	line := formatHumanEvent(message)
+	if !strings.Contains(line, "file not found") || !strings.Contains(line, "/tmp/missing.png") {
+		t.Fatalf("unexpected output: %q", line)
+	}
+}

@@ -30,9 +30,21 @@ type wireEvent struct {
 }
 
 type jobData struct {
-	ID       string  `json:"id"`
-	State    string  `json:"state"`
-	Progress float64 `json:"progress"`
+	ID       string     `json:"id"`
+	State    string     `json:"state"`
+	Progress float64    `json:"progress"`
+	Files    []fileData `json:"files"`
+}
+
+type fileData struct {
+	Source string     `json:"source"`
+	State  string     `json:"state"`
+	Error  *fileError `json:"error,omitempty"`
+}
+
+type fileError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
 }
 
 func socketPath() (string, error) {
@@ -230,7 +242,13 @@ func formatHumanEvent(message wireEvent) string {
 	if message.Event == "job.updated" {
 		return fmt.Sprintf("job %s %s: %.0f%%", message.Data.ID, message.Data.State, message.Data.Progress*100)
 	}
-	return fmt.Sprintf("job %s %s", message.Data.ID, message.Data.State)
+	line := fmt.Sprintf("job %s %s", message.Data.ID, message.Data.State)
+	for _, file := range message.Data.Files {
+		if file.Error != nil {
+			line += fmt.Sprintf("\n  %s: %s", file.Source, file.Error.Message)
+		}
+	}
+	return line
 }
 
 func raw(value any) json.RawMessage { data, _ := json.Marshal(value); return data }

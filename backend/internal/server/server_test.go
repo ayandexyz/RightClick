@@ -217,6 +217,14 @@ func TestServerRejectsMalformedAndInvalidRequests(t *testing.T) {
 	if unsupported["error"] == nil {
 		t.Fatal("expected unsupported preset error")
 	}
+	missing := sendRequest(t, conn, protocol.Request{ID: 4, Method: "convert", Params: json.RawMessage(`{"files":["/tmp/missing.png"],"preset":"image-to-jpeg"}`)})
+	if errorValue, ok := missing["error"].(map[string]any); !ok || errorValue["code"] != "bad_request" {
+		t.Fatalf("expected stable bad_request for missing input: %#v", missing)
+	}
+	unsafe := sendRequest(t, conn, protocol.Request{ID: 5, Method: "convert", Params: json.RawMessage(`{"files":["/tmp/we[0].png"],"preset":"image-to-jpeg"}`)})
+	if errorValue, ok := unsafe["error"].(map[string]any); !ok || errorValue["code"] != "bad_request" {
+		t.Fatalf("expected stable bad_request for unsafe input: %#v", unsafe)
+	}
 }
 
 func TestServerIdleShutdown(t *testing.T) {

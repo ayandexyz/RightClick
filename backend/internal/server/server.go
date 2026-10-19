@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -157,7 +158,11 @@ func (s *Server) handle(conn net.Conn) {
 			}
 			id, err := s.deps.Jobs.Submit(jobs.SubmitRequest{Files: p.Files, Preset: p.Preset, OutputDir: p.OutputDir, Conflict: protocol.ConflictPolicy(p.Conflict), Events: writeEvent(write)})
 			if err != nil {
-				if writeError(write, req.ID, "unsupported", err.Error()) != nil {
+				code := "unsupported"
+				if errors.Is(err, formats.ErrInvalidInput) {
+					code = "bad_request"
+				}
+				if writeError(write, req.ID, code, err.Error()) != nil {
 					return
 				}
 				continue

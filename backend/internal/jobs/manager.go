@@ -73,6 +73,11 @@ func (m *Manager) Submit(req SubmitRequest) (string, error) {
 	if len(req.Files) == 0 {
 		return "", fmt.Errorf("no files")
 	}
+	for _, file := range req.Files {
+		if err := formats.ValidateInput(file); err != nil {
+			return "", err
+		}
+	}
 	targetPreset := req.Preset
 	switch targetPreset {
 	case "png":

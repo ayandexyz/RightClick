@@ -18,6 +18,36 @@ const (
 )
 
 var ErrUnsupported = errors.New("unsupported image format")
+var ErrInvalidInput = errors.New("invalid input file")
+
+func ValidateInput(path string) error {
+	if !filepath.IsAbs(path) || unsafeInputBase(filepath.Base(path)) {
+		return fmt.Errorf("%w: unsafe or non-absolute path", ErrInvalidInput)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidInput, err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("%w: not a regular file", ErrInvalidInput)
+	}
+	return nil
+}
+
+func unsafeInputBase(base string) bool {
+	return filepath.Base(base) != base || containsAny(base, "[]:") || len(base) > 0 && base[0] == '@'
+}
+
+func containsAny(value, chars string) bool {
+	for _, char := range value {
+		for _, forbidden := range chars {
+			if char == forbidden {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 func Detect(path string) (Format, error) {
 	if !filepath.IsAbs(path) {
