@@ -4,6 +4,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -37,6 +38,13 @@ func TestListenReplacesStaleSocketAndSetsPermissions(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = listener.Close()
+}
+
+func TestListenRejectsOverlongSocketPath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), strings.Repeat("a", 100), "fcd.sock")
+	if _, _, err := Listen(path); err == nil || !strings.Contains(err.Error(), "unix socket path is too long") {
+		t.Fatalf("expected clear path length error, got %v", err)
+	}
 }
 
 func TestListenRejectsActiveSocket(t *testing.T) {

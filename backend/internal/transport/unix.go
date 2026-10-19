@@ -17,6 +17,9 @@ func SocketPath() (string, error) {
 }
 
 func PrepareSocket(path string) (func(), error) {
+	if len(path) >= 108 {
+		return nil, fmt.Errorf("unix socket path is too long (%d bytes; maximum is 107)", len(path))
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}

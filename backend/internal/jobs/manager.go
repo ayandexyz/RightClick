@@ -226,7 +226,9 @@ func (m *Manager) run(j *job) {
 	for result := range results {
 		files[result.index] = result.file
 		emitter.files = files
-		emitter.emit("job.updated", false)
+		if j.ctx.Err() == nil {
+			emitter.emit("job.updated", false)
+		}
 	}
 	if j.ctx.Err() != nil {
 		for i := range files {
