@@ -44,22 +44,22 @@ type Target struct {
 
 // Job represents the state of a conversion job.
 type Job struct {
-	ID       string     `json:"id"`
-	Preset   string     `json:"preset"`
-	Label    string     `json:"label"`
-	State    string     `json:"state"`
-	Progress float64    `json:"progress"`
-	Files    []FileJob  `json:"files"`
+	ID       string    `json:"id"`
+	Preset   string    `json:"preset"`
+	Label    string    `json:"label"`
+	State    string    `json:"state"`
+	Progress float64   `json:"progress"`
+	Files    []FileJob `json:"files"`
 }
 
 // FileJob represents the state of a single file in a job.
 type FileJob struct {
-	Source   string      `json:"source"`
-	State    string      `json:"state"`
-	Progress float64     `json:"progress"`
-	Outputs  []string    `json:"outputs"`
-	Error    *FileError  `json:"error,omitempty"`
-	Notice   string      `json:"notice,omitempty"`
+	Source   string     `json:"source"`
+	State    string     `json:"state"`
+	Progress float64    `json:"progress"`
+	Outputs  []string   `json:"outputs"`
+	Error    *FileError `json:"error,omitempty"`
+	Notice   string     `json:"notice,omitempty"`
 }
 
 // FileError represents an error on a single file.

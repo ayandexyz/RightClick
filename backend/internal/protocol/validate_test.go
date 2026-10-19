@@ -9,14 +9,14 @@ import (
 func TestValidateRequest(t *testing.T) {
 	tests := []struct {
 		name     string
-		req      *Request
+		req      Request
 		wantCode string
 		wantMsg  string
 		wantNil  bool
 	}{
 		{
 			name: "valid hello",
-			req: &Request{
+			req: Request{
 				ID:     1,
 				Method: "hello",
 				Params: mustMarshal(map[string]interface{}{
@@ -28,7 +28,7 @@ func TestValidateRequest(t *testing.T) {
 		},
 		{
 			name: "hello missing client",
-			req: &Request{
+			req: Request{
 				ID:     1,
 				Method: "hello",
 				Params: mustMarshal(map[string]interface{}{
@@ -40,7 +40,7 @@ func TestValidateRequest(t *testing.T) {
 		},
 		{
 			name: "hello unsupported protocol",
-			req: &Request{
+			req: Request{
 				ID:     1,
 				Method: "hello",
 				Params: mustMarshal(map[string]interface{}{
@@ -53,7 +53,7 @@ func TestValidateRequest(t *testing.T) {
 		},
 		{
 			name: "valid targets",
-			req: &Request{
+			req: Request{
 				ID:     2,
 				Method: "targets",
 				Params: mustMarshal(map[string]interface{}{
@@ -64,7 +64,7 @@ func TestValidateRequest(t *testing.T) {
 		},
 		{
 			name: "targets empty files",
-			req: &Request{
+			req: Request{
 				ID:     2,
 				Method: "targets",
 				Params: mustMarshal(map[string]interface{}{
@@ -76,7 +76,7 @@ func TestValidateRequest(t *testing.T) {
 		},
 		{
 			name: "targets relative path",
-			req: &Request{
+			req: Request{
 				ID:     2,
 				Method: "targets",
 				Params: mustMarshal(map[string]interface{}{
@@ -88,19 +88,19 @@ func TestValidateRequest(t *testing.T) {
 		},
 		{
 			name: "valid convert",
-			req: &Request{
+			req: Request{
 				ID:     3,
 				Method: "convert",
 				Params: mustMarshal(map[string]interface{}{
 					"files":  []string{absolutePath("/tmp/test.png")},
-					"preset": "jpg",
+					"preset": "image-to-jpeg",
 				}),
 			},
 			wantNil: true,
 		},
 		{
 			name: "convert missing preset",
-			req: &Request{
+			req: Request{
 				ID:     3,
 				Method: "convert",
 				Params: mustMarshal(map[string]interface{}{
@@ -112,7 +112,7 @@ func TestValidateRequest(t *testing.T) {
 		},
 		{
 			name: "convert unsupported preset",
-			req: &Request{
+			req: Request{
 				ID:     3,
 				Method: "convert",
 				Params: mustMarshal(map[string]interface{}{
@@ -125,12 +125,12 @@ func TestValidateRequest(t *testing.T) {
 		},
 		{
 			name: "convert invalid conflict policy",
-			req: &Request{
+			req: Request{
 				ID:     3,
 				Method: "convert",
 				Params: mustMarshal(map[string]interface{}{
 					"files":       []string{absolutePath("/tmp/test.png")},
-					"preset":      "jpg",
+					"preset":      "image-to-jpeg",
 					"on_conflict": "invalid",
 				}),
 			},
@@ -139,12 +139,12 @@ func TestValidateRequest(t *testing.T) {
 		},
 		{
 			name: "convert valid conflict policies",
-			req: &Request{
+			req: Request{
 				ID:     3,
 				Method: "convert",
 				Params: mustMarshal(map[string]interface{}{
 					"files":       []string{absolutePath("/tmp/test.png")},
-					"preset":      "jpg",
+					"preset":      "image-to-jpeg",
 					"on_conflict": "rename",
 				}),
 			},
@@ -152,12 +152,12 @@ func TestValidateRequest(t *testing.T) {
 		},
 		{
 			name: "convert relative output_dir",
-			req: &Request{
+			req: Request{
 				ID:     3,
 				Method: "convert",
 				Params: mustMarshal(map[string]interface{}{
 					"files":      []string{absolutePath("/tmp/test.png")},
-					"preset":     "jpg",
+					"preset":     "image-to-jpeg",
 					"output_dir": "relative/path",
 				}),
 			},
@@ -166,7 +166,7 @@ func TestValidateRequest(t *testing.T) {
 		},
 		{
 			name: "valid cancel",
-			req: &Request{
+			req: Request{
 				ID:     4,
 				Method: "cancel",
 				Params: mustMarshal(map[string]interface{}{
@@ -177,7 +177,7 @@ func TestValidateRequest(t *testing.T) {
 		},
 		{
 			name: "cancel missing job",
-			req: &Request{
+			req: Request{
 				ID:     4,
 				Method: "cancel",
 				Params: mustMarshal(map[string]interface{}{}),
@@ -186,26 +186,8 @@ func TestValidateRequest(t *testing.T) {
 			wantMsg:  "job id is required",
 		},
 		{
-			name: "valid jobs request",
-			req: &Request{
-				ID:     5,
-				Method: "jobs",
-				Params: json.RawMessage(`{}`),
-			},
-			wantNil: true,
-		},
-		{
-			name: "valid subscribe request",
-			req: &Request{
-				ID:     6,
-				Method: "subscribe",
-				Params: json.RawMessage(`{}`),
-			},
-			wantNil: true,
-		},
-		{
 			name: "unknown method",
-			req: &Request{
+			req: Request{
 				ID:     99,
 				Method: "unknown",
 				Params: json.RawMessage(`{}`),
@@ -215,7 +197,7 @@ func TestValidateRequest(t *testing.T) {
 		},
 		{
 			name: "empty method",
-			req: &Request{
+			req: Request{
 				ID:     99,
 				Method: "",
 				Params: json.RawMessage(`{}`),
@@ -254,7 +236,7 @@ func TestSupportedPresets(t *testing.T) {
 	}
 
 	// Check that common formats are present and have proper Target structure
-	required := []string{"png", "jpg", "pdf", "mp4", "mp3"}
+	required := []string{"image-to-png", "image-to-jpeg", "image-to-webp"}
 	for _, r := range required {
 		found := false
 		for _, p := range presets {

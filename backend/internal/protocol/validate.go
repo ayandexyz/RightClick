@@ -7,36 +7,19 @@ import (
 	"strings"
 )
 
-// supportedPresetIDs lists all preset identifiers accepted by the protocol.
-func supportedPresetIDs() []string {
-	return []string{
-		"png", "jpg", "webp", "gif", "pdf", "svg",
-		"mp4", "webm", "mp3", "wav", "zip", "tar.gz",
-	}
+var supportedPresets = []Target{
+	{Preset: "image-to-png", Label: "PNG Image", Format: "png", Category: "image", Enabled: true},
+	{Preset: "image-to-jpeg", Label: "JPEG Image", Format: "jpeg", Category: "image", Enabled: true},
+	{Preset: "image-to-webp", Label: "WebP Image", Format: "webp", Category: "image", Enabled: true},
 }
 
-// SupportedPresets returns the initial set of conversion targets with metadata.
-// This list represents all presets the daemon recognizes, though their availability
-// depends on the conversion engine and input format compatibility.
+// SupportedPresets returns the image conversion targets supported by this slice.
 func SupportedPresets() []Target {
-	return []Target{
-		{Preset: "png", Label: "PNG Image", Format: "png", Category: "image", Enabled: true},
-		{Preset: "jpg", Label: "JPEG Image", Format: "jpeg", Category: "image", Enabled: true},
-		{Preset: "webp", Label: "WebP Image", Format: "webp", Category: "image", Enabled: true},
-		{Preset: "gif", Label: "GIF Image", Format: "gif", Category: "image", Enabled: true},
-		{Preset: "pdf", Label: "PDF Document", Format: "pdf", Category: "document", Enabled: true},
-		{Preset: "svg", Label: "SVG Vector", Format: "svg", Category: "image", Enabled: true},
-		{Preset: "mp4", Label: "MP4 Video", Format: "mp4", Category: "video", Enabled: true},
-		{Preset: "webm", Label: "WebM Video", Format: "webm", Category: "video", Enabled: true},
-		{Preset: "mp3", Label: "MP3 Audio", Format: "mp3", Category: "audio", Enabled: true},
-		{Preset: "wav", Label: "WAV Audio", Format: "wav", Category: "audio", Enabled: true},
-		{Preset: "zip", Label: "ZIP Archive", Format: "zip", Category: "archive", Enabled: true},
-		{Preset: "tar.gz", Label: "Tar GZip Archive", Format: "tar.gz", Category: "archive", Enabled: true},
-	}
+	return append([]Target(nil), supportedPresets...)
 }
 
 // ValidateRequest checks a request for correctness and returns a protocol Error if invalid, or nil if valid.
-func ValidateRequest(req *Request) *Error {
+func ValidateRequest(req Request) *Error {
 	if req.Method == "" {
 		return &Error{
 			ID: req.ID,
@@ -57,9 +40,6 @@ func ValidateRequest(req *Request) *Error {
 		code, msg = validateConvert(req.Params)
 	case "cancel":
 		code, msg = validateCancel(req.Params)
-	case "jobs", "subscribe", "presets", "formats", "shutdown":
-		// These methods accept empty params or no validation needed
-		return nil
 	default:
 		code = "bad_request"
 		msg = fmt.Sprintf("unknown method: %s", req.Method)
@@ -162,8 +142,8 @@ func validateCancel(params json.RawMessage) (string, string) {
 
 func isPresetSupported(preset string) bool {
 	preset = strings.ToLower(preset)
-	for _, id := range supportedPresetIDs() {
-		if preset == id {
+	for _, target := range supportedPresets {
+		if preset == target.Preset {
 			return true
 		}
 	}
