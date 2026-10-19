@@ -61,6 +61,33 @@ func TestPlanOutputConflictPolicies(t *testing.T) {
 	}
 }
 
+func TestWebPCommandUsesFirstFrameInInputSpecifier(t *testing.T) {
+	var gotArgs []string
+	e := NewImageMagick(func(_ context.Context, _ string, args []string) error {
+		gotArgs = args
+		return nil
+	})
+	e.executable = "magick"
+	if err := e.Convert(context.Background(), "/tmp/animation.webp", formats.WebP, "/tmp/out.jpg", formats.JPEG); err != nil {
+		t.Fatal(err)
+	}
+	if len(gotArgs) < 2 {
+		t.Fatalf("missing ImageMagick arguments: %v", gotArgs)
+	}
+	foundInput := false
+	for _, arg := range gotArgs {
+		if arg == "webp:/tmp/animation.webp[0]" {
+			foundInput = true
+		}
+		if arg == "[0]" {
+			t.Fatalf("unexpected standalone frame selector: %v", gotArgs)
+		}
+	}
+	if !foundInput {
+		t.Fatalf("missing first-frame input specifier: %v", gotArgs)
+	}
+}
+
 func TestCommandConstruction(t *testing.T) {
 	var gotExe string
 	var gotArgs []string

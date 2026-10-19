@@ -54,14 +54,14 @@ func (e *ImageMagick) Convert(ctx context.Context, source string, sourceFormat f
 		return fmt.Errorf("unsafe image path")
 	}
 	input := string(sourceFormat) + ":" + source
+	if sourceFormat == formats.WebP {
+		input += "[0]"
+	}
 	args := []string{"-limit", "memory", "512MiB", "-limit", "map", "1GiB", "-limit", "disk", "2GiB", "-limit", "time", "300", input}
 	if target == formats.JPEG {
 		args = append(args, "-auto-orient", "-background", "white", "-alpha", "remove", "-alpha", "off")
 	} else {
 		args = append(args, "-auto-orient")
-	}
-	if sourceFormat == formats.WebP {
-		args = append(args, "[0]")
 	}
 	args = append(args, string(target)+":"+destination)
 	if e.runner != nil {
