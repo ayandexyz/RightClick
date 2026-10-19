@@ -1,0 +1,118 @@
+import importlib.util
+import sys
+import types
+import unittest
+from pathlib import Path
+from unittest import mock
+
+
+class FakeFile:
+    def __init__(self, path, mime="image/png", scheme="file", directory=False):
+        self.path, self.mime = path, mime
+        self.scheme, self.directory = scheme, directory
+
+    def get_uri_scheme(self):
+        return self.scheme
+
+    def is_directory(self):
+        return self.directory
+
+    def get_location(self):
+        return types.SimpleNamespace(get_path=lambda: self.path)
+
+    def get_mime_type(self):
+        return self.mime
+
+
+class Menu:
+    def __init__(self):
+        self.items = []
+
+    def append_item(self, item):
+        self.items.append(item)
+
+
+class MenuItem:
+    def __init__(self, name, label):
+        self.name, self.label = name, label
+        self.callback = None
+        self.submenu = None
+
+    def connect(self, _signal, callback, *args):
+        self.callback = (callback, args)
+
+    def set_submenu(self, submenu):
+        self.submenu = submenu
+
+
+class ExtensionMenuTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        gi = types.ModuleType("gi")
+        setattr(gi, "require_version", lambda *_args: None)
+        repository = types.ModuleType("gi.repository")
+        class FakeGObject:
+            pass
+        class FakeMenuProvider:
+            pass
+        setattr(repository, "GObject", types.SimpleNamespace(GObject=FakeGObject))
+        setattr(repository, "Nautilus", types.SimpleNamespace(Menu=Menu, MenuItem=MenuItem, MenuProvider=FakeMenuProvider))
+        sys.modules["gi"] = gi
+        sys.modules["gi.repository"] = repository
+        path = Path(__file__).parents[1] / "nautilus/file_converter.py"
+        spec = importlib.util.spec_from_file_location("file_converter", path)
+        assert spec is not None and spec.loader is not None
+        cls.module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.module)
+
+    def test_unsupported_selection_has_no_menu(self):
+        provider = self.module.FileConverterMenuProvider()
+        self.assertEqual(provider.get_file_items([FakeFile("/tmp/a.txt", "text/plain")]), [])
+
+    def test_enabled_targets_are_ordered_and_disabled_dropped(self):
+        targets = [
+            types.SimpleNamespace(preset="image-to-webp", label="WebP", enabled=True),
+            types.SimpleNamespace(preset="image-to-png", label="PNG", enabled=False),
+            types.SimpleNamespace(preset="image-to-jpeg", label="JPEG", enabled=True),
+        ]
+        with mock.patch.object(self.module, "FcClient") as client:
+            client.return_value.targets.return_value = targets
+            menu = self.module.FileConverterMenuProvider().get_file_items([FakeFile("/tmp/a.png")])
+        self.assertEqual(menu[0].label, "Convert to")
+        self.assertEqual([item.label for item in menu[0].submenu.items], ["WebP", "JPEG"])
+
+    def test_mixed_selection_has_no_menu_without_socket(self):
+        provider = self.module.FileConverterMenuProvider()
+        files = [FakeFile("/tmp/a.png"), FakeFile("/tmp/a.jpg", "image/jpeg", scheme="smb")]
+        with mock.patch.object(self.module, "FcClient") as client:
+            self.assertEqual(provider.get_file_items(files), [])
+            client.assert_not_called()
+
+    def test_relative_path_has_no_menu(self):
+        provider = self.module.FileConverterMenuProvider()
+        with mock.patch.object(self.module, "FcClient") as client:
+            self.assertEqual(provider.get_file_items([FakeFile("relative.png")]), [])
+            client.assert_not_called()
+
+    def test_completed_with_errors_reports_failed_count(self):
+        with mock.patch.object(self.module, "send") as send:
+            self.module._notify_job({
+                "state": "completed_with_errors",
+                "files": [
+                    {"state": "done"},
+                    {"state": "done"},
+                    {"state": "failed", "error": {"message": "bad image"}},
+                ],
+            })
+        self.assertEqual(send.call_args.args, ("Conversion finished with errors", "2 converted, 1 failed: bad image"))
+
+    def test_daemon_unavailable_uses_recovery_instruction(self):
+        error = self.module.DaemonUnavailable("socket missing")
+        with mock.patch.object(self.module, "FcClient") as client, mock.patch.object(self.module, "send") as send:
+            client.return_value.convert.side_effect = error
+            self.module.FileConverterMenuProvider._convert(["/tmp/a.png"], "image-to-jpeg")
+        self.assertEqual(send.call_args.args, ("File Converter is not running", "Start it with: systemctl --user start fcd"))
+
+
+if __name__ == "__main__":
+    unittest.main()

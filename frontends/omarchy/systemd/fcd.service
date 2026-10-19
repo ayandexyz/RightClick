@@ -1,0 +1,10 @@
+[Unit]
+Description=File Converter daemon
+After=graphical-session.target
+
+[Service]
+ExecStart=%h/.local/bin/fcd serve --idle-exit 0
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
