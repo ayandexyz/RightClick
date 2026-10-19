@@ -3,22 +3,20 @@ package protocol
 import (
 	"bytes"
 	"encoding/json"
-	"io"
-	"strings"
 	"testing"
 )
 
 func TestDecodeRequest(t *testing.T) {
 	tests := []struct {
 		name    string
-		input   string
-		want    *Request
+		input   []byte
+		want    Request
 		wantErr bool
 	}{
 		{
 			name:  "valid hello request",
-			input: `{"id":1,"method":"hello","params":{"client":"test","protocol":1}}` + "\n",
-			want: &Request{
+			input: []byte(`{"id":1,"method":"hello","params":{"client":"test","protocol":1}}`),
+			want: Request{
 				ID:     1,
 				Method: "hello",
 				Params: json.RawMessage(`{"client":"test","protocol":1}`),
@@ -26,8 +24,8 @@ func TestDecodeRequest(t *testing.T) {
 		},
 		{
 			name:  "valid targets request",
-			input: `{"id":2,"method":"targets","params":{"files":["/tmp/test.png"]}}` + "\n",
-			want: &Request{
+			input: []byte(`{"id":2,"method":"targets","params":{"files":["/tmp/test.png"]}}`),
+			want: Request{
 				ID:     2,
 				Method: "targets",
 				Params: json.RawMessage(`{"files":["/tmp/test.png"]}`),
@@ -35,20 +33,14 @@ func TestDecodeRequest(t *testing.T) {
 		},
 		{
 			name:    "invalid json",
-			input:   `{broken json}` + "\n",
-			wantErr: true,
-		},
-		{
-			name:    "empty input",
-			input:   "",
+			input:   []byte(`{broken json}`),
 			wantErr: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := strings.NewReader(tt.input)
-			got, err := DecodeRequest(r)
+			got, err := DecodeRequest(tt.input)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("DecodeRequest() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -66,7 +58,7 @@ func TestEncodeMessage(t *testing.T) {
 	tests := []struct {
 		name string
 		msg  interface{}
-		want string
+		want []byte
 	}{
 		{
 			name: "response",
@@ -74,7 +66,7 @@ func TestEncodeMessage(t *testing.T) {
 				ID:     1,
 				Result: map[string]string{"server": "fcd"},
 			},
-			want: `{"id":1,"result":{"server":"fcd"}}` + "\n",
+			want: []byte(`{"id":1,"result":{"server":"fcd"}}` + "\n"),
 		},
 		{
 			name: "error",
@@ -85,7 +77,7 @@ func TestEncodeMessage(t *testing.T) {
 					Message: "invalid params",
 				},
 			},
-			want: `{"id":2,"error":{"code":"bad_request","message":"invalid params"}}` + "\n",
+			want: []byte(`{"id":2,"error":{"code":"bad_request","message":"invalid params"}}` + "\n"),
 		},
 		{
 			name: "event",
@@ -95,17 +87,17 @@ func TestEncodeMessage(t *testing.T) {
 					"id": "job-123",
 				},
 			},
-			want: `{"event":"job.updated","data":{"id":"job-123"}}` + "\n",
+			want: []byte(`{"event":"job.updated","data":{"id":"job-123"}}` + "\n"),
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var buf bytes.Buffer
-			if err := EncodeMessage(&buf, tt.msg); err != nil {
+			got, err := EncodeMessage(tt.msg)
+			if err != nil {
 				t.Fatalf("EncodeMessage() error = %v", err)
 			}
-			if got := buf.String(); got != tt.want {
+			if !bytes.Equal(got, tt.want) {
 				t.Errorf("EncodeMessage() = %q, want %q", got, tt.want)
 			}
 		})
@@ -113,23 +105,21 @@ func TestEncodeMessage(t *testing.T) {
 }
 
 func TestCodecRoundTrip(t *testing.T) {
-	req := &Request{
+	req := Request{
 		ID:     42,
 		Method: "convert",
 		Params: json.RawMessage(`{"files":["/tmp/a.png"],"preset":"jpg"}`),
 	}
 
-	var buf bytes.Buffer
 	resp := Response{ID: req.ID, Result: map[string]string{"job": "xyz"}}
-	if err := EncodeMessage(&buf, resp); err != nil {
+	encoded, err := EncodeMessage(resp)
+	if err != nil {
 		t.Fatalf("encode failed: %v", err)
 	}
 
 	// Verify we can read it back
-	scanner := bytes.NewReader(buf.Bytes())
 	var decoded Response
-	line, _ := io.ReadAll(scanner)
-	if err := json.Unmarshal(bytes.TrimSpace(line), &decoded); err != nil {
+	if err := json.Unmarshal(bytes.TrimSpace(encoded), &decoded); err != nil {
 		t.Fatalf("decode failed: %v", err)
 	}
 	if decoded.ID != resp.ID {
