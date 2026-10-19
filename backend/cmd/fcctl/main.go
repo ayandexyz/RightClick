@@ -74,6 +74,8 @@ func main() {
 		}
 		if cmd.jsonOutput {
 			fmt.Println(string(line))
+		} else if _, hasError := value["error"]; hasError {
+			fmt.Fprintln(os.Stderr, formatHuman(value))
 		} else {
 			fmt.Println(formatHuman(value))
 		}
@@ -176,7 +178,7 @@ func presetForTarget(target string) string {
 	case "webp":
 		return "image-to-webp"
 	default:
-		return target
+		return ""
 	}
 }
 

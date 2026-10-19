@@ -18,6 +18,12 @@ func TestParseConvertAcceptsToAlias(t *testing.T) {
 	}
 }
 
+func TestParseConvertRejectsUnknownToTarget(t *testing.T) {
+	if _, err := parseArgs([]string{"convert", "photo.png", "--to", "pdf"}); err == nil {
+		t.Fatal("expected unknown target to be rejected")
+	}
+}
+
 func TestFormatEventHumanReadable(t *testing.T) {
 	message := wireEvent{Event: "job.updated", Data: jobData{ID: "job-1", State: "running", Progress: 0.5}}
 	line := formatHumanEvent(message)
