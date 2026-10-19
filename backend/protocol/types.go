@@ -1,0 +1,69 @@
+package protocol
+
+import "encoding/json"
+
+// Request is a JSON-RPC style request sent by clients.
+type Request struct {
+	ID     int             `json:"id"`
+	Method string          `json:"method"`
+	Params json.RawMessage `json:"params"`
+}
+
+// Response is a successful JSON-RPC response.
+type Response struct {
+	ID     int         `json:"id"`
+	Result interface{} `json:"result"`
+}
+
+// Error is an error response carrying a code and message.
+type Error struct {
+	ID    int        `json:"id"`
+	Error ErrorValue `json:"error"`
+}
+
+type ErrorValue struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+// Event is a server-to-client event with no id.
+type Event struct {
+	Event string      `json:"event"`
+	Data  interface{} `json:"data"`
+}
+
+// Target represents a conversion target returned by the targets method.
+type Target struct {
+	Preset   string `json:"preset"`
+	Label    string `json:"label"`
+	Format   string `json:"format"`
+	Category string `json:"category"`
+	Enabled  bool   `json:"enabled"`
+	Reason   string `json:"reason,omitempty"`
+}
+
+// Job represents the state of a conversion job.
+type Job struct {
+	ID       string     `json:"id"`
+	Preset   string     `json:"preset"`
+	Label    string     `json:"label"`
+	State    string     `json:"state"`
+	Progress float64    `json:"progress"`
+	Files    []FileJob  `json:"files"`
+}
+
+// FileJob represents the state of a single file in a job.
+type FileJob struct {
+	Source   string      `json:"source"`
+	State    string      `json:"state"`
+	Progress float64     `json:"progress"`
+	Outputs  []string    `json:"outputs"`
+	Error    *FileError  `json:"error,omitempty"`
+	Notice   string      `json:"notice,omitempty"`
+}
+
+// FileError represents an error on a single file.
+type FileError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
