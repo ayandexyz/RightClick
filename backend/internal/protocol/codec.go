@@ -1,17 +1,24 @@
 package protocol
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 )
 
-// DecodeRequest reads a single NDJSON message and decodes it as a Request.
+// DecodeRequest decodes one non-empty JSON object from an NDJSON line.
 func DecodeRequest(data []byte) (Request, error) {
+	data = bytes.TrimSpace(data)
+	if len(data) == 0 || data[0] != '{' {
+		return Request{}, fmt.Errorf("decode request: expected JSON object")
+	}
 	var req Request
 	if err := json.Unmarshal(data, &req); err != nil {
 		return Request{}, fmt.Errorf("decode request: %w", err)
 	}
-
+	if req.Method == "" {
+		return Request{}, fmt.Errorf("decode request: method is required")
+	}
 	return req, nil
 }
 

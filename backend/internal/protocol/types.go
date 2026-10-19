@@ -2,6 +2,14 @@ package protocol
 
 import "encoding/json"
 
+type ConflictPolicy string
+
+const (
+	ConflictRename    ConflictPolicy = "rename"
+	ConflictSkip      ConflictPolicy = "skip"
+	ConflictOverwrite ConflictPolicy = "overwrite"
+)
+
 // Request is a JSON-RPC style request sent by clients.
 type Request struct {
 	ID     int             `json:"id"`
