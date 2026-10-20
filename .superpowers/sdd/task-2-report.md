@@ -59,3 +59,17 @@ The earlier Task 2 implementation added the registry routing coverage in `backen
 
 ## Remaining concerns
 - The actual PDF engine implementation remains intentionally deferred to the renderer task; Task 2 only covers safe multi-page job planning, validation, and publication.
+
+## Final approval-fix follow-up
+- Fixed `OutputPlan.Rollback()` so a skipped plan returns without removing its pre-existing destination.
+- Added `TestManagerPreservesSkippedPageWhenLaterCommitFails`, covering page 1 skipped under `ConflictSkip` and page 2 commit failure.
+
+## Final verification
+Executed from `/tmp/file-converter-pdf/backend` unless noted:
+- `gofmt -w internal/engine/imagemagick.go internal/jobs/manager_test.go`: passed.
+- `go test ./internal/engine ./internal/jobs`: passed.
+- `go test ./internal/engine ./internal/jobs ./internal/registry`: passed.
+- `go test ./...`: passed; all packages passed.
+- `go vet ./...`: passed with no diagnostics.
+- `gofmt -l internal/engine/imagemagick.go internal/jobs/manager_test.go`: produced no output.
+- `git diff --check` from `/tmp/file-converter-pdf`: passed with no whitespace errors.

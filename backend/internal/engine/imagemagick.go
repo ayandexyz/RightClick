@@ -310,6 +310,9 @@ func (p OutputPlan) RemoveTemp() {
 	}
 }
 func (p OutputPlan) Rollback() {
+	if p.skip {
+		return
+	}
 	p.RemoveTemp()
 	if p.Destination != "" {
 		_ = os.Remove(p.Destination)

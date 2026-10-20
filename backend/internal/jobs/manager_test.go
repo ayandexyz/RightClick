@@ -381,6 +381,43 @@ func TestManagerRollsBackCommittedPagesWhenLaterCommitFails(t *testing.T) {
 	}
 }
 
+func TestManagerPreservesSkippedPageWhenLaterCommitFails(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "document.pdf")
+	if err := os.WriteFile(source, []byte("%PDF-1.7"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output := t.TempDir()
+	skippedPath := filepath.Join(output, "document-1.png")
+	if err := os.WriteFile(skippedPath, []byte("existing"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	originalCommit := commitOutput
+	defer func() { commitOutput = originalCommit }()
+	commitOutput = func(ctx context.Context, plan engine.OutputPlan) error {
+		return fmt.Errorf("commit failure")
+	}
+	r := registry.New()
+	r.Register(&fakeMultiConverter{pages: 2})
+	m := NewManagerWithRegistry(r)
+	defer m.Close()
+	events := make(chan protocol.Event, 8)
+	if _, err := m.Submit(SubmitRequest{Files: []string{source}, Preset: "pdf-to-png", OutputDir: output, Conflict: protocol.ConflictSkip, Events: func(e protocol.Event) { events <- e }}); err != nil {
+		t.Fatal(err)
+	}
+	job := waitJob(t, events)
+	if job.Files[0].State != "failed" || len(job.Files[0].Outputs) != 0 {
+		t.Fatalf("job = %+v", job)
+	}
+	data, err := os.ReadFile(skippedPath)
+	if err != nil || string(data) != "existing" {
+		t.Fatalf("skipped output = %q, err = %v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(output, "document-2.png")); !os.IsNotExist(err) {
+		t.Fatalf("later output exists: %v", err)
+	}
+}
+
 func TestManagerRestoresOverwrittenPagesWhenLaterCommitFails(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "document.pdf")
