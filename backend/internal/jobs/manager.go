@@ -23,6 +23,10 @@ type Router interface {
 	Resolve(source, target formats.Format) (registry.Engine, error)
 }
 
+type MediaSourceRouter interface {
+	MediaSource(path string) (formats.Format, error)
+}
+
 type SubmitRequest struct {
 	Files     []string
 	Preset    string
@@ -317,8 +321,18 @@ func (m *Manager) convertFile(j *job, index int, source string, target formats.F
 	}
 	sourceFormat, err := formats.Detect(source)
 	if err != nil {
+		if mediaRouter, ok := m.router.(MediaSourceRouter); ok {
+			sourceFormat, err = mediaRouter.MediaSource(source)
+		}
+		if err != nil {
+			file.State = "failed"
+			file.Error = &protocol.FileError{Code: "unsupported", Message: err.Error()}
+			return fileResult{index: index, file: file}
+		}
+	}
+	if sourceFormat == target {
 		file.State = "failed"
-		file.Error = &protocol.FileError{Code: "unsupported", Message: err.Error()}
+		file.Error = &protocol.FileError{Code: "unsupported", Message: "source and target formats are identical"}
 		return fileResult{index: index, file: file}
 	}
 	ext := string(target)

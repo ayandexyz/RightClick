@@ -8,14 +8,41 @@ import (
 	"testing"
 	"time"
 
+	"file-converter/backend/internal/engine"
 	"file-converter/backend/internal/formats"
 	"file-converter/backend/internal/protocol"
+	"file-converter/backend/internal/registry"
 )
 
 type fakeConverter struct {
 	mu    sync.Mutex
 	calls int
 	block bool
+}
+
+type fakeMediaEngine struct {
+	mu     sync.Mutex
+	calls  int
+	target formats.Format
+	kind   engine.MediaKind
+}
+
+func (f *fakeMediaEngine) ID() string                 { return "fake-media" }
+func (f *fakeMediaEngine) Available() (string, error) { return "fake-media", nil }
+func (f *fakeMediaEngine) Supports(source, target formats.Format) bool {
+	return (formats.IsAudioFormat(source) || formats.IsVideoFormat(source)) &&
+		(formats.IsAudioFormat(target) || formats.IsVideoFormat(target)) &&
+		(!formats.IsAudioFormat(source) || formats.IsAudioFormat(target))
+}
+func (f *fakeMediaEngine) Probe(context.Context, string) (engine.MediaKind, error) {
+	return f.kind, nil
+}
+func (f *fakeMediaEngine) Convert(_ context.Context, _ string, _ formats.Format, destination string, target formats.Format, _ protocol.ImageOptions) error {
+	f.mu.Lock()
+	f.calls++
+	f.target = target
+	f.mu.Unlock()
+	return os.WriteFile(destination, []byte("converted"), 0o600)
 }
 
 func (f *fakeConverter) Convert(ctx context.Context, _ string, _ formats.Format, destination string, _ formats.Format, _ protocol.ImageOptions) error {
@@ -28,6 +55,15 @@ func (f *fakeConverter) Convert(ctx context.Context, _ string, _ formats.Format,
 	}
 	return os.WriteFile(destination, []byte("converted"), 0o600)
 }
+func mediaFixture(t *testing.T, name string) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(p, []byte("media fixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
 func imageFixture(t *testing.T) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "input.png")
@@ -87,6 +123,57 @@ func TestManagerAcceptsCaseInsensitivePreset(t *testing.T) {
 	job := waitJob(t, events)
 	if job.ID != id || job.State != "completed" {
 		t.Fatalf("unexpected job: %+v", job)
+	}
+}
+
+func TestManagerRoutesVideoSourceToAudioOutputThroughAtomicLifecycle(t *testing.T) {
+	source := mediaFixture(t, "input.mp4")
+	media := &fakeMediaEngine{kind: engine.MediaVideo}
+	r := registry.New()
+	r.Register(media)
+	m := NewManagerWithRegistry(r)
+	defer m.Close()
+	events := make(chan protocol.Event, 16)
+	id, err := m.Submit(SubmitRequest{Files: []string{source}, Preset: "audio-to-mp3", OutputDir: t.TempDir(), Conflict: protocol.ConflictRename, Events: func(e protocol.Event) { events <- e }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := waitJob(t, events)
+	if job.ID != id || job.State != "completed" || job.Files[0].State != "done" {
+		t.Fatalf("unexpected job: %+v", job)
+	}
+	media.mu.Lock()
+	calls, target := media.calls, media.target
+	media.mu.Unlock()
+	if calls != 1 || target != formats.MP3 {
+		t.Fatalf("media engine calls = %d target = %s", calls, target)
+	}
+}
+
+func TestManagerAcceptsAllMediaExtensionAliases(t *testing.T) {
+	for _, alias := range []string{"mp4", "mov", "webm", "mkv", "avi", "mp3", "wav", "flac", "aac", "m4a", "ogg", "opus", "aiff", "alac", "ac3", "amr", "wma"} {
+		m := NewManager(&fakeConverter{})
+		_, err := m.Submit(SubmitRequest{Files: []string{imageFixture(t)}, Preset: alias, OutputDir: t.TempDir(), Conflict: protocol.ConflictRename})
+		if err != nil {
+			m.Close()
+			t.Fatalf("alias %q rejected: %v", alias, err)
+		}
+		m.Close()
+	}
+}
+
+func TestManagerRejectsAudioToVideoBeforeQueueing(t *testing.T) {
+	media := &fakeMediaEngine{kind: engine.MediaAudio}
+	r := registry.New()
+	r.Register(media)
+	m := NewManagerWithRegistry(r)
+	defer m.Close()
+	_, err := m.Submit(SubmitRequest{Files: []string{mediaFixture(t, "input.mp3")}, Preset: "audio-to-mp4", OutputDir: t.TempDir(), Conflict: protocol.ConflictRename})
+	if err == nil || err.Error() != "unsupported preset" {
+		t.Fatalf("Submit error = %v, want unsupported preset", err)
+	}
+	if m.Active() != 0 {
+		t.Fatalf("invalid submission queued a job")
 	}
 }
 

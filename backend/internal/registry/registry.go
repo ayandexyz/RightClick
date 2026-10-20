@@ -105,6 +105,10 @@ type MediaProber interface {
 	Probe(context.Context, string) (engine.MediaKind, error)
 }
 
+func (r *Registry) MediaSource(path string) (formats.Format, error) {
+	return r.mediaSource(path)
+}
+
 func (r *Registry) mediaSource(path string) (formats.Format, error) {
 	for _, registered := range r.engines {
 		prober, ok := registered.(MediaProber)

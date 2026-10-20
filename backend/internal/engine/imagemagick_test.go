@@ -36,7 +36,7 @@ func TestPlanOutputAcceptsMediaExtensions(t *testing.T) {
 	if err := os.WriteFile(source, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	for _, ext := range []string{"mp3", "aiff", "alac", "ac3", "amr", "wma"} {
+	for _, ext := range []string{"mp4", "mov", "webm", "mkv", "avi", "mp3", "wav", "flac", "aac", "m4a", "ogg", "opus", "aiff", "alac", "ac3", "amr", "wma"} {
 		plan, err := PlanOutput(dir, source, ext, "rename")
 		if err != nil {
 			t.Fatalf("PlanOutput(%q) error: %v", ext, err)
