@@ -98,3 +98,47 @@ func availableBinary(name string) error {
 // nilRunner is a Runner that does nothing; used in tests that want to assert
 // argument lists without spawning any process.
 var nilRunner Runner = func(_ context.Context, _ string, _ []string) error { return nil }
+
+// OutputFunc runs a tool and returns its standard output. It is the seam for
+// the handful of operations that read a program's answer rather than asking it
+// to write a file: pdfinfo reports page sizes on stdout.
+//
+// It is deliberately separate from Runner. Runner is a plain function type that
+// every engine is constructed with, so adding an output capability to it would
+// change all of them; only the services that parse stdout need this, and they
+// take it as an optional field so the zero value means "run the real tool".
+type OutputFunc func(ctx context.Context, name string, args []string) (string, error)
+
+// runForOutput executes a tool and returns its standard output. A nil
+// outFunc means the real tool is executed, which is the production path; tests
+// inject a function to drive the parsing without spawning a process.
+func runForOutput(ctx context.Context, outFunc OutputFunc, name string, args ...string) (string, error) {
+	if outFunc != nil {
+		return outFunc(ctx, name, args)
+	}
+	if err := availableBinary(name); err != nil {
+		return "", err
+	}
+	path, _ := exec.LookPath(name)
+	cmd := exec.CommandContext(ctx, path, args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		return "", fmt.Errorf("start %s: %w", name, err)
+	}
+	wait := make(chan error, 1)
+	go func() { wait <- cmd.Wait() }()
+	select {
+	case err := <-wait:
+		if err != nil {
+			return "", fmt.Errorf("%s: %w: %s", name, err, stderr.Bytes())
+		}
+		return stdout.String(), nil
+	case <-ctx.Done():
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		<-wait
+		return "", ctx.Err()
+	}
+}

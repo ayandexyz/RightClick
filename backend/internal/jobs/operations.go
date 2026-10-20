@@ -348,12 +348,6 @@ func (m *Manager) runOneOperation(j *job, op pdfops.Operation, index int, source
 	return fileResult{index: index, file: file}
 }
 
-func operationErrorCode(err error) string {
-	switch {
-	case errors.Is(err, pdfops.ErrPasswordRequired):
-		return "password_required"
-	case errors.Is(err, pdfops.ErrInvalidPDF):
-		return "invalid_pdf"
-	}
-	return "internal"
-}
+// operationErrorCode maps an engine error onto the protocol code. The mapping
+// lives in pdfops so every surface classifies failures identically.
+func operationErrorCode(err error) string { return pdfops.ErrorCode(err) }

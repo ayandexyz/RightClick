@@ -350,3 +350,46 @@ func TestExtractImagesIsNumberedAndToTextIsTxt(t *testing.T) {
 		t.Fatalf("to-text = %+v, want a single txt", text)
 	}
 }
+
+func TestParsePDFInfoTakesExactlyOneFile(t *testing.T) {
+	cmd, err := parsePDFArgs([]string{"pdf", "info", "/tmp/a.pdf"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cmd.pdfInfo || cmd.op != "pdf-info" {
+		t.Fatalf("command = %+v, want the info query", cmd)
+	}
+	if _, err := parsePDFArgs([]string{"pdf", "info"}); err == nil {
+		t.Fatal("pdf info with no file should be rejected")
+	}
+}
+
+func TestPDFInfoRequestBody(t *testing.T) {
+	cmd, err := parsePDFArgs([]string{"pdf", "info", "a.pdf"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := commandRequest(cmd)
+	if req.Method != "pdf_info" {
+		t.Fatalf("method = %q, want pdf_info", req.Method)
+	}
+}
+
+func TestFormatPDFInfoOmitsSizesWhenAbsent(t *testing.T) {
+	// A daemon without pdfinfo reports the count alone; showing zero-sized
+	// pages would look like real measurements of a blank document.
+	got := formatPDFInfo(map[string]any{"pages": 12}, 12.0)
+	if got != "pages: 12" {
+		t.Fatalf("got %q, want just the count", got)
+	}
+	got = formatPDFInfo(map[string]any{
+		"pages": 2,
+		"sizes": []any{
+			map[string]any{"w": 595.0, "h": 842.0, "rot": 0.0},
+			map[string]any{"w": 612.0, "h": 792.0, "rot": 90.0},
+		},
+	}, 2.0)
+	if !strings.Contains(got, "595 x 842 pts") || !strings.Contains(got, "rotated 90") {
+		t.Fatalf("got %q, want both pages with sizes and rotation", got)
+	}
+}

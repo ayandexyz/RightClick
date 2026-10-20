@@ -76,6 +76,8 @@ func ValidateRequest(req Request) *Error {
 		code, msg = validateConvert(req.Params)
 	case "operations":
 		code, msg = validateOperations(req.Params)
+	case "pdf_info":
+		code, msg = validatePDFInfo(req.Params)
 	case "run_operation":
 		code, msg = validateRunOperation(req.Params)
 	case "cancel":
@@ -219,6 +221,25 @@ func validateConvert(params json.RawMessage) (string, string) {
 
 // validateOperations checks the shape of an operations request. Which
 // operations apply to the selection is decided by the server, not here.
+// validatePDFInfo checks the single-file request pdf_info takes. The file must
+// be absolute and non-empty; whether it is a readable PDF is the daemon's
+// answer, not a reason to reject the request.
+func validatePDFInfo(params json.RawMessage) (string, string) {
+	var p struct {
+		File string `json:"file"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return "bad_request", "invalid pdf_info params"
+	}
+	if p.File == "" {
+		return "bad_request", "file is required"
+	}
+	if !filepath.IsAbs(p.File) {
+		return "bad_request", fmt.Sprintf("path must be absolute: %s", p.File)
+	}
+	return "", ""
+}
+
 func validateOperations(params json.RawMessage) (string, string) {
 	var p struct {
 		Files []string `json:"files"`

@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -26,6 +27,9 @@ type Dependencies struct {
 	Engine     string
 	Version    string
 	PDFToolbox pdfops.Toolbox
+	// PDFInfo serves pdf_info. The interface lives in pdfops so tests can pass
+	// a stub; the daemon constructs the real implementation.
+	PDFInfo pdfops.InfoBackend
 	// MenuPath overrides the menu policy file; empty uses menu.Path().
 	MenuPath string
 }
@@ -199,6 +203,19 @@ func (s *Server) handle(conn net.Conn) {
 			}
 		case "operations":
 			if write(protocol.Response{ID: req.ID, Result: s.handleOperations(req.Params)}) != nil {
+				return
+			}
+		case "pdf_info":
+			result, code, msg := s.handlePDFInfo(req.Params)
+			if code != "" {
+				if writeError(write, req.ID, code, msg) != nil {
+					return
+				}
+				// Keep serving: a bad document is this request's problem, not a
+				// reason to drop a client that may retry with another file.
+				continue
+			}
+			if write(protocol.Response{ID: req.ID, Result: result}) != nil {
 				return
 			}
 		case "run_operation":
@@ -475,4 +492,43 @@ func (s *Server) handleMenu(params json.RawMessage) (map[string]any, string, str
 		}
 	}
 	return map[string]any{"path": path, "menu": policy.Effective(), "custom": custom}, "", ""
+}
+
+// handlePDFInfo answers pdf_info: how many pages a document has and how large
+// each one is. The page count is authoritative; per-page sizes are a
+// convenience that a missing pdfinfo only removes. Failures a client can act on
+// are reported with the same codes every other PDF surface uses, so an editor
+// and a menu phrase a locked or damaged file identically.
+func (s *Server) handlePDFInfo(params json.RawMessage) (map[string]any, string, string) {
+	var p struct {
+		File string `json:"file"`
+	}
+	if json.Unmarshal(params, &p) != nil {
+		return nil, "bad_request", "invalid pdf_info params"
+	}
+	if p.File == "" {
+		return nil, "bad_request", "pdf_info needs a file"
+	}
+	if err := formats.ValidateInput(p.File); err != nil {
+		return nil, "bad_request", err.Error()
+	}
+	if !isPDFFile(p.File) {
+		return nil, "invalid_pdf", "not a PDF file"
+	}
+	if s.deps.PDFInfo == nil {
+		return nil, "internal", "no PDF engine is available"
+	}
+	result, err := s.deps.PDFInfo.Pdf(context.Background(), p.File)
+	if err != nil {
+		return nil, pdfops.ErrorCode(err), err.Error()
+	}
+	out := map[string]any{"pages": result.PageCount}
+	if len(result.Pages) > 0 {
+		sizes := make([]map[string]any, len(result.Pages))
+		for i, size := range result.Pages {
+			sizes[i] = map[string]any{"w": size.W, "h": size.H, "rot": size.Rotation}
+		}
+		out["sizes"] = sizes
+	}
+	return out, "", ""
 }

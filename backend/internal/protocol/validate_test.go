@@ -521,3 +521,28 @@ func TestValidateRequestStillRejectsUnknownMethods(t *testing.T) {
 		t.Fatalf("code = %q, want bad_request", got.Error.Code)
 	}
 }
+
+func TestValidatePDFInfo(t *testing.T) {
+	if code, msg := validatePDFInfo(json.RawMessage(`{"file":"/tmp/a.pdf"}`)); code != "" {
+		t.Fatalf("absolute file = %q %q, want accepted", code, msg)
+	}
+	for _, tc := range []struct{ name, params string }{
+		{"not json", `{`},
+		{"missing file", `{}`},
+		{"relative path", `{"file":"a.pdf"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if code, _ := validatePDFInfo(json.RawMessage(tc.params)); code == "" {
+				t.Fatal("expected rejection")
+			}
+		})
+	}
+}
+
+// An unknown method must still be rejected, so adding pdf_info must not have
+// loosened the allowlist.
+func TestUnknownMethodIsStillRejected(t *testing.T) {
+	if err := ValidateRequest(Request{ID: 1, Method: "pdf_invented", Params: json.RawMessage(`{}`)}); err == nil {
+		t.Fatal("an unknown method should be rejected")
+	}
+}

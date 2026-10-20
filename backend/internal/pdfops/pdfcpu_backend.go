@@ -22,6 +22,20 @@ var ErrPasswordRequired = errors.New("pdf is encrypted")
 // truncated, or not a PDF. The job layer turns this into the invalid_pdf code.
 var ErrInvalidPDF = errors.New("pdf is damaged or not a valid PDF")
 
+// ErrorCode maps an engine error onto the protocol error code a client sees.
+// The two sentinels below are the only cases a client can act on differently
+// from any other failure, so they get their own codes; everything else stays
+// internal and is not worth explaining to a user.
+func ErrorCode(err error) string {
+	switch {
+	case errors.Is(err, ErrPasswordRequired):
+		return "password_required"
+	case errors.Is(err, ErrInvalidPDF):
+		return "invalid_pdf"
+	}
+	return "internal"
+}
+
 // InputError names the input a multi-file operation could not read. Merge uses
 // it to attribute a failure to one file instead of the whole selection.
 type InputError struct {

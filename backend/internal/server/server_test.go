@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -1085,4 +1086,126 @@ func keysOf(m map[string]protocol.Operation) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// TestServerPDFInfoLoadsThePageCountAndSizes wires a real pdfcpu backend and
+// parses output from an injected pdfinfo, so the protocol surface is covered
+// without relying on having pdfinfo installed on the test host.
+func TestServerPDFInfoLoadsThePageCountAndSizes(t *testing.T) {
+	tmp := t.TempDir()
+	source := writeRealPDF(t, tmp, "a.pdf")
+	handler := &stubPDFInfo{
+		output: "Pages:           1\nPage    1 size:   10 x  20 pts\nPage    1 rot:    0\n",
+	}
+
+	conn, reader, cleanup := startInfoServer(t, handler)
+	defer cleanup()
+
+	if hello := exchange(t, conn, reader, protocol.Request{ID: 1, Method: "hello", Params: mustJSON(map[string]any{"client": "e2e", "protocol": 1})}); hello["error"] != nil {
+		t.Fatalf("hello: %#v", hello)
+	}
+	resp := exchange(t, conn, reader, protocol.Request{ID: 2, Method: "pdf_info", Params: mustJSON(map[string]any{"file": source})})
+	if resp["error"] != nil {
+		t.Fatalf("pdf_info: %#v", resp)
+	}
+	result := resp["result"].(map[string]any)
+	if got := result["pages"]; got != 1.0 && got != 1 {
+		t.Fatalf("pages = %v, want 1", got)
+	}
+	sizes, ok := result["sizes"].([]any)
+	if !ok || len(sizes) != 1 {
+		t.Fatalf("sizes = %v, want one entry", result["sizes"])
+	}
+	size := sizes[0].(map[string]any)
+	if size["w"].(float64) != 10 || size["h"].(float64) != 20 {
+		t.Fatalf("page size = %+v, want 10x20", size)
+	}
+}
+
+func TestServerPDFInfoReportsDamagedAndLocked(t *testing.T) {
+	tmp := t.TempDir()
+	damaged := filepath.Join(tmp, "damaged.pdf")
+	if err := os.WriteFile(damaged, append([]byte("%PDF-1.7\n"), bytes.Repeat([]byte{0x00}, 512)...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	locked := filepath.Join(tmp, "locked.pdf")
+	if err := os.WriteFile(locked, []byte("%PDF-1.7\nsource\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	handler := &stubPDFInfo{failFor: map[string]error{
+		damaged: pdfops.ErrInvalidPDF,
+		locked:  pdfops.ErrPasswordRequired,
+	}}
+	conn, reader, cleanup := startInfoServer(t, handler)
+	defer cleanup()
+
+	for _, tc := range []struct {
+		name, file, code string
+	}{
+		{"damaged", damaged, "invalid_pdf"},
+		{"locked", locked, "password_required"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := exchange(t, conn, reader, protocol.Request{ID: 1, Method: "pdf_info", Params: mustJSON(map[string]any{"file": tc.file})})
+			err := resp["error"].(map[string]any)
+			if err["code"] != tc.code {
+				t.Fatalf("pdf_info = %+v, want code %s", err, tc.code)
+			}
+		})
+	}
+}
+
+// stubPDFInfo lets the server tests pin the Info without a real pdfinfo or a
+// full toolbox. failFor maps a file path to the error it should report, so one
+// server can answer several files differently.
+type stubPDFInfo struct {
+	output  string
+	failFor map[string]error
+}
+
+func (s *stubPDFInfo) Pdf(_ context.Context, file string) (pdfops.PDFInfoResult, error) {
+	if err := s.failFor[file]; err != nil {
+		return pdfops.PDFInfoResult{}, err
+	}
+	sizes, count, err := pdfops.ParsePDFInfo(s.output)
+	if err != nil {
+		return pdfops.PDFInfoResult{}, err
+	}
+	return pdfops.PDFInfoResult{PageCount: count, Pages: sizes}, nil
+}
+
+// startInfoServer starts a daemon with a custom PDFInfo, so the test does not
+// need a full toolbox or pdfinfo.
+func startInfoServer(t *testing.T, info pdfops.InfoBackend) (net.Conn, *bufio.Reader, func()) {
+	t.Helper()
+	listener, err := net.Listen("unix", filepath.Join(t.TempDir(), "fcd.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := jobs.NewManagerWithRegistry(registry.New())
+	defer manager.Close()
+	srv := New(Dependencies{Jobs: manager, Registry: registry.New(), Version: "test", PDFInfo: info})
+	done := make(chan struct{})
+	go func() { _ = srv.Serve(listener); close(done) }()
+	conn, err := net.Dial("unix", listener.Addr().String())
+	if err != nil {
+		listener.Close()
+		t.Fatal(err)
+	}
+	return conn, bufio.NewReader(conn), func() {
+		conn.Close()
+		_ = listener.Close()
+	}
+}
+
+// writeRealPDF writes a file with a genuine PDF header so the daemon's
+// isPDFFile check accepts it. Its body is not a valid document: pdf_info reads
+// the page count through the injected InfoBackend, so no real PDF is needed.
+func writeRealPDF(t *testing.T, dir, name string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte("%PDF-1.7\nsource\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }

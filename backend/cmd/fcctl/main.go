@@ -38,6 +38,7 @@ type command struct {
 	pdfPages string
 	pdfAngle *int
 	pdfList  bool
+	pdfInfo  bool
 }
 
 type wireEvent struct {
@@ -113,7 +114,7 @@ func main() {
 		}
 		// convert and pdf run a job, so wait for job.finished; everything else
 		// answers with a single result and is done.
-		waitsForJob := cmd.name == "convert" || (cmd.name == "pdf" && !cmd.pdfList)
+		waitsForJob := cmd.name == "convert" || (cmd.name == "pdf" && !cmd.pdfList && !cmd.pdfInfo)
 		if !waitsForJob {
 			if _, hasResult := value["result"]; hasResult {
 				return
@@ -276,10 +277,12 @@ func parsePDFArgs(args []string) (command, error) {
 	}
 	cmd := command{name: "pdf", conflict: "rename"}
 	sub := args[1]
-	// `list` is not a catalogue operation; it asks the daemon which operations
-	// apply to the given selection.
+	// `list` and `info` are queries, not catalogue operations: they ask the
+	// daemon about the selection rather than changing it.
 	if sub == "list" {
 		cmd.op, cmd.pdfList = "pdf-list", true
+	} else if sub == "info" {
+		cmd.op, cmd.pdfInfo = "pdf-info", true
 	} else {
 		op, ok := pdfCommandByShortName(sub)
 		if !ok {
@@ -331,6 +334,12 @@ func parsePDFArgs(args []string) (command, error) {
 	if cmd.pdfList {
 		if len(cmd.files) != 1 {
 			return command{}, fmt.Errorf("pdf list takes exactly one file")
+		}
+		return cmd, nil
+	}
+	if cmd.pdfInfo {
+		if len(cmd.files) != 1 {
+			return command{}, fmt.Errorf("pdf info takes exactly one file")
 		}
 		return cmd, nil
 	}
@@ -421,6 +430,9 @@ func commandRequest(cmd command) protocol.Request {
 		if cmd.pdfList {
 			return protocol.Request{ID: 1, Method: "operations", Params: raw(map[string]any{"files": files})}
 		}
+		if cmd.pdfInfo {
+			return protocol.Request{ID: 1, Method: "pdf_info", Params: raw(map[string]any{"file": files[0]})}
+		}
 		params := map[string]any{
 			"op":          cmd.op,
 			"files":       files,
@@ -488,9 +500,45 @@ func formatHuman(value map[string]any) string {
 		if operations, ok := result["operations"].([]any); ok {
 			return formatOperations(operations)
 		}
+		if pages, ok := result["pages"]; ok {
+			return formatPDFInfo(result, pages)
+		}
 		return fmt.Sprintf("result: %v", result)
 	}
 	return fmt.Sprintf("%v", value)
+}
+
+// formatPDFInfo prints a document's shape for a human reading a terminal. The
+// page count always prints; per-page sizes are omitted entirely when pdfinfo was
+// unavailable, rather than shown as zeroes that would be mistaken for real
+// measurements.
+func formatPDFInfo(result map[string]any, pages any) string {
+	count, _ := pages.(float64)
+	if _, isInt := pages.(int); isInt {
+		count = float64(pages.(int))
+	}
+	lines := []string{fmt.Sprintf("pages: %d", int(count))}
+	sizes, ok := result["sizes"].([]any)
+	if !ok || len(sizes) == 0 {
+		return strings.Join(lines, "\n")
+	}
+	for _, item := range sizes {
+		size, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		w, h := size["w"].(float64), size["h"].(float64)
+		rot := 0
+		if r, ok := size["rot"].(float64); ok {
+			rot = int(r)
+		}
+		line := fmt.Sprintf("  %.0f x %.0f pts", w, h)
+		if rot != 0 {
+			line += fmt.Sprintf(" rotated %d", rot)
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func formatMenu(result, menuValue map[string]any) string {
@@ -599,7 +647,7 @@ func absolutePaths(paths []string) []string {
 
 func raw(value any) json.RawMessage { data, _ := json.Marshal(value); return data }
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: fcctl hello | engines [--json] | targets FILE... [--menu] [--json] | menu show | menu set CATEGORY FORMAT... | menu reset [CATEGORY] | convert FILE... (--to png|jpeg|webp|jxl|avif|gif|bmp|tiff|ico|heic | --preset PRESET) [--quality 1-100] [--max-size PX] [--background COLOR] [--out-dir DIR] [--recursive] [--on-conflict POLICY] [--json] | cancel JOB [--json] | pdf (merge FILE FILE... | extract FILE... --pages SPEC | delete FILE... --pages SPEC | rotate FILE... --angle 90|180|270 [--pages SPEC] | reverse FILE... | list FILE) [--out-dir DIR] [--on-conflict POLICY] [--json]")
+	fmt.Fprintln(os.Stderr, "usage: fcctl hello | engines [--json] | targets FILE... [--menu] [--json] | menu show | menu set CATEGORY FORMAT... | menu reset [CATEGORY] | convert FILE... (--to png|jpeg|webp|jxl|avif|gif|bmp|tiff|ico|heic | --preset PRESET) [--quality 1-100] [--max-size PX] [--background COLOR] [--out-dir DIR] [--recursive] [--on-conflict POLICY] [--json] | cancel JOB [--json] | pdf (merge FILE FILE... | extract FILE... --pages SPEC | delete FILE... --pages SPEC | rotate FILE... --angle 90|180|270 [--pages SPEC] | reverse FILE... | list FILE | info FILE) [--out-dir DIR] [--on-conflict POLICY] [--json]")
 }
 func fatal(err error) { fmt.Fprintln(os.Stderr, err); os.Exit(1) }
 
