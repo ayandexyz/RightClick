@@ -61,23 +61,22 @@ func (e *FFmpeg) Probe(ctx context.Context, path string) (MediaKind, error) {
 	if err := formats.ValidatePath(path); err != nil {
 		return "", fmt.Errorf("unsafe media path: %w", err)
 	}
-	if e.ffprobe == "" {
-		lookup := e.lookup
-		if lookup == nil {
-			lookup = exec.LookPath
-		}
-		var err error
-		e.ffprobe, err = lookup("ffprobe")
-		if err != nil {
-			return "", fmt.Errorf("ffprobe not found: %w", err)
-		}
-	}
 	args := []string{"-v", "error", "-show_entries", "stream=codec_type", "-of", "json", "--", path}
 	var output []byte
 	var err error
 	if e.probe != nil {
 		output, err = e.probe(ctx, e.ffprobe, args)
 	} else {
+		if e.ffprobe == "" {
+			lookup := e.lookup
+			if lookup == nil {
+				lookup = exec.LookPath
+			}
+			e.ffprobe, err = lookup("ffprobe")
+			if err != nil {
+				return "", fmt.Errorf("ffprobe not found: %w", err)
+			}
+		}
 		output, err = runOutputCommand(ctx, e.ffprobe, args)
 	}
 	if err != nil {
@@ -126,9 +125,13 @@ func (e *FFmpeg) Convert(ctx context.Context, source string, sourceFormat format
 	if err := formats.ValidatePath(destination); err != nil {
 		return fmt.Errorf("unsafe media path: %w", err)
 	}
-	executable, err := e.Available()
-	if err != nil {
-		return err
+	executable := e.executable
+	var err error
+	if e.runner == nil {
+		executable, err = e.Available()
+		if err != nil {
+			return err
+		}
 	}
 	args := []string{"-y", "-i", source}
 	if formats.IsAudioFormat(target) {

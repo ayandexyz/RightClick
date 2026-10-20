@@ -162,3 +162,30 @@ ok  	file-converter/backend/internal/transport	(cached)
 $ cd /home/ayan-de/Projects/omarchy-projects/file-converter && git diff --check
 (no output; exit status 0)
 ```
+
+## Final Task 2 Review Fix: Injected Availability Seams
+
+### Changes made
+
+- `FFmpeg.Probe` now invokes an injected `Probe` callback before any `ffprobe` lookup. Real ffprobe execution still performs the `ffprobe` availability lookup when no callback is injected.
+- `FFmpeg.Convert` now invokes an injected `Runner` without `ffmpeg` or `ffprobe` availability lookup, preserving command-construction tests with no installed binaries. Real conversion still performs the normal `Available` check when no runner is injected.
+- Added explicit tests for both injected seams and for missing `ffprobe`/`ffmpeg` behavior without injection.
+
+### TDD evidence
+
+- Added failing seam tests that install a lookup function which fails the test if called; both initially failed because `Probe` and `Convert` performed availability lookup before invoking their injected callbacks.
+- Applied the minimal ordering changes, then reran the focused tests successfully.
+
+### Verification evidence
+
+```text
+$ cd /home/ayan-de/Projects/omarchy-projects/file-converter/backend && go test ./internal/engine ./cmd/fcd
+ok   file-converter/backend/internal/engine
+ok   file-converter/backend/cmd/fcd
+
+$ go test ./...
+ok   file-converter/backend and all packages
+
+$ cd /home/ayan-de/Projects/omarchy-projects/file-converter && git diff --check
+passed with no output
+```

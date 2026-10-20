@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -28,6 +29,38 @@ func TestParseProbeClassifiesStreams(t *testing.T) {
 				t.Fatalf("parseProbe() = %q, %v; want %q", got, err, tt.want)
 			}
 		})
+	}
+}
+
+func TestFFmpegInjectedProbeDoesNotRequireLookPath(t *testing.T) {
+	called := false
+	f := NewFFmpeg(nil, func(_ context.Context, exe string, args []string) ([]byte, error) {
+		called = true
+		if exe != "" {
+			t.Fatalf("probe executable = %q, want empty when injected", exe)
+		}
+		return []byte(`{"streams":[{"codec_type":"audio"}]}`), nil
+	})
+	f.lookup = func(string) (string, error) {
+		t.Fatal("LookPath should not run for an injected probe")
+		return "", errors.New("missing")
+	}
+	kind, err := f.Probe(context.Background(), "/tmp/input.mp3")
+	if err != nil || kind != MediaAudio {
+		t.Fatalf("Probe() = %q, %v", kind, err)
+	}
+	if !called {
+		t.Fatal("injected probe was not called")
+	}
+}
+
+func TestFFmpegProbeMissingBinaryIsReportedWithoutInjection(t *testing.T) {
+	f := NewFFmpeg(nil, nil)
+	f.lookup = func(name string) (string, error) {
+		return "", fmt.Errorf("%s missing", name)
+	}
+	if _, err := f.Probe(context.Background(), "/tmp/input.mp3"); err == nil || !strings.Contains(err.Error(), "ffprobe not found") {
+		t.Fatalf("Probe() error = %v, want missing ffprobe error", err)
 	}
 }
 
@@ -86,6 +119,40 @@ func TestFFmpegSupportsMediaRoutes(t *testing.T) {
 				t.Errorf("media to image %s should be rejected", target)
 			}
 		}
+	}
+}
+
+func TestFFmpegInjectedRunnerDoesNotRequireLookPath(t *testing.T) {
+	called := false
+	f := NewFFmpeg(func(_ context.Context, exe string, args []string) error {
+		called = true
+		if exe != "" {
+			t.Fatalf("runner executable = %q, want empty when injected", exe)
+		}
+		if !containsArg(args, "/tmp/out.mp3") {
+			t.Fatalf("runner args = %v, want destination", args)
+		}
+		return nil
+	}, nil)
+	f.lookup = func(string) (string, error) {
+		t.Fatal("LookPath should not run for an injected runner")
+		return "", errors.New("missing")
+	}
+	if err := f.Convert(context.Background(), "/tmp/input.mp4", formats.MP4, "/tmp/out.mp3", formats.MP3, protocol.ImageOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("injected runner was not called")
+	}
+}
+
+func TestFFmpegConvertMissingBinaryIsReportedWithoutInjection(t *testing.T) {
+	f := NewFFmpeg(nil, nil)
+	f.lookup = func(name string) (string, error) {
+		return "", fmt.Errorf("%s missing", name)
+	}
+	if err := f.Convert(context.Background(), "/tmp/input.mp4", formats.MP4, "/tmp/out.mp3", formats.MP3, protocol.ImageOptions{}); err == nil || !strings.Contains(err.Error(), "ffmpeg not found") {
+		t.Fatalf("Convert() error = %v, want missing ffmpeg error", err)
 	}
 }
 
