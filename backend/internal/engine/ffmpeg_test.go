@@ -91,7 +91,8 @@ func TestFFmpegSupportsMediaRoutes(t *testing.T) {
 
 func TestFFmpegConvertBuildsEveryRequiredRoute(t *testing.T) {
 	targets := []formats.Format{formats.MP4, formats.MOV, formats.WebM, formats.MKV, formats.AVI, formats.MP3, formats.WAV, formats.FLAC, formats.AAC, formats.M4A, formats.OGG, formats.Opus}
-	for _, source := range []formats.Format{formats.MP4, formats.MP3} {
+	sources := []formats.Format{formats.MP4, formats.MOV, formats.WebM, formats.MKV, formats.AVI, formats.MP3, formats.WAV, formats.FLAC, formats.AAC, formats.M4A, formats.OGG, formats.Opus}
+	for _, source := range sources {
 		for _, target := range targets {
 			t.Run(string(source)+"-to-"+string(target), func(t *testing.T) {
 				if !NewFFmpeg(nil, nil).Supports(source, target) {
@@ -117,7 +118,7 @@ func TestFFmpegConvertBuildsEveryRequiredRoute(t *testing.T) {
 				}
 				want = append(want, "-f", string(target))
 				want = append(want, targetDefaults(target)...)
-				want = append(want, "--", output)
+				want = append(want, output)
 				if !reflect.DeepEqual(got, want) {
 					t.Fatalf("args = %v, want %v", got, want)
 				}

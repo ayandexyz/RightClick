@@ -84,3 +84,50 @@ Addressed the Task 2 review findings as follows:
 3. **Usable availability.** `FFmpeg.Available` now requires both `ffmpeg` and `ffprobe`, so registry status and resolution do not advertise an engine that cannot probe media. Tests cover missing ffprobe after a successful ffmpeg lookup. Existing daemon registration remains because it is required for runtime reachability, and the daemon test still verifies registration.
 4. **Expanded conversion coverage.** Tests now cover every video and audio target route, all media/image rejection combinations, exact argument ordering, `--` placement, fixed video defaults, `-vn` for audio targets, and the absence of video defaults during audio extraction.
 5. **Verification.** `go test ./internal/engine ./cmd/fcd`, `go test ./internal/engine -run FFmpeg -v`, and the full backend `go test ./...` suite all pass. `git diff --check` also passes.
+
+## Follow-up Review Fix Report
+
+### Changes made
+
+- Removed the standalone `--` argument before the FFmpeg destination in `backend/internal/engine/ffmpeg.go`. Source and destination paths continue to pass through `formats.ValidatePath`, so canonical absolute-path and unsafe-basename validation is unchanged.
+- Updated exact FFmpeg argument assertions to require the destination as the final ordinary argument rather than `--`, and expanded command-construction coverage from only MP4/MP3 sources to every supported video and audio source format.
+- Added `TestFFmpegCancellationKillsProcessGroupAndReturnsContextCanceled` in `backend/internal/engine/process_test.go`. It runs a deterministic fake FFmpeg shell process with a sleeping child, waits for a readiness marker, cancels the context, asserts `errors.Is(err, context.Canceled)`, and checks that the child never writes its completion marker.
+
+### TDD evidence
+
+- First updated the exact-argument expectation and expanded route matrix, then ran the focused tests. They failed because production still emitted `--` before each destination.
+- Applied the minimal production change removing only that argument.
+- Re-ran the focused route and cancellation tests; both passed.
+
+### Verification commands and output
+
+All commands were run from `backend` unless noted:
+
+```text
+$ go test ./internal/engine -run 'TestFFmpegConvertBuildsEveryRequiredRoute|TestFFmpegCancellationKillsProcessGroupAndReturnsContextCanceled' -count=1
+aok   file-converter/backend/internal/engine  0.114s
+
+$ go test ./internal/engine ./cmd/fcd
+ok   file-converter/backend/internal/engine  0.225s
+ok   file-converter/backend/cmd/fcd          (cached)
+
+$ go test ./...
+ok   file-converter/backend                         (cached)
+ok   file-converter/backend/cmd/fcctl                (cached)
+ok   file-converter/backend/cmd/fcd                  (cached)
+ok   file-converter/backend/internal/engine          (cached)
+ok   file-converter/backend/internal/formats         (cached)
+ok   file-converter/backend/internal/jobs             (cached)
+ok   file-converter/backend/internal/protocol         (cached)
+ok   file-converter/backend/internal/registry         (cached)
+ok   file-converter/backend/internal/server            (cached)
+ok   file-converter/backend/internal/transport         (cached)
+
+$ git diff --check
+passed with no output
+```
+
+### Concerns / boundaries
+
+- The cancellation regression test uses the existing Linux process-group execution style and shell utilities, matching the repository's current ImageMagick process test. It is intentionally scoped to the FFmpeg runner's cancellation contract.
+- No speculative route or source behavior was added: coverage now exercises the already-declared five video and seven audio formats, while audio-to-video routes remain rejected.

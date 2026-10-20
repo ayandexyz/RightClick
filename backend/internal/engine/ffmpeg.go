@@ -136,7 +136,7 @@ func (e *FFmpeg) Convert(ctx context.Context, source string, sourceFormat format
 	}
 	args = append(args, "-f", string(target))
 	args = append(args, targetDefaults(target)...)
-	args = append(args, "--", destination)
+	args = append(args, destination)
 	if e.runner != nil {
 		return e.runner(ctx, executable, args)
 	}
