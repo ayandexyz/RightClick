@@ -83,7 +83,9 @@ type Params struct {
 	// Edit is the page list for pdf-edit. It is optional in the wire type
 	// because an older client omits it entirely, and the operation reports
 	// that the list is missing rather than the request being malformed.
-	Edit []PageItem `json:"edit,omitempty"`
+	Edit   []PageItem `json:"edit,omitempty"`
+	Ranges *string    `json:"ranges,omitempty"`
+	Every  *int       `json:"every,omitempty"`
 }
 
 // PageItem is one page of an edit: a source page, and an optional clockwise

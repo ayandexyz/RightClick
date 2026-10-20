@@ -331,6 +331,16 @@ func validateRunOperation(params json.RawMessage) (string, string) {
 	if p.OnConflict != "" && !isConflictPolicy(p.OnConflict) {
 		return "bad_request", fmt.Sprintf("invalid on_conflict: %s (must be rename, skip, or overwrite)", p.OnConflict)
 	}
+	if p.Op == "pdf-split-ranges" {
+		if p.Params.Ranges == nil || *p.Params.Ranges == "" {
+			return "bad_request", "pdf-split-ranges requires ranges"
+		}
+	}
+	if p.Op == "pdf-split-every" {
+		if p.Params.Every == nil || *p.Params.Every < 1 {
+			return "bad_request", "pdf-split-every requires every >= 1"
+		}
+	}
 	if p.Op == "pdf-edit" {
 		if p.Params.Pages != nil || p.Params.Angle != nil {
 			return "bad_request", "pdf-edit does not accept pages or angle"

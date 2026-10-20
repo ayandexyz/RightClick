@@ -6,6 +6,8 @@ var catalogue = []Operation{
 	{ID: "pdf-merge", Label: "Merge", Group: "organise", Mode: "instant", MinInputs: 2, Merges: true},
 	{ID: "pdf-extract", Label: "Extract pages", Group: "organise", Mode: "studio", MinInputs: 1, NeedsPages: true, Suffix: "-extracted"},
 	{ID: "pdf-delete", Label: "Delete pages", Group: "organise", Mode: "studio", MinInputs: 1, NeedsPages: true, Suffix: "-edited"},
+	{ID: "pdf-split-ranges", Label: "Split by ranges", Group: "organise", Mode: "studio", MinInputs: 1, MaxInputs: 1, Numbered: true, Suffix: "-part"},
+	{ID: "pdf-split-every", Label: "Split every N pages", Group: "organise", Mode: "studio", MinInputs: 1, MaxInputs: 1, Numbered: true, Suffix: "-part"},
 	{ID: "pdf-edit", Label: "Edit pages", Group: "organise", Mode: "studio", MinInputs: 1, MaxInputs: 1, Suffix: "-edited"},
 	{ID: "pdf-rotate", Label: "Rotate", Group: "organise", Mode: "studio", MinInputs: 1, NeedsAngle: true, OptionalPages: true, Suffix: "-rotated"},
 	{ID: "pdf-repair", Label: "Repair", Group: "fix", Mode: "instant", Engine: EngineQPDF, MinInputs: 1, Suffix: "-repaired"},

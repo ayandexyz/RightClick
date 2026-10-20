@@ -44,6 +44,8 @@ type command struct {
 	pdfThumbs bool
 	pdfWidth  int
 	pdfEdit   string
+	pdfRanges string
+	pdfEvery  *int
 	// cacheSub is "clear" for the cache command; other cache subcommands are
 	// rejected rather than ignored.
 	cacheSub string
@@ -326,6 +328,22 @@ func parsePDFArgs(args []string) (command, error) {
 				return command{}, err
 			}
 			cmd.pdfPages, i = value, next
+		case "--ranges":
+			value, next, err := optionValue(rest, i)
+			if err != nil {
+				return command{}, err
+			}
+			cmd.pdfRanges, i = value, next
+		case "--every":
+			value, next, err := optionValue(rest, i)
+			if err != nil {
+				return command{}, err
+			}
+			n, err := strconv.Atoi(value)
+			if err != nil {
+				return command{}, fmt.Errorf("--every must be an integer")
+			}
+			cmd.pdfEvery, i = &n, next
 		case "--edit":
 			value, next, err := optionValue(rest, i)
 			if err != nil {
@@ -385,6 +403,12 @@ func parsePDFArgs(args []string) (command, error) {
 			return command{}, fmt.Errorf("--pages: %w", err)
 		}
 		return cmd, nil
+	}
+	if cmd.op == "pdf-split-ranges" && cmd.pdfRanges == "" {
+		return command{}, fmt.Errorf("pdf split-ranges requires --ranges")
+	}
+	if cmd.op == "pdf-split-every" && cmd.pdfEvery == nil {
+		return command{}, fmt.Errorf("pdf split-every requires --every")
 	}
 	if cmd.op == "pdf-edit" {
 		if len(cmd.files) != 1 {
@@ -509,6 +533,10 @@ func commandRequest(cmd command) protocol.Request {
 		if cmd.pdfEdit != "" {
 			items, _ := parseEditSpec(cmd.pdfEdit)
 			params["params"] = map[string]any{"edit": items}
+		} else if cmd.pdfRanges != "" {
+			params["params"] = map[string]any{"ranges": cmd.pdfRanges}
+		} else if cmd.pdfEvery != nil {
+			params["params"] = map[string]any{"every": *cmd.pdfEvery}
 		} else if cmd.pdfPages != "" || cmd.pdfAngle != nil {
 			operation := map[string]any{}
 			if cmd.pdfPages != "" {

@@ -3,6 +3,9 @@ package pdfops
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
@@ -16,7 +19,9 @@ type Params struct {
 	// Edit is the page list for pdf-edit. It is separate from Pages because an
 	// edit says what happens to every page, including blanks, rather than which
 	// pages of the source to use.
-	Edit []PageItem
+	Edit   []PageItem
+	Ranges string
+	Every  int
 }
 
 // PageItem is one page of an edit: a source page in the original document, with
@@ -207,6 +212,9 @@ func (o Operation) Run(ctx context.Context, tb Toolbox, inputs []string, output 
 	if o.ID == "pdf-edit" {
 		return o.edit(ctx, b, input, output, p)
 	}
+	if o.ID == "pdf-split-ranges" || o.ID == "pdf-split-every" {
+		return o.split(ctx, b, input, output, p)
+	}
 	if !o.NeedsPages && p.Pages == "" {
 		switch {
 		case o.ID == "pdf-reverse":
@@ -265,6 +273,68 @@ func (o Operation) angle(p Params) int {
 }
 
 // reverse collects the pages back to front.
+// split validates every part before writing any output, then collects each
+// part into the numbered staging directory consumed by the job publisher.
+func (o Operation) split(ctx context.Context, b Backend, input, output string, p Params) error {
+	count, err := b.PageCount(ctx, input)
+	if err != nil {
+		return err
+	}
+	var groups [][]int
+	if o.ID == "pdf-split-ranges" {
+		if p.Ranges == "" {
+			return fmt.Errorf("%s requires ranges", o.ID)
+		}
+		for i, raw := range strings.Split(p.Ranges, ";") {
+			if strings.TrimSpace(raw) == "" {
+				return fmt.Errorf("range group %d is empty", i+1)
+			}
+			pages, err := ParsePages(strings.TrimSpace(raw), count)
+			if err != nil {
+				return fmt.Errorf("range group %d: %w", i+1, err)
+			}
+			if len(pages) == 0 {
+				return fmt.Errorf("range group %d selects no pages", i+1)
+			}
+			groups = append(groups, pages)
+		}
+	} else {
+		if p.Every < 1 {
+			return fmt.Errorf("every must be at least 1")
+		}
+		if p.Every >= count {
+			return fmt.Errorf("split would produce a single file")
+		}
+		for start := 1; start <= count; start += p.Every {
+			end := start + p.Every - 1
+			if end > count {
+				end = count
+			}
+			pages := make([]int, 0, end-start+1)
+			for page := start; page <= end; page++ {
+				pages = append(pages, page)
+			}
+			groups = append(groups, pages)
+		}
+	}
+	if len(groups) > 200 {
+		return fmt.Errorf("split would produce more than 200 parts")
+	}
+	if err := os.MkdirAll(output, 0o700); err != nil {
+		return err
+	}
+	for i, pages := range groups {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		path := filepath.Join(output, fmt.Sprintf("part-%d.pdf", i+1))
+		if err := b.Collect(ctx, input, path, pages); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // edit runs pdf-edit. The page count is checked here rather than inside
 // Assemble because it is the only place that knows the real document length,
 // and the message it produces is what the user sees.
