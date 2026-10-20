@@ -60,6 +60,19 @@ The earlier Task 2 implementation added the registry routing coverage in `backen
 ## Remaining concerns
 - The actual PDF engine implementation remains intentionally deferred to the renderer task; Task 2 only covers safe multi-page job planning, validation, and publication.
 
+## Task 2 approval follow-up
+- Applied the backup lifecycle consistently to the existing single-output manager path: conversion and commit failures, plus cancellation around commit, now roll back plans and restore overwritten originals; successful commits finalize and remove backups.
+- Created the effective multi-output directory with `MkdirAll` before `MkdirTemp`, matching `PlanOutput` behavior.
+- Added regression coverage for single-output overwrite success/failure and multi-output creation under a missing nested directory.
+
+## Approval follow-up verification
+- Focused regression tests: passed (`go test ./internal/jobs -run 'TestManager(FinalizesSingleOutputOverwriteBackupOnSuccess|RestoresSingleOutputOverwriteBackupOnConversionFailure|CreatesMissingMultiOutputDirectoryBeforeRender)' -count=1`).
+- Focused package suite: passed (`go test ./internal/engine ./internal/jobs ./internal/registry`).
+- Full suite: passed (`go test ./...`).
+- Vet: passed (`go vet ./...`, no diagnostics).
+- Formatting: passed (`gofmt -l internal/engine/imagemagick.go internal/jobs/manager.go internal/jobs/manager_test.go` produced no output).
+- Whitespace: passed (`git diff --check`).
+
 ## Final approval-fix follow-up
 - Fixed `OutputPlan.Rollback()` so a skipped plan returns without removing its pre-existing destination.
 - Added `TestManagerPreservesSkippedPageWhenLaterCommitFails`, covering page 1 skipped under `ConflictSkip` and page 2 commit failure.

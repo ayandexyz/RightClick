@@ -20,6 +20,7 @@ type fakeConverter struct {
 	mu    sync.Mutex
 	calls int
 	block bool
+	fail  bool
 }
 
 type fakeMultiConverter struct {
@@ -169,10 +170,14 @@ func (f *fakeMediaEngine) Convert(ctx context.Context, _ string, _ formats.Forma
 func (f *fakeConverter) Convert(ctx context.Context, _ string, _ formats.Format, destination string, _ formats.Format, _ protocol.ImageOptions) error {
 	f.mu.Lock()
 	f.calls++
+	fail := f.fail
 	f.mu.Unlock()
 	if f.block {
 		<-ctx.Done()
 		return ctx.Err()
+	}
+	if fail {
+		return fmt.Errorf("conversion failure")
 	}
 	return os.WriteFile(destination, []byte("converted"), 0o600)
 }
@@ -246,6 +251,95 @@ func TestManagerCommitsMultiPageOutputsInEngineOrder(t *testing.T) {
 	entries, err := os.ReadDir(output)
 	if err != nil || len(entries) != 2 {
 		t.Fatalf("output directory entries = %v, err = %v", entries, err)
+	}
+}
+
+func TestManagerFinalizesSingleOutputOverwriteBackupOnSuccess(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "input.png")
+	if err := os.WriteFile(source, []byte("\x89PNG\r\n\x1a\n00000000"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(dir, "missing-output")
+	if err := os.Mkdir(output, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(output, "input.jpg")
+	if err := os.WriteFile(destination, []byte("original"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(&fakeConverter{})
+	defer m.Close()
+	events := make(chan protocol.Event, 8)
+	if _, err := m.Submit(SubmitRequest{Files: []string{source}, Preset: "image-to-jpeg", OutputDir: output, Conflict: protocol.ConflictOverwrite, Events: func(e protocol.Event) { events <- e }}); err != nil {
+		t.Fatal(err)
+	}
+	job := waitJob(t, events)
+	if job.Files[0].State != "done" {
+		t.Fatalf("job = %+v error = %+v", job, job.Files[0].Error)
+	}
+	data, err := os.ReadFile(destination)
+	if err != nil || string(data) != "converted" {
+		t.Fatalf("destination = %q, err = %v", data, err)
+	}
+	entries, err := os.ReadDir(output)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("output artifacts = %v, err = %v", entries, err)
+	}
+}
+
+func TestManagerRestoresSingleOutputOverwriteBackupOnConversionFailure(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "input.png")
+	if err := os.WriteFile(source, []byte("\x89PNG\r\n\x1a\n00000000"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(dir, "output")
+	if err := os.Mkdir(output, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(output, "input.jpg")
+	if err := os.WriteFile(destination, []byte("original"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(&fakeConverter{fail: true})
+	defer m.Close()
+	events := make(chan protocol.Event, 8)
+	if _, err := m.Submit(SubmitRequest{Files: []string{source}, Preset: "image-to-jpeg", OutputDir: output, Conflict: protocol.ConflictOverwrite, Events: func(e protocol.Event) { events <- e }}); err != nil {
+		t.Fatal(err)
+	}
+	job := waitJob(t, events)
+	if job.Files[0].State != "failed" {
+		t.Fatalf("job = %+v", job)
+	}
+	data, err := os.ReadFile(destination)
+	if err != nil || string(data) != "original" {
+		t.Fatalf("destination = %q, err = %v", data, err)
+	}
+	entries, err := os.ReadDir(output)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("output artifacts = %v, err = %v", entries, err)
+	}
+}
+
+func TestManagerCreatesMissingMultiOutputDirectoryBeforeRender(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "document.pdf")
+	if err := os.WriteFile(source, []byte("%PDF-1.7"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(dir, "nested", "output")
+	r := registry.New()
+	r.Register(&fakeMultiConverter{pages: 1})
+	m := NewManagerWithRegistry(r)
+	defer m.Close()
+	events := make(chan protocol.Event, 8)
+	if _, err := m.Submit(SubmitRequest{Files: []string{source}, Preset: "pdf-to-png", OutputDir: output, Conflict: protocol.ConflictRename, Events: func(e protocol.Event) { events <- e }}); err != nil {
+		t.Fatal(err)
+	}
+	job := waitJob(t, events)
+	if job.Files[0].State != "done" || len(job.Files[0].Outputs) != 1 {
+		t.Fatalf("job = %+v", job)
 	}
 }
 

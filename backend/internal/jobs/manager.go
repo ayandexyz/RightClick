@@ -345,6 +345,11 @@ func (m *Manager) convertMany(j *job, index int, file protocol.FileJob, route re
 	if outputDir == "" {
 		outputDir = filepath.Dir(source)
 	}
+	if err := os.MkdirAll(outputDir, 0o700); err != nil {
+		file.State = "failed"
+		file.Error = &protocol.FileError{Code: "internal", Message: err.Error()}
+		return fileResult{index: index, file: file}
+	}
 	renderDir, err := os.MkdirTemp(outputDir, ".file-converter-render-")
 	if err != nil {
 		file.State = "failed"
@@ -499,7 +504,7 @@ func (m *Manager) convertFile(j *job, index int, source string, target formats.F
 	}
 	err = route.Convert(j.ctx, source, sourceFormat, plan.Temp, target, j.req.Options)
 	if err != nil {
-		plan.RemoveTemp()
+		plan.Rollback()
 		if j.ctx.Err() != nil {
 			file.State = "cancelled"
 		} else {
@@ -508,13 +513,24 @@ func (m *Manager) convertFile(j *job, index int, source string, target formats.F
 		}
 		return fileResult{index: index, file: file}
 	}
+	if j.ctx.Err() != nil {
+		plan.Rollback()
+		file.State = "cancelled"
+		return fileResult{index: index, file: file}
+	}
 	output, err := plan.Commit()
 	if err != nil {
-		plan.RemoveTemp()
+		plan.Rollback()
 		file.State = "failed"
 		file.Error = &protocol.FileError{Code: "internal", Message: err.Error()}
 		return fileResult{index: index, file: file}
 	}
+	if j.ctx.Err() != nil {
+		plan.Rollback()
+		file.State = "cancelled"
+		return fileResult{index: index, file: file}
+	}
+	plan.Finalize()
 	file.State, file.Progress, file.Outputs = "done", 1, []string{output}
 	return fileResult{index: index, file: file}
 }
