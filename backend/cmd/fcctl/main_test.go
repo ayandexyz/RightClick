@@ -481,3 +481,26 @@ func TestFormatResultDistinguishesThumbnailsFromPageCount(t *testing.T) {
 		t.Fatalf("cache_clear rendered as %q", cleared)
 	}
 }
+
+// The usage line is the only help fcctl has, and it once went stale when the
+// edit and split commands were added. Every operation that needs its own
+// arguments (the studio ones) and every flag the PDF parser accepts must be
+// named in it; instant operations are covered by the generic NAME form.
+func TestUsageNamesEveryPDFCommandAndFlag(t *testing.T) {
+	for _, op := range pdfops.Catalogue() {
+		// An operation that cannot run yet (OCR) is not worth advertising.
+		if op.Mode != "studio" || op.Unimplemented != "" {
+			continue
+		}
+		name := pdfShortName(op.ID)
+		if !strings.Contains(usageText, name+" ") && !strings.Contains(usageText, "| "+name) {
+			t.Errorf("usage does not mention the studio command %q", name)
+		}
+	}
+	for _, word := range []string{"merge", "reverse", "list", "info", "thumbs", "NAME FILE...",
+		"--edit", "--ranges", "--every", "--pages-for", "--pages", "--angle", "--width", "--out-dir", "--on-conflict"} {
+		if !strings.Contains(usageText, word) {
+			t.Errorf("usage does not mention %q", word)
+		}
+	}
+}

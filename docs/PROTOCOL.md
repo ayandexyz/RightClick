@@ -138,6 +138,19 @@ Compress emits `skipped` with notice `already as small as it can get` when Ghost
 
 The page spec is comma-separated items; each is `N`, `N-M`, `N-` (to the last page), `-M` (from page 1), or `z` (the last page). 1-based, whitespace ignored. Duplicates and overlaps are allowed. Out-of-range pages, reversed ranges (`5-3`), garbage, and an empty spec are errors. A selection expanding to more than the daemon's per-document page ceiling (1000) is also rejected. Examples: `1-3,7,10-`, `z`, `-2`.
 
+#### `pdf-edit`, split and merge parameters
+
+`edit` is the ordered list of pages the output should contain, each item `{src, rotate?}`:
+
+- `src` is a 1-based source page; **`src: 0` inserts a blank page**. The same source page may appear any number of times, which is how duplicating works, and a source page left out of the list is deleted.
+- `rotate` is 0, 90, 180 or 270 and is a **clockwise change applied to that item**, not an absolute orientation: a page already rotated 90° with `rotate: 90` ends at 180°. Rotating one copy of a duplicated page leaves its other copies alone.
+- A blank page takes the size of the page before it, or of the page after it when it is first.
+- The list must contain at least one real page (a document of only blanks is rejected), may not name a page past the end of the source, and holds at most 1000 items.
+
+`ranges` is groups separated by `;`, each group a page spec, for example `1-3;4-6;7-`. Groups are independent, so they may overlap, and each becomes one part. An empty group, a bad spec or a page past the end fails the whole job before any part is written. `every` splits into consecutive parts of that many pages with a shorter last part if the pages do not divide evenly; it must be at least 1 and smaller than the page count, because a split that would produce one file is rejected. Either split is limited to 200 parts. Parts are published together: if one cannot be written, none is.
+
+`file_pages` is aligned with the merge `files` (same length); an empty entry takes every page of that file. The order of `files` is the order of the merge.
+
 Error codes on a file job entry:
 
 | Code | Meaning |

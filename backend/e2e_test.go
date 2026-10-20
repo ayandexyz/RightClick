@@ -36,7 +36,9 @@ func TestDaemonEndToEndImageConversion(t *testing.T) {
 		t.Fatalf("build fcd: %v\n%s", err, output)
 	}
 	daemon := exec.Command(binary, "serve", "--idle-exit", "0")
-	daemon.Env = append(os.Environ(), "XDG_RUNTIME_DIR="+runtimeDir)
+	// The thumbnail cache lives under XDG_CACHE_HOME; keep tests out of the
+	// real user cache.
+	daemon.Env = append(os.Environ(), "XDG_RUNTIME_DIR="+runtimeDir, "XDG_CACHE_HOME="+t.TempDir())
 	if err := daemon.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -927,8 +929,12 @@ func waitForJobOutput(t *testing.T, stream *e2eStream, id string) string {
 
 // minimalOnePagePDF returns a valid single-page PDF so pdfcpu can read it.
 // The e2e suite duplicates it by merging to build a multi-page fixture.
-func minimalOnePagePDF() []byte {
-	content := "BT /F1 18 Tf 20 100 Td (page) Tj ET"
+func minimalOnePagePDF() []byte { return pdfWithText("page") }
+
+// pdfWithText is minimalOnePagePDF with its own page text, so a test that
+// merges several can tell the pages apart and check their order.
+func pdfWithText(text string) []byte {
+	content := "BT /F1 18 Tf 20 100 Td (" + text + ") Tj ET"
 	objects := []string{
 		"<< /Type /Catalog /Pages 2 0 R >>",
 		"<< /Type /Pages /Kids [4 0 R] /Count 1 >>",

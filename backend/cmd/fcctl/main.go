@@ -804,9 +804,10 @@ func absolutePaths(paths []string) []string {
 }
 
 func raw(value any) json.RawMessage { data, _ := json.Marshal(value); return data }
-func usage() {
-	fmt.Fprintln(os.Stderr, "usage: fcctl hello | engines [--json] | targets FILE... [--menu] [--json] | menu show | menu set CATEGORY FORMAT... | menu reset [CATEGORY] | convert FILE... (--to png|jpeg|webp|jxl|avif|gif|bmp|tiff|ico|heic | --preset PRESET) [--quality 1-100] [--max-size PX] [--background COLOR] [--out-dir DIR] [--recursive] [--on-conflict POLICY] [--json] | cancel JOB [--json] | pdf (merge FILE FILE... | extract FILE... --pages SPEC | delete FILE... --pages SPEC | rotate FILE... --angle 90|180|270 [--pages SPEC] | reverse FILE... | list FILE | info FILE | thumbs FILE --pages SPEC) [--width PX] [--on-conflict POLICY] [--json] | cache clear [--json]")
-}
+
+const usageText = "usage: fcctl hello | engines [--json] | targets FILE... [--menu] [--json] | menu show | menu set CATEGORY FORMAT... | menu reset [CATEGORY] | convert FILE... (--to png|jpeg|webp|jxl|avif|gif|bmp|tiff|ico|heic | --preset PRESET) [--quality 1-100] [--max-size PX] [--background COLOR] [--out-dir DIR] [--recursive] [--on-conflict POLICY] [--json] | cancel JOB [--json] | pdf (merge FILE FILE... [--pages-for N=SPEC]... | extract FILE... --pages SPEC | delete FILE... --pages SPEC | rotate FILE... --angle 90|180|270 [--pages SPEC] | reverse FILE... | edit FILE --edit ITEMS | split-ranges FILE --ranges SPEC;SPEC... | split-every FILE --every N | NAME FILE... | list FILE | info FILE | thumbs FILE --pages SPEC) [--width PX] [--out-dir DIR] [--on-conflict POLICY] [--json] | cache clear [--json]"
+
+func usage()          { fmt.Fprintln(os.Stderr, usageText) }
 func fatal(err error) { fmt.Fprintln(os.Stderr, err); os.Exit(1) }
 
 // pdfShortName is the CLI verb for an operation ID, derived by stripping the

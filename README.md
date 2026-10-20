@@ -32,6 +32,8 @@ Beyond rasterizing pages, the backend offers structural PDF tools. The Nautilus 
 | `pdf-from-images` | pdfcpu | instant | JPEG / PNG / TIFF to a single PDF |
 | `pdf-ocr` | tesseract | studio | not implemented yet; listed but always disabled — see below |
 
+In `--edit`, a number is a source page, `rN` after it rotates that copy clockwise by N degrees on top of any rotation it already has (`3r90`), and `b` inserts a blank page: `--edit '3,1r90,b,3,4'`. Leaving a page out deletes it; naming it twice duplicates it.
+
 `pdf-ocr` is currently **not available**: producing a searchable PDF needs an invisible text layer positioned over each page image, and no tool in this toolbox assembles that. Rather than emit a PDF that looks processed but cannot be searched, the operation is listed with a reason and disabled. `pdftocairo` and `tesseract` are still installed and checked, so the operation starts working as soon as the text-layer step lands.
 
 PDF tools, like conversions, report per-file state (`done`, `failed`, `skipped`) and per-file error codes: `password_required` for encrypted PDFs, `invalid_pdf` for files that cannot be opened as a PDF (which includes bad headers and corrupted structures).
