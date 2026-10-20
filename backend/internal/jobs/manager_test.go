@@ -254,6 +254,53 @@ func TestManagerCommitsMultiPageOutputsInEngineOrder(t *testing.T) {
 	}
 }
 
+func TestManagerReservesRenameDestinationsForDuplicateStems(t *testing.T) {
+	dir := t.TempDir()
+	firstDir := filepath.Join(dir, "first")
+	secondDir := filepath.Join(dir, "second")
+	if err := os.MkdirAll(firstDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(secondDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	first := filepath.Join(firstDir, "document.pdf")
+	second := filepath.Join(secondDir, "document.pdf")
+	for _, source := range []string{first, second} {
+		if err := os.WriteFile(source, []byte("%PDF-1.7"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	output := t.TempDir()
+	r := registry.New()
+	r.Register(&fakeMultiConverter{pages: 1})
+	m := NewManagerWithRegistry(r)
+	defer m.Close()
+	events := make(chan protocol.Event, 16)
+	if _, err := m.Submit(SubmitRequest{Files: []string{first, second}, Preset: "pdf-to-png", OutputDir: output, Conflict: protocol.ConflictRename, Events: func(e protocol.Event) { events <- e }}); err != nil {
+		t.Fatal(err)
+	}
+	job := waitJob(t, events)
+	if job.State != "completed" {
+		t.Fatalf("job = %+v", job)
+	}
+	want := []string{filepath.Join(output, "document-1.png"), filepath.Join(output, "document-1 (1).png")}
+	var got []string
+	for _, file := range job.Files {
+		if file.State != "done" || len(file.Outputs) != 1 {
+			t.Fatalf("file = %+v", file)
+		}
+		got = append(got, file.Outputs[0])
+	}
+	if !reflect.DeepEqual(got, want) && !reflect.DeepEqual(got, []string{want[1], want[0]}) {
+		t.Fatalf("outputs = %v, want %v in either completion order", got, want)
+	}
+	entries, err := os.ReadDir(output)
+	if err != nil || len(entries) != 2 {
+		t.Fatalf("output entries = %v, err = %v", entries, err)
+	}
+}
+
 func TestManagerFinalizesSingleOutputOverwriteBackupOnSuccess(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "input.png")

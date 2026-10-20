@@ -60,6 +60,19 @@ The earlier Task 2 implementation added the registry routing coverage in `backen
 ## Remaining concerns
 - The actual PDF engine implementation remains intentionally deferred to the renderer task; Task 2 only covers safe multi-page job planning, validation, and publication.
 
+## Duplicate-stem allocation race fix
+- Added a manager-level output allocation mutex covering both single-output and multi-output planning, staging, commit, and rollback. This reserves the filesystem-selected ConflictRename destination until the conversion result is complete, preventing concurrent duplicate stems from selecting and overwriting the same destination.
+- Added `TestManagerReservesRenameDestinationsForDuplicateStems`, using two PDF inputs with the same basename and asserting distinct `document-1.png` and `document-1 (1).png` outputs.
+- The fix is intentionally scoped to output allocation/publication synchronization and does not implement the later PDF engine.
+
+## Race-fix verification
+- Focused tests: `go test ./internal/engine ./internal/jobs ./internal/registry` passed.
+- Full suite: `go test ./...` passed.
+- Vet: `go vet ./...` passed with no diagnostics.
+- Formatting: `gofmt -w internal/jobs/manager.go internal/jobs/manager_test.go` passed; `gofmt -l` reported no files.
+- Whitespace: `git diff --check` passed.
+- Regression test was run before the synchronization fix and failed with both workers selecting `document-1.png`; it passed after the fix.
+
 ## Final publication-boundary race fix
 - Coordinated cancellation with a per-job publication mutex and job-level pending-plan list. Individual file workers stage committed outputs, but only the manager's final job boundary finalizes them. Cancellation before overall completion rolls back every pending plan, including outputs from already-finished files; cancellation after publication cannot change a successful result to cancelled.
 - Added deterministic `beforePublish` barrier coverage for both single-file and multi-file jobs, proving cancellation immediately before overall publication leaves no outputs.

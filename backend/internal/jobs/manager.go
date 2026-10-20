@@ -51,6 +51,7 @@ type SubmitRequest struct {
 type Manager struct {
 	router      Router
 	mu          sync.Mutex
+	outputMu    sync.Mutex
 	subscribers map[uint64]func(protocol.Event)
 	next        atomic.Uint64
 	nextSub     atomic.Uint64
@@ -370,6 +371,8 @@ func (m *Manager) run(j *job) {
 }
 
 func (m *Manager) convertMany(j *job, index int, file protocol.FileJob, route registry.MultiOutputEngine, source string, sourceFormat, target formats.Format, ext string) fileResult {
+	m.outputMu.Lock()
+	defer m.outputMu.Unlock()
 	outputDir := j.req.OutputDir
 	if outputDir == "" {
 		outputDir = filepath.Dir(source)
@@ -528,6 +531,8 @@ func (m *Manager) convertFile(j *job, index int, source string, target formats.F
 	if multi, ok := route.(registry.MultiOutputEngine); ok {
 		return m.convertMany(j, index, file, multi, source, sourceFormat, target, ext)
 	}
+	m.outputMu.Lock()
+	defer m.outputMu.Unlock()
 	plan, err := engine.PlanOutput(j.req.OutputDir, source, ext, j.req.Conflict)
 	if err != nil {
 		file.State = "failed"
