@@ -408,6 +408,52 @@ func TestManagerCancelsDuringCommitAndPublishesNoOutputs(t *testing.T) {
 	}
 }
 
+func TestManagerCancellationBeforePublicationRollsBackAllOutputs(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "document.pdf")
+	if err := os.WriteFile(source, []byte("%PDF-1.7"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output := t.TempDir()
+	original := beforePublish
+	defer func() { beforePublish = original }()
+	ready := make(chan struct{})
+	release := make(chan struct{})
+	beforePublish = func() {
+		select {
+		case <-ready:
+		default:
+			close(ready)
+		}
+		<-release
+	}
+	r := registry.New()
+	r.Register(&fakeMultiConverter{pages: 2})
+	m := NewManagerWithRegistry(r)
+	defer m.Close()
+	events := make(chan protocol.Event, 8)
+	id, err := m.Submit(SubmitRequest{Files: []string{source}, Preset: "pdf-to-png", OutputDir: output, Conflict: protocol.ConflictRename, Events: func(e protocol.Event) { events <- e }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-ready
+	if err := m.Cancel(id); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	job := waitJob(t, events)
+	if job.State != "cancelled" || job.Files[0].State != "cancelled" || len(job.Files[0].Outputs) != 0 {
+		t.Fatalf("job = %+v", job)
+	}
+	entries, err := os.ReadDir(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("published outputs = %v", entries)
+	}
+}
+
 func TestManagerRestoresOverwriteDestinationWhenCancelledAfterPlanning(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "document.pdf")

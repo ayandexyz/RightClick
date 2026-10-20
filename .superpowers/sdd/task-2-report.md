@@ -60,6 +60,17 @@ The earlier Task 2 implementation added the registry routing coverage in `backen
 ## Remaining concerns
 - The actual PDF engine implementation remains intentionally deferred to the renderer task; Task 2 only covers safe multi-page job planning, validation, and publication.
 
+## Final publication-boundary race fix
+- Coordinated cancellation with a per-job publication mutex and publication flag. Cancellation now linearizes against the final publication boundary: cancellation that wins rolls back all committed pages and overwrite backups, while cancellation after publication cannot change a successful result to cancelled.
+- Added a deterministic `beforePublish` barrier seam and `TestManagerCancellationBeforePublicationRollsBackAllOutputs`, proving cancellation immediately before finalization leaves no outputs.
+
+## Final publication-boundary verification
+- Focused tests passed: `go test ./internal/jobs -run 'TestManager(CancellationBeforePublicationRollsBackAllOutputs|CancelsDuringCommitAndPublishesNoOutputs|RestoresOverwrittenPagesWhenLaterCommitFails)' -count=1`.
+- Full suite passed: `go test ./...`.
+- Vet passed: `go vet ./...`.
+- Formatting passed: `gofmt -w internal/jobs/manager.go internal/jobs/manager_test.go`.
+- Whitespace check passed: `git diff --check`.
+
 ## Task 2 approval follow-up
 - Applied the backup lifecycle consistently to the existing single-output manager path: conversion and commit failures, plus cancellation around commit, now roll back plans and restore overwritten originals; successful commits finalize and remove backups.
 - Created the effective multi-output directory with `MkdirAll` before `MkdirTemp`, matching `PlanOutput` behavior.

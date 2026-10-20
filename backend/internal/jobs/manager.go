@@ -29,6 +29,7 @@ var commitOutput = func(ctx context.Context, plan engine.OutputPlan) error {
 	_, err := plan.Commit()
 	return err
 }
+var beforePublish = func() {}
 
 type Router interface {
 	Resolve(source, target formats.Format) (registry.Engine, error)
@@ -65,6 +66,9 @@ type job struct {
 	req    SubmitRequest
 	ctx    context.Context
 	cancel context.CancelFunc
+
+	publicationMu sync.Mutex
+	published     bool
 }
 
 func NewManager(converter Converter) *Manager {
@@ -155,7 +159,11 @@ func (m *Manager) Cancel(id string) error {
 	if !ok {
 		return fmt.Errorf("job not found")
 	}
-	j.cancel()
+	j.publicationMu.Lock()
+	defer j.publicationMu.Unlock()
+	if !j.published {
+		j.cancel()
+	}
 	return nil
 }
 
@@ -442,6 +450,17 @@ func (m *Manager) convertMany(j *job, index int, file protocol.FileJob, route re
 			}
 		}
 	}
+	beforePublish()
+	j.publicationMu.Lock()
+	if j.ctx.Err() != nil {
+		j.publicationMu.Unlock()
+		removePlans()
+		file.Outputs = nil
+		file.State = "cancelled"
+		return fileResult{index: index, file: file}
+	}
+	j.published = true
+	j.publicationMu.Unlock()
 	for _, plan := range plans {
 		plan.Finalize()
 	}
@@ -525,12 +544,17 @@ func (m *Manager) convertFile(j *job, index int, source string, target formats.F
 		file.Error = &protocol.FileError{Code: "internal", Message: err.Error()}
 		return fileResult{index: index, file: file}
 	}
+	beforePublish()
+	j.publicationMu.Lock()
 	if j.ctx.Err() != nil {
+		j.publicationMu.Unlock()
 		plan.Rollback()
 		file.State = "cancelled"
 		return fileResult{index: index, file: file}
 	}
+	j.published = true
 	plan.Finalize()
+	j.publicationMu.Unlock()
 	file.State, file.Progress, file.Outputs = "done", 1, []string{output}
 	return fileResult{index: index, file: file}
 }
