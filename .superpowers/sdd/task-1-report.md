@@ -44,3 +44,18 @@ Commands run from `backend/`:
 
 - PDF conversion execution itself is intentionally not implemented in Task 1. The new presets are protocol/format metadata only; the later rasterization task must add the PDF-capable engine route.
 - `.pdf` extension handling remains only a media-probing hint; malformed or arbitrary `.pdf` content is rejected by content detection.
+
+## Task 1 review fix
+
+- Updated `backend/internal/registry/registry.go` so `allSupportedFormats()` includes `formats.PDF` as a source candidate while retaining PDF as output-ineligible (`IsImageFormat(PDF)` remains false).
+- PDF target discovery now resolves PDF -> PNG/JPEG/WebP through the registry and only advertises `pdf-to-*` presets when every selected input is PDF.
+- Added focused registry regressions covering PDF-only, mixed PDF/raster, raster-only discovery, PDF route candidates, stable PDF preset placement immediately after SVG presets, and the existing generic `png`/`jpeg`/`webp` alias behavior remains unchanged.
+
+## Review-fix verification
+
+Commands run from `backend/`:
+
+- `go test ./internal/registry` -> PASS
+- `go test ./...` -> PASS
+- `go vet ./...` -> PASS
+- `git diff --check` -> PASS

@@ -69,6 +69,7 @@ func (r *Registry) TargetsForFiles(paths []string) ([]protocol.Target, error) {
 	var hasImageSource bool
 	var hasSVGSource bool
 	var hasPDFSource bool
+	var hasNonPDFSource bool
 	var hasNonSVGSource bool
 	for _, path := range paths {
 		source, err := formats.Detect(path)
@@ -91,6 +92,8 @@ func (r *Registry) TargetsForFiles(paths []string) ([]protocol.Target, error) {
 		}
 		if formats.IsPDFFormat(source) {
 			hasPDFSource = true
+		} else {
+			hasNonPDFSource = true
 		}
 		available := make(map[formats.Format]bool)
 		for _, target := range allSupportedFormats() {
@@ -119,7 +122,7 @@ func (r *Registry) TargetsForFiles(paths []string) ([]protocol.Target, error) {
 		if !strings.HasPrefix(target.Preset, "svg-to-") && hasSVGSource && !hasNonSVGSource {
 			continue
 		}
-		if strings.HasPrefix(target.Preset, "pdf-to-") && !hasPDFSource {
+		if strings.HasPrefix(target.Preset, "pdf-to-") && (!hasPDFSource || hasNonPDFSource) {
 			continue
 		}
 		format, ok := formats.PresetFormat(target.Preset)
@@ -173,14 +176,14 @@ func (r *Registry) mediaSource(ctx context.Context, path string) (formats.Format
 
 func allSupportedFormats() []formats.Format {
 	candidates := []formats.Format{
-		formats.PNG, formats.JPEG, formats.WebP, formats.JXL, formats.AVIF, formats.BMP, formats.TIFF, formats.ICO, formats.HEIC,
+		formats.PDF, formats.PNG, formats.JPEG, formats.WebP, formats.JXL, formats.AVIF, formats.BMP, formats.TIFF, formats.ICO, formats.HEIC,
 		formats.MP4, formats.MOV, formats.WebM, formats.MKV, formats.AVI, formats.GIF,
 		formats.MP3, formats.WAV, formats.FLAC, formats.AAC, formats.M4A, formats.OGG, formats.Opus,
 		formats.AIFF, formats.ALAC, formats.AC3, formats.AMR, formats.WMA,
 	}
 	out := make([]formats.Format, 0, len(candidates))
 	for _, format := range candidates {
-		if formats.IsImageFormat(format) || formats.IsVideoFormat(format) || formats.IsAudioFormat(format) {
+		if formats.IsPDFFormat(format) || formats.IsImageFormat(format) || formats.IsVideoFormat(format) || formats.IsAudioFormat(format) {
 			out = append(out, format)
 		}
 	}
