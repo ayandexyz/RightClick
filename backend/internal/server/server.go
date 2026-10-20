@@ -275,7 +275,7 @@ func (s *Server) handle(conn net.Conn) {
 			id, err := s.deps.Jobs.SubmitOperation(jobs.OperationRequest{
 				Op:        p.Op,
 				Files:     p.Files,
-				Params:    pdfops.Params{Pages: derefString(p.Params.Pages), Angle: derefInt(p.Params.Angle), Edit: editItems(p.Params.Edit), Ranges: derefString(p.Params.Ranges), Every: derefInt(p.Params.Every)},
+				Params:    pdfops.Params{Pages: derefString(p.Params.Pages), Angle: derefInt(p.Params.Angle), Edit: editItems(p.Params.Edit), Ranges: derefString(p.Params.Ranges), Every: derefInt(p.Params.Every), FilePages: p.Params.FilePages},
 				OutputDir: p.OutputDir,
 				Conflict:  protocol.ConflictPolicy(p.Conflict),
 				Events:    writeEvent(write),

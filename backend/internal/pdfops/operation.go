@@ -19,9 +19,10 @@ type Params struct {
 	// Edit is the page list for pdf-edit. It is separate from Pages because an
 	// edit says what happens to every page, including blanks, rather than which
 	// pages of the source to use.
-	Edit   []PageItem
-	Ranges string
-	Every  int
+	Edit      []PageItem
+	Ranges    string
+	Every     int
+	FilePages []string
 }
 
 // PageItem is one page of an edit: a source page in the original document, with
@@ -201,7 +202,43 @@ func (o Operation) Run(ctx context.Context, tb Toolbox, inputs []string, output 
 		if o.InputKind() == InputImage {
 			return b.ImportImages(ctx, inputs, output)
 		}
-		return b.Merge(ctx, inputs, output)
+		if len(p.FilePages) == 0 {
+			return b.Merge(ctx, inputs, output)
+		}
+		if len(p.FilePages) != len(inputs) {
+			return fmt.Errorf("file_pages must have one entry per input file")
+		}
+		work, err := os.MkdirTemp("", "fcd-merge-pages-")
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(work)
+		selected := make([]string, len(inputs))
+		for i, input := range inputs {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if p.FilePages[i] == "" {
+				selected[i] = input
+				continue
+			}
+			count, err := b.PageCount(ctx, input)
+			if err != nil {
+				return err
+			}
+			pages, err := ParsePages(p.FilePages[i], count)
+			if err != nil {
+				return fmt.Errorf("file %d (%s): %w", i+1, filepath.Base(input), err)
+			}
+			if len(pages) == 0 {
+				return fmt.Errorf("file %d (%s) selects no pages", i+1, filepath.Base(input))
+			}
+			selected[i] = filepath.Join(work, fmt.Sprintf("input-%d.pdf", i+1))
+			if err := b.Collect(ctx, input, selected[i], pages); err != nil {
+				return err
+			}
+		}
+		return b.Merge(ctx, selected, output)
 	}
 	if len(inputs) != 1 {
 		return fmt.Errorf("%s works on one file at a time", o.ID)

@@ -41,11 +41,12 @@ type command struct {
 	pdfInfo  bool
 	// pdfThumbs carries "pdf thumbs", whose page list is parsed here rather
 	// than by the daemon, because the CLI reports the pages it asked for.
-	pdfThumbs bool
-	pdfWidth  int
-	pdfEdit   string
-	pdfRanges string
-	pdfEvery  *int
+	pdfThumbs   bool
+	pdfWidth    int
+	pdfEdit     string
+	pdfRanges   string
+	pdfEvery    *int
+	pdfPagesFor []string
 	// cacheSub is "clear" for the cache command; other cache subcommands are
 	// rejected rather than ignored.
 	cacheSub string
@@ -322,6 +323,13 @@ func parsePDFArgs(args []string) (command, error) {
 				return command{}, err
 			}
 			cmd.conflict, i = value, next
+		case "--pages-for":
+			value, next, err := optionValue(rest, i)
+			if err != nil {
+				return command{}, err
+			}
+			cmd.pdfPagesFor = append(cmd.pdfPagesFor, value)
+			i = next
 		case "--pages":
 			value, next, err := optionValue(rest, i)
 			if err != nil {
@@ -530,7 +538,21 @@ func commandRequest(cmd command) protocol.Request {
 			"output_dir":  absolutePath(cmd.outputDir),
 			"on_conflict": cmd.conflict,
 		}
-		if cmd.pdfEdit != "" {
+		if len(cmd.pdfPagesFor) > 0 {
+			filePages := make([]string, len(files))
+			for _, spec := range cmd.pdfPagesFor {
+				parts := strings.SplitN(spec, "=", 2)
+				if len(parts) != 2 {
+					return protocol.Request{ID: 1, Method: "run_operation", Params: raw(nil)}
+				}
+				idx, err := strconv.Atoi(parts[0])
+				if err != nil || idx < 1 || idx > len(filePages) {
+					return protocol.Request{ID: 1, Method: "run_operation", Params: raw(nil)}
+				}
+				filePages[idx-1] = parts[1]
+			}
+			params["params"] = map[string]any{"file_pages": filePages}
+		} else if cmd.pdfEdit != "" {
 			items, _ := parseEditSpec(cmd.pdfEdit)
 			params["params"] = map[string]any{"edit": items}
 		} else if cmd.pdfRanges != "" {

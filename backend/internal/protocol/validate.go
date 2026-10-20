@@ -331,6 +331,9 @@ func validateRunOperation(params json.RawMessage) (string, string) {
 	if p.OnConflict != "" && !isConflictPolicy(p.OnConflict) {
 		return "bad_request", fmt.Sprintf("invalid on_conflict: %s (must be rename, skip, or overwrite)", p.OnConflict)
 	}
+	if p.Op == "pdf-merge" && len(p.Params.FilePages) > 0 && len(p.Params.FilePages) != len(p.Files) {
+		return "bad_request", "file_pages must have one entry per input file"
+	}
 	if p.Op == "pdf-split-ranges" {
 		if p.Params.Ranges == nil || *p.Params.Ranges == "" {
 			return "bad_request", "pdf-split-ranges requires ranges"
