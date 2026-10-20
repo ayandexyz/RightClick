@@ -253,8 +253,8 @@ func TestManagerMediaProbeUsesJobContextOnCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 	job := waitJob(t, events)
-	if job.State != "cancelled" {
-		t.Fatalf("job state = %q, want cancelled", job.State)
+	if job.State != "cancelled" || job.Files[0].State != "cancelled" {
+		t.Fatalf("unexpected job: %+v", job)
 	}
 	media.mu.Lock()
 	probeCtx := media.probeCtx
@@ -315,11 +315,34 @@ func TestManagerMediaConflictPolicies(t *testing.T) {
 				t.Fatal(err)
 			}
 			job := waitJob(t, events)
-			if policy == protocol.ConflictSkip && job.Files[0].State != "skipped" {
-				t.Fatalf("state = %q", job.Files[0].State)
-			}
-			if policy != protocol.ConflictSkip && job.Files[0].State != "done" {
-				t.Fatalf("state = %q", job.Files[0].State)
+			file := job.Files[0]
+			switch policy {
+			case protocol.ConflictSkip:
+				if file.State != "skipped" || len(file.Outputs) != 0 {
+					t.Fatalf("skip result = %+v", file)
+				}
+				media.mu.Lock()
+				calls := media.calls
+				media.mu.Unlock()
+				if calls != 0 {
+					t.Fatalf("skip invoked media engine %d times", calls)
+				}
+			case protocol.ConflictRename:
+				if file.State != "done" || len(file.Outputs) != 1 || file.Outputs[0] != filepath.Join(output, "input (1).mp3") {
+					t.Fatalf("rename result = %+v", file)
+				}
+				data, err := os.ReadFile(file.Outputs[0])
+				if err != nil || string(data) != "converted" {
+					t.Fatalf("rename output = %q, err = %v", data, err)
+				}
+			case protocol.ConflictOverwrite:
+				if file.State != "done" || len(file.Outputs) != 1 || file.Outputs[0] != filepath.Join(output, "input.mp3") {
+					t.Fatalf("overwrite result = %+v", file)
+				}
+				data, err := os.ReadFile(file.Outputs[0])
+				if err != nil || string(data) != "converted" {
+					t.Fatalf("overwrite output = %q, err = %v", data, err)
+				}
 			}
 		})
 	}

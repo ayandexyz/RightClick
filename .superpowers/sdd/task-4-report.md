@@ -29,3 +29,18 @@ All passed.
 - Media classification still depends on a registered engine implementing the existing `MediaProber` interface and being available. If no media prober is available, the file receives the existing per-file `unsupported` failure.
 - The registry's UI-oriented `TargetsForFiles` path still uses `context.Background()` because it is not a submitted job; submitted conversion paths use the Manager job context.
 - The requested implementation files included engine and job files; the registry needed a small public classification bridge so the manager could use the route engine's media classification without duplicating probing logic.
+
+## Task 4 review follow-up
+
+- Fixed `Manager.convertFile` so a `MediaSource` probe error is classified as `cancelled` when `j.ctx.Err()` is non-nil, instead of incorrectly reporting a failed unsupported file.
+- Strengthened `TestManagerMediaProbeUsesJobContextOnCancellation` with `job.Files[0].State == "cancelled"`.
+- Strengthened `TestManagerMediaConflictPolicies` to assert skip produces no output and does not invoke the engine, rename produces `input (1).mp3` with converted contents, and overwrite replaces `input.mp3` with converted contents.
+
+## Verification evidence
+
+- `cd backend && go test ./internal/jobs -v` -> exit 0; all manager tests passed, including media probe cancellation and all three conflict-policy subtests.
+- `cd backend && go test ./...` -> exit 0; all backend packages passed.
+- `cd backend && go test -race ./internal/engine ./internal/jobs` -> exit 0; both race-tested packages passed.
+- `git diff --check` -> exit 0 with no output.
+
+(End of file - total 46 lines)

@@ -325,8 +325,12 @@ func (m *Manager) convertFile(j *job, index int, source string, target formats.F
 			sourceFormat, err = mediaRouter.MediaSource(j.ctx, source)
 		}
 		if err != nil {
-			file.State = "failed"
-			file.Error = &protocol.FileError{Code: "unsupported", Message: err.Error()}
+			if j.ctx.Err() != nil {
+				file.State = "cancelled"
+			} else {
+				file.State = "failed"
+				file.Error = &protocol.FileError{Code: "unsupported", Message: err.Error()}
+			}
 			return fileResult{index: index, file: file}
 		}
 	}
