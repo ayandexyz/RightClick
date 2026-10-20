@@ -107,8 +107,24 @@ func (m *Manager) Submit(req SubmitRequest) (string, error) {
 	case "mp3", "wav", "flac", "aac", "m4a", "ogg", "opus", "aiff", "alac", "ac3", "amr", "wma":
 		targetPreset = "audio-to-" + targetPreset
 	}
-	if _, ok := formats.PresetFormat(targetPreset); !ok {
+	targetFormat, ok := formats.PresetFormat(targetPreset)
+	if !ok {
 		return "", fmt.Errorf("unsupported preset")
+	}
+	if formats.IsVideoFormat(targetFormat) {
+		// Media probing is repeated by the worker, but reject audio-to-video
+		// requests synchronously so the protocol returns a stable error.
+		for _, file := range req.Files {
+			sourceFormat, detectErr := formats.Detect(file)
+			if detectErr != nil {
+				if mediaRouter, ok := m.router.(MediaSourceRouter); ok {
+					sourceFormat, detectErr = mediaRouter.MediaSource(context.Background(), file)
+				}
+			}
+			if detectErr == nil && formats.IsAudioFormat(sourceFormat) {
+				return "", fmt.Errorf("unsupported media conversion: audio to video")
+			}
+		}
 	}
 	req.Preset = targetPreset
 	id := fmt.Sprintf("job-%d", m.next.Add(1))

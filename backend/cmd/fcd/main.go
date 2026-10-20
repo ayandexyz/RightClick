@@ -55,9 +55,15 @@ func setupEngines() (*registry.Registry, string) {
 	imageEngine := engine.NewImageMagick(nil)
 	_ = imageEngine.ProbeCapabilities()
 	enginePath, _ := imageEngine.Available()
+
+	ffmpegEngine := engine.NewFFmpeg(nil, nil)
+	// Probe independently. An unavailable media tool must not prevent image
+	// conversions or daemon startup; the registry reports its status later.
+	_, _ = ffmpegEngine.Available()
+
 	engines := registry.New()
 	engines.Register(imageEngine)
-	engines.Register(engine.NewFFmpeg(nil, nil))
+	engines.Register(ffmpegEngine)
 	return engines, enginePath
 }
 

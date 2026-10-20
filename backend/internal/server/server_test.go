@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"file-converter/backend/internal/engine"
 	"file-converter/backend/internal/formats"
 	"file-converter/backend/internal/jobs"
 	"file-converter/backend/internal/protocol"
@@ -23,6 +24,24 @@ type testEngine struct {
 	options protocol.ImageOptions
 }
 
+type mediaTestEngine struct {
+	kind engine.MediaKind
+}
+
+func (e *mediaTestEngine) ID() string                 { return "ffmpeg" }
+func (e *mediaTestEngine) Available() (string, error) { return "ffmpeg", nil }
+func (e *mediaTestEngine) Supports(source, target formats.Format) bool {
+	return (formats.IsAudioFormat(source) || formats.IsVideoFormat(source)) &&
+		(formats.IsAudioFormat(target) || formats.IsVideoFormat(target)) &&
+		(!formats.IsAudioFormat(source) || formats.IsAudioFormat(target))
+}
+func (e *mediaTestEngine) Convert(context.Context, string, formats.Format, string, formats.Format, protocol.ImageOptions) error {
+	return nil
+}
+func (e *mediaTestEngine) Probe(context.Context, string) (engine.MediaKind, error) {
+	return e.kind, nil
+}
+
 func (e *testEngine) lastOptions() protocol.ImageOptions {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -32,7 +51,7 @@ func (e *testEngine) lastOptions() protocol.ImageOptions {
 func (e *testEngine) ID() string                 { return "test" }
 func (e *testEngine) Available() (string, error) { return "test", nil }
 func (e *testEngine) Supports(source, target formats.Format) bool {
-	return source != target && source != "" && target != ""
+	return formats.IsImageFormat(source) && formats.IsImageFormat(target) && source != target
 }
 func (e *testEngine) Convert(ctx context.Context, _ string, _ formats.Format, destination string, _ formats.Format, options protocol.ImageOptions) error {
 	e.mu.Lock()
@@ -56,12 +75,17 @@ func imageFixture(t *testing.T) string {
 
 func startTestServer(t *testing.T, engine *testEngine) (net.Conn, func()) {
 	t.Helper()
+	reg := registry.New()
+	reg.Register(engine)
+	return startTestServerWithRegistry(t, reg)
+}
+
+func startTestServerWithRegistry(t *testing.T, reg *registry.Registry) (net.Conn, func()) {
+	t.Helper()
 	listener, err := net.Listen("unix", filepath.Join(t.TempDir(), "fcd.sock"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	reg := registry.New()
-	reg.Register(engine)
 	manager := jobs.NewManagerWithRegistry(reg)
 	srv := New(Dependencies{Jobs: manager, Registry: reg, Version: "test"})
 	done := make(chan struct{})
@@ -116,6 +140,46 @@ func TestServerHelloAndRejectsUnknownMethod(t *testing.T) {
 	if unknown["error"] == nil {
 		t.Fatalf("unknown response: %#v", unknown)
 	}
+}
+
+func TestServerHelloTargetsAndRejectsAudioToVideo(t *testing.T) {
+	reg := registry.New()
+	reg.Register(&testEngine{})
+	reg.Register(&mediaTestEngine{kind: engine.MediaAudio})
+	conn, cleanup := startTestServerWithRegistry(t, reg)
+	defer cleanup()
+
+	hello := sendRequest(t, conn, protocol.Request{ID: 1, Method: "hello", Params: json.RawMessage(`{"client":"test","protocol":1}`)})
+	result, ok := hello["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("hello response: %#v", hello)
+	}
+	engines, ok := result["engines"].([]any)
+	if !ok || len(engines) != 2 {
+		t.Fatalf("hello engines: %#v", result["engines"])
+	}
+
+	input := filepath.Join(t.TempDir(), "clip.mp3")
+	if err := os.WriteFile(input, []byte("media fixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	targets := sendRequest(t, conn, protocol.Request{ID: 2, Method: "targets", Params: mustJSON(map[string]any{"files": []string{input}})})
+	targetResult, ok := targets["result"].(map[string]any)
+	if !ok || len(targetResult["targets"].([]any)) != 11 {
+		t.Fatalf("targets response: %#v", targets)
+	}
+	convert := sendRequest(t, conn, protocol.Request{ID: 3, Method: "convert", Params: mustJSON(map[string]any{"files": []string{input}, "preset": "video-to-mp4"})})
+	if errorValue, ok := convert["error"].(map[string]any); !ok || errorValue["code"] != "unsupported" {
+		t.Fatalf("audio-to-video should be unsupported: %#v", convert)
+	}
+}
+
+func mustJSON(value any) json.RawMessage {
+	data, err := json.Marshal(value)
+	if err != nil {
+		panic(err)
+	}
+	return data
 }
 
 func TestServerCancelStopsActiveJob(t *testing.T) {
