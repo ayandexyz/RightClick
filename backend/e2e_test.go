@@ -105,6 +105,126 @@ func TestDaemonEndToEndImageConversion(t *testing.T) {
 	}
 }
 
+func TestDaemonEndToEndSVGConversion(t *testing.T) {
+	if _, err := exec.LookPath("rsvg-convert"); err != nil {
+		t.Skipf("rsvg-convert is not installed: %v", err)
+	}
+
+	conn, stream, cleanup := startE2EDaemon(t)
+	defer cleanup()
+	if hello := request(t, stream, map[string]any{
+		"id": 1, "method": "hello", "params": map[string]any{"client": "e2e", "protocol": 1},
+	}); hello["error"] != nil {
+		t.Fatalf("hello failed: %#v", hello)
+	}
+
+	input := writeE2ESVG(t, `<svg xmlns="http://www.w3.org/2000/svg" width="120" height="80"><rect width="120" height="80" fill="red"/><circle cx="60" cy="40" r="20" fill="blue"/></svg>`)
+	targets := request(t, stream, map[string]any{
+		"id": 2, "method": "targets", "params": map[string]any{"files": []string{input}},
+	})
+	if targets["error"] != nil {
+		t.Fatalf("SVG targets failed: %#v", targets)
+	}
+	if !containsTarget(targets, "svg-to-png") {
+		t.Fatalf("SVG target %q missing: %#v", "svg-to-png", targets)
+	}
+
+	outputDir := t.TempDir()
+	png := convertAndAssertOutput(t, conn, stream, 3, input, "svg-to-png", outputDir, ".png")
+	if signature := mustRead(t, png); len(signature) < 8 || !bytes.Equal(signature[:8], []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a}) {
+		t.Fatalf("output is not a PNG: %x", signature[:minInt(len(signature), 8)])
+	}
+
+	for id, target := range map[int]string{4: "jpeg", 5: "webp"} {
+		t.Run("svg-to-"+target, func(t *testing.T) {
+			if !imageMagickCanWrite(t, target) {
+				t.Skipf("ImageMagick cannot write %s", target)
+			}
+			if !containsTarget(targets, "svg-to-"+target) {
+				t.Fatalf("SVG target %q missing: %#v", "svg-to-"+target, targets)
+			}
+			extension := "." + target
+			if target == "jpeg" {
+				extension = ".jpg"
+			}
+			convertAndAssertOutput(t, conn, stream, id, input, "svg-to-"+target, outputDir, extension)
+		})
+	}
+}
+
+func TestDaemonEndToEndRejectsUnsafeSVG(t *testing.T) {
+	if _, err := exec.LookPath("rsvg-convert"); err != nil {
+		t.Skipf("rsvg-convert is not installed: %v", err)
+	}
+	conn, stream, cleanup := startE2EDaemon(t)
+	defer cleanup()
+	if hello := request(t, stream, map[string]any{
+		"id": 1, "method": "hello", "params": map[string]any{"client": "e2e", "protocol": 1},
+	}); hello["error"] != nil {
+		t.Fatalf("hello failed: %#v", hello)
+	}
+
+	input := writeE2ESVG(t, `<!DOCTYPE svg [<!ENTITY external SYSTEM "file:///etc/passwd">]><svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><text>&external;</text></svg>`)
+	outputDir := t.TempDir()
+	if err := writeMessage(conn, map[string]any{
+		"id": 2, "method": "convert", "params": map[string]any{
+			"files": []string{input}, "preset": "svg-to-png", "output_dir": outputDir,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, finished := waitForJob(t, stream, 2, "svg-to-png", 15*time.Second)
+	job, ok := finished["data"].(map[string]any)
+	if !ok || job["state"] != "failed" {
+		t.Fatalf("unsafe SVG was not rejected: %#v", finished)
+	}
+	output := filepath.Join(outputDir, "input.png")
+	if _, err := os.Stat(output); !os.IsNotExist(err) {
+		t.Fatalf("unsafe SVG produced output %s: %v", output, err)
+	}
+}
+
+func writeE2ESVG(t *testing.T, document string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "input.svg")
+	if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func imageMagickCanWrite(t *testing.T, format string) bool {
+	t.Helper()
+	executable := ""
+	for _, candidate := range []string{"magick", "convert"} {
+		if path, err := exec.LookPath(candidate); err == nil {
+			executable = path
+			break
+		}
+	}
+	if executable == "" {
+		return false
+	}
+	output, err := exec.Command(executable, "-list", "format").Output()
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(output), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 3 && strings.EqualFold(strings.TrimRight(fields[0], "*"), format) {
+			return strings.ContainsRune(fields[2], 'w')
+		}
+	}
+	return false
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 func TestE2EFFmpegMediaConversion(t *testing.T) {
 	for _, dependency := range []string{"ffmpeg", "ffprobe"} {
 		if _, err := exec.LookPath(dependency); err != nil {
