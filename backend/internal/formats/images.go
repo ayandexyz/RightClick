@@ -37,6 +37,11 @@ const (
 	M4A  Format = "m4a"
 	OGG  Format = "ogg"
 	Opus Format = "opus"
+	AIFF Format = "aiff"
+	ALAC Format = "alac"
+	AC3  Format = "ac3"
+	AMR  Format = "amr"
+	WMA  Format = "wma"
 )
 
 var ErrUnsupported = errors.New("unsupported image format")
@@ -221,6 +226,16 @@ func FormatFromExtension(path string) (Format, bool) {
 		return OGG, true
 	case ".opus":
 		return Opus, true
+	case ".aiff", ".aif":
+		return AIFF, true
+	case ".alac":
+		return ALAC, true
+	case ".ac3":
+		return AC3, true
+	case ".amr":
+		return AMR, true
+	case ".wma":
+		return WMA, true
 	default:
 		return "", false
 	}
@@ -237,7 +252,7 @@ func IsVideoFormat(format Format) bool {
 
 func IsAudioFormat(format Format) bool {
 	switch format {
-	case MP3, WAV, FLAC, AAC, M4A, OGG, Opus:
+	case MP3, WAV, FLAC, AAC, M4A, OGG, Opus, AIFF, ALAC, AC3, AMR, WMA:
 		return true
 	default:
 		return false
@@ -299,6 +314,16 @@ func PresetFormat(preset string) (Format, bool) {
 		return OGG, true
 	case "audio-to-opus":
 		return Opus, true
+	case "audio-to-aiff":
+		return AIFF, true
+	case "audio-to-alac":
+		return ALAC, true
+	case "audio-to-ac3":
+		return AC3, true
+	case "audio-to-amr":
+		return AMR, true
+	case "audio-to-wma":
+		return WMA, true
 	default:
 		return "", false
 	}

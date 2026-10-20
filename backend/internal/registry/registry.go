@@ -137,6 +137,7 @@ func allSupportedFormats() []formats.Format {
 		formats.PNG, formats.JPEG, formats.WebP, formats.JXL, formats.AVIF, formats.GIF, formats.BMP, formats.TIFF, formats.ICO, formats.HEIC,
 		formats.MP4, formats.MOV, formats.WebM, formats.MKV, formats.AVI,
 		formats.MP3, formats.WAV, formats.FLAC, formats.AAC, formats.M4A, formats.OGG, formats.Opus,
+		formats.AIFF, formats.ALAC, formats.AC3, formats.AMR, formats.WMA,
 	}
 	out := make([]formats.Format, 0, len(candidates))
 	for _, format := range candidates {

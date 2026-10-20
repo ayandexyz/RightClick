@@ -5,11 +5,12 @@ One backend, a native frontend per platform.
 
 ## Backend status
 
-The Linux Go backend vertical slice supports PNG, JPEG, WebP, JPEG XL, AVIF, GIF, BMP, TIFF, ICO, and HEIC conversion. Targets are filtered by the installed ImageMagick build:
+The Linux Go backend supports image conversion plus FFmpeg-backed video and audio conversion. Image targets are filtered by the installed ImageMagick build; media targets require both `ffmpeg` and `ffprobe`:
 
 - `fcd` serves protocol v1 over `$XDG_RUNTIME_DIR/file-converter/fcd.sock`.
 - `fcctl` is a small NDJSON development client.
-- Supported presets are `image-to-png`, `image-to-jpeg`, `image-to-webp`, `image-to-jxl`, `image-to-avif`, `image-to-gif`, `image-to-bmp`, `image-to-tiff`, `image-to-ico`, and `image-to-heic`.
+- Supported image presets are `image-to-png`, `image-to-jpeg`, `image-to-webp`, `image-to-jxl`, `image-to-avif`, `image-to-gif`, `image-to-bmp`, `image-to-tiff`, `image-to-ico`, and `image-to-heic`.
+- Media presets include five video outputs (`mp4`, `mov`, `webm`, `mkv`, `avi`) and twelve audio outputs (`mp3`, `wav`, `flac`, `aac`, `m4a`, `ogg`, `opus`, `aiff`, `alac`, `ac3`, `amr`, `wma`). Video inputs may extract audio; audio-to-video targets are not advertised.
 - ICO output is capped at 256×256; GIF/WebP animation is preserved when supported.
 - Inputs are absolute regular files and formats are detected from file content.
 - ImageMagick performs conversion. The daemon never uploads files or uses a network service.

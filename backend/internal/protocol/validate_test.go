@@ -270,6 +270,8 @@ func TestSupportedMediaPresets(t *testing.T) {
 		"video-to-mkv": "video", "video-to-avi": "video", "audio-to-mp3": "audio",
 		"audio-to-wav": "audio", "audio-to-flac": "audio", "audio-to-aac": "audio",
 		"audio-to-m4a": "audio", "audio-to-ogg": "audio", "audio-to-opus": "audio",
+		"audio-to-aiff": "audio", "audio-to-alac": "audio", "audio-to-ac3": "audio",
+		"audio-to-amr": "audio", "audio-to-wma": "audio",
 	}
 	for _, target := range SupportedPresets() {
 		want, ok := wantCategories[target.Preset]

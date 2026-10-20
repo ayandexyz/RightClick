@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add FFmpeg-backed conversion for MP4, MOV, WebM, MKV, AVI, MP3, WAV, FLAC, AAC, M4A, OGG, and Opus while preserving existing ImageMagick image conversion.
+**Goal:** Add FFmpeg-backed conversion for MP4, MOV, WebM, MKV, AVI, MP3, WAV, FLAC, AAC, M4A, OGG, Opus, AIFF, ALAC, AC3, AMR, and WMA while preserving existing ImageMagick image conversion.
 
 **Architecture:** Extend the existing format and preset registries with media categories, add a dedicated FFmpeg engine implementing the existing registry engine interface, and generalize job output planning so both image and media routes use the same atomic lifecycle. FFmpeg probing determines whether each input is audio-only or contains video; target discovery intersects valid targets across all selected files.
 
@@ -25,7 +25,7 @@
 
 - Create `backend/internal/engine/ffmpeg.go`: FFmpeg executable discovery, ffprobe media classification, argument construction, cancellable execution, and media route support.
 - Create `backend/internal/engine/ffmpeg_test.go`: unit tests for probe parsing, route support, command construction, availability, and cancellation.
-- Modify `backend/internal/formats/images.go`: add media `Format` values, media categories, preset-to-format lookup, and shared input detection that delegates media probing when available through the registry path.
+- Modify `backend/internal/formats/images.go`: add media `Format` values, media categories, preset-to-format lookup, and shared input detection that delegates media probing when available through the registry path. The media set includes five video outputs and twelve audio outputs: MP3, WAV, FLAC, AAC, M4A, OGG, Opus, AIFF, ALAC, AC3, AMR, and WMA.
 - Modify `backend/internal/formats/images_test.go`: cover media preset mapping and format metadata without weakening existing image tests.
 - Modify `backend/internal/protocol/validate.go`: add the twelve media targets to the advertised preset list and accept normalized media presets.
 - Modify `backend/internal/protocol/validate_test.go`: verify all media presets, case normalization behavior, and unsupported audio-to-video requests.

@@ -205,6 +205,8 @@ func runCommand(ctx context.Context, executable string, args []string) error {
 
 func targetDefaults(target formats.Format) []string {
 	switch target {
+	case formats.AMR:
+		return []string{"-ar", "8000", "-ac", "1"}
 	case formats.WebM:
 		return []string{"-c:v", "libvpx-vp9", "-c:a", "libopus"}
 	case formats.MP4, formats.MOV, formats.MKV, formats.AVI:

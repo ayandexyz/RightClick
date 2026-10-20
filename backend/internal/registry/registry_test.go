@@ -88,7 +88,7 @@ func TestTargetsForAudioFileExcludeVideoTargets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertPresets(t, got, []string{"audio-to-wav", "audio-to-flac", "audio-to-aac", "audio-to-m4a", "audio-to-ogg", "audio-to-opus"})
+	assertPresets(t, got, []string{"audio-to-wav", "audio-to-flac", "audio-to-aac", "audio-to-m4a", "audio-to-ogg", "audio-to-opus", "audio-to-aiff", "audio-to-alac", "audio-to-ac3", "audio-to-amr", "audio-to-wma"})
 }
 
 func TestTargetsForVideoFileIncludeAudioExtraction(t *testing.T) {
@@ -119,7 +119,7 @@ func TestTargetsForMixedFilesOnlyIncludeAudioTargets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertPresets(t, got, []string{"audio-to-wav", "audio-to-flac", "audio-to-aac", "audio-to-m4a", "audio-to-ogg", "audio-to-opus"})
+	assertPresets(t, got, []string{"audio-to-wav", "audio-to-flac", "audio-to-aac", "audio-to-m4a", "audio-to-ogg", "audio-to-opus", "audio-to-aiff", "audio-to-alac", "audio-to-ac3", "audio-to-amr", "audio-to-wma"})
 }
 
 func TestTargetsForFilesUnavailableMediaEngineDoesNotHideImageTargets(t *testing.T) {
@@ -154,7 +154,7 @@ func TestTargetsForFilesClassifiesAudioWithoutUnavailableMediaRoutes(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertPresets(t, mediaTargets, []string{"audio-to-wav", "audio-to-flac", "audio-to-aac", "audio-to-m4a", "audio-to-ogg", "audio-to-opus"})
+	assertPresets(t, mediaTargets, []string{"audio-to-wav", "audio-to-flac", "audio-to-aac", "audio-to-m4a", "audio-to-ogg", "audio-to-opus", "audio-to-aiff", "audio-to-alac", "audio-to-ac3", "audio-to-amr", "audio-to-wma"})
 
 	imageTargets, err := r.TargetsForFiles([]string{image})
 	if err != nil {
@@ -220,7 +220,7 @@ func videoPresets() []string {
 }
 
 func audioPresets() []string {
-	return []string{"audio-to-mp3", "audio-to-wav", "audio-to-flac", "audio-to-aac", "audio-to-m4a", "audio-to-ogg", "audio-to-opus"}
+	return []string{"audio-to-mp3", "audio-to-wav", "audio-to-flac", "audio-to-aac", "audio-to-m4a", "audio-to-ogg", "audio-to-opus", "audio-to-aiff", "audio-to-alac", "audio-to-ac3", "audio-to-amr", "audio-to-wma"}
 }
 
 type mediaEngine struct {

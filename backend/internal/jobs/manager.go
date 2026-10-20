@@ -98,6 +98,10 @@ func (m *Manager) Submit(req SubmitRequest) (string, error) {
 		targetPreset = "image-to-tiff"
 	case "heif":
 		targetPreset = "image-to-heic"
+	case "mp4", "mov", "webm", "mkv", "avi":
+		targetPreset = "video-to-" + targetPreset
+	case "mp3", "wav", "flac", "aac", "m4a", "ogg", "opus", "aiff", "alac", "ac3", "amr", "wma":
+		targetPreset = "audio-to-" + targetPreset
 	}
 	if _, ok := formats.PresetFormat(targetPreset); !ok {
 		return "", fmt.Errorf("unsupported preset")

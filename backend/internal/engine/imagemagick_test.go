@@ -30,6 +30,21 @@ func TestPlanOutput(t *testing.T) {
 	}
 }
 
+func TestPlanOutputAcceptsMediaExtensions(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "input.source")
+	if err := os.WriteFile(source, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, ext := range []string{"mp3", "aiff", "alac", "ac3", "amr", "wma"} {
+		plan, err := PlanOutput(dir, source, ext, "rename")
+		if err != nil {
+			t.Fatalf("PlanOutput(%q) error: %v", ext, err)
+		}
+		plan.RemoveTemp()
+	}
+}
+
 func TestPlanOutputConflictPolicies(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "photo.png")

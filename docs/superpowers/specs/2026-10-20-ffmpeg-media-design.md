@@ -12,7 +12,7 @@ Add simple FFmpeg-backed video and audio conversion to the existing Go backend. 
 The backend will advertise one preset for each requested output format:
 
 - Video: `video-to-mp4`, `video-to-mov`, `video-to-webm`, `video-to-mkv`, `video-to-avi`
-- Audio: `audio-to-mp3`, `audio-to-wav`, `audio-to-flac`, `audio-to-aac`, `audio-to-m4a`, `audio-to-ogg`, `audio-to-opus`
+- Audio: `audio-to-mp3`, `audio-to-wav`, `audio-to-flac`, `audio-to-aac`, `audio-to-m4a`, `audio-to-ogg`, `audio-to-opus`, `audio-to-aiff`, `audio-to-alac`, `audio-to-ac3`, `audio-to-amr`, `audio-to-wma`
 
 The target format in the protocol remains the output extension. Existing image presets and ImageMagick behavior remain unchanged.
 

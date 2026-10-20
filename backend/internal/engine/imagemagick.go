@@ -209,7 +209,7 @@ func PlanOutput(dir, source string, targetExt string, conflict protocol.Conflict
 	if unsafeBase(filepath.Base(source)) {
 		return OutputPlan{}, fmt.Errorf("unsafe image path")
 	}
-	if targetExt != "png" && targetExt != "jpg" && targetExt != "webp" && targetExt != "jxl" && targetExt != "avif" && targetExt != "gif" && targetExt != "bmp" && targetExt != "tiff" && targetExt != "ico" && targetExt != "heic" {
+	if !supportedOutputExtension(targetExt) {
 		return OutputPlan{}, fmt.Errorf("unsupported target extension: %s", targetExt)
 	}
 	if dir == "" {
@@ -273,6 +273,17 @@ func (p OutputPlan) RemoveTemp() {
 	}
 }
 func (p OutputPlan) Skipped() bool { return p.skip }
+
+func supportedOutputExtension(ext string) bool {
+	switch ext {
+	case "png", "jpg", "webp", "jxl", "avif", "gif", "bmp", "tiff", "ico", "heic",
+		"mp4", "mov", "webm", "mkv", "avi", "mp3", "wav", "flac", "aac", "m4a", "ogg", "opus",
+		"aiff", "alac", "ac3", "amr", "wma":
+		return true
+	default:
+		return false
+	}
+}
 
 func unsafeBase(base string) bool {
 	return strings.ContainsAny(base, "[]:") || strings.HasPrefix(base, "@")

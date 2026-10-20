@@ -85,7 +85,7 @@ func TestFFmpegProbeUsesExpectedArguments(t *testing.T) {
 func TestFFmpegSupportsMediaRoutes(t *testing.T) {
 	f := NewFFmpeg(nil, nil)
 	video := []formats.Format{formats.MP4, formats.MOV, formats.WebM, formats.MKV, formats.AVI}
-	audio := []formats.Format{formats.MP3, formats.WAV, formats.FLAC, formats.AAC, formats.M4A, formats.OGG, formats.Opus}
+	audio := []formats.Format{formats.MP3, formats.WAV, formats.FLAC, formats.AAC, formats.M4A, formats.OGG, formats.Opus, formats.AIFF, formats.ALAC, formats.AC3, formats.AMR, formats.WMA}
 	images := []formats.Format{formats.PNG, formats.JPEG, formats.WebP, formats.JXL, formats.AVIF, formats.GIF, formats.BMP, formats.TIFF, formats.ICO, formats.HEIC}
 	for _, source := range video {
 		for _, target := range append(append([]formats.Format(nil), video...), audio...) {
@@ -157,8 +157,8 @@ func TestFFmpegConvertMissingBinaryIsReportedWithoutInjection(t *testing.T) {
 }
 
 func TestFFmpegConvertBuildsEveryRequiredRoute(t *testing.T) {
-	targets := []formats.Format{formats.MP4, formats.MOV, formats.WebM, formats.MKV, formats.AVI, formats.MP3, formats.WAV, formats.FLAC, formats.AAC, formats.M4A, formats.OGG, formats.Opus}
-	sources := []formats.Format{formats.MP4, formats.MOV, formats.WebM, formats.MKV, formats.AVI, formats.MP3, formats.WAV, formats.FLAC, formats.AAC, formats.M4A, formats.OGG, formats.Opus}
+	targets := []formats.Format{formats.MP4, formats.MOV, formats.WebM, formats.MKV, formats.AVI, formats.MP3, formats.WAV, formats.FLAC, formats.AAC, formats.M4A, formats.OGG, formats.Opus, formats.AIFF, formats.ALAC, formats.AC3, formats.AMR, formats.WMA}
+	sources := []formats.Format{formats.MP4, formats.MOV, formats.WebM, formats.MKV, formats.AVI, formats.MP3, formats.WAV, formats.FLAC, formats.AAC, formats.M4A, formats.OGG, formats.Opus, formats.AIFF, formats.ALAC, formats.AC3, formats.AMR, formats.WMA}
 	for _, source := range sources {
 		for _, target := range targets {
 			t.Run(string(source)+"-to-"+string(target), func(t *testing.T) {

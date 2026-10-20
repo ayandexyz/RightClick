@@ -104,6 +104,11 @@ func TestMediaPresetFormats(t *testing.T) {
 		"audio-to-m4a":  M4A,
 		"audio-to-ogg":  OGG,
 		"audio-to-opus": Opus,
+		"audio-to-aiff": AIFF,
+		"audio-to-alac": ALAC,
+		"audio-to-ac3":  AC3,
+		"audio-to-amr":  AMR,
+		"audio-to-wma":  WMA,
 	}
 	for preset, want := range cases {
 		t.Run(preset, func(t *testing.T) {
@@ -121,7 +126,7 @@ func TestFormatClassification(t *testing.T) {
 			t.Errorf("%q should be classified as video only", format)
 		}
 	}
-	for _, format := range []Format{MP3, WAV, FLAC, AAC, M4A, OGG, Opus} {
+	for _, format := range []Format{MP3, WAV, FLAC, AAC, M4A, OGG, Opus, AIFF, ALAC, AC3, AMR, WMA} {
 		if !IsAudioFormat(format) || IsVideoFormat(format) || IsImageFormat(format) {
 			t.Errorf("%q should be classified as audio only", format)
 		}
@@ -140,9 +145,9 @@ func TestTargetsAreOrderedAndExcludeInputFormats(t *testing.T) {
 		files []string
 		want  []string
 	}{
-		{"png", []string{png}, []string{"image-to-jpeg", "image-to-webp", "image-to-jxl", "image-to-avif", "image-to-gif", "image-to-bmp", "image-to-tiff", "image-to-ico", "image-to-heic", "video-to-mp4", "video-to-mov", "video-to-webm", "video-to-mkv", "video-to-avi", "audio-to-mp3", "audio-to-wav", "audio-to-flac", "audio-to-aac", "audio-to-m4a", "audio-to-ogg", "audio-to-opus"}},
-		{"mixed", []string{png, jpeg}, []string{"image-to-webp", "image-to-jxl", "image-to-avif", "image-to-gif", "image-to-bmp", "image-to-tiff", "image-to-ico", "image-to-heic", "video-to-mp4", "video-to-mov", "video-to-webm", "video-to-mkv", "video-to-avi", "audio-to-mp3", "audio-to-wav", "audio-to-flac", "audio-to-aac", "audio-to-m4a", "audio-to-ogg", "audio-to-opus"}},
-		{"all", []string{png, jpeg, webp}, []string{"image-to-jxl", "image-to-avif", "image-to-gif", "image-to-bmp", "image-to-tiff", "image-to-ico", "image-to-heic", "video-to-mp4", "video-to-mov", "video-to-webm", "video-to-mkv", "video-to-avi", "audio-to-mp3", "audio-to-wav", "audio-to-flac", "audio-to-aac", "audio-to-m4a", "audio-to-ogg", "audio-to-opus"}},
+		{"png", []string{png}, []string{"image-to-jpeg", "image-to-webp", "image-to-jxl", "image-to-avif", "image-to-gif", "image-to-bmp", "image-to-tiff", "image-to-ico", "image-to-heic", "video-to-mp4", "video-to-mov", "video-to-webm", "video-to-mkv", "video-to-avi", "audio-to-mp3", "audio-to-wav", "audio-to-flac", "audio-to-aac", "audio-to-m4a", "audio-to-ogg", "audio-to-opus", "audio-to-aiff", "audio-to-alac", "audio-to-ac3", "audio-to-amr", "audio-to-wma"}},
+		{"mixed", []string{png, jpeg}, []string{"image-to-webp", "image-to-jxl", "image-to-avif", "image-to-gif", "image-to-bmp", "image-to-tiff", "image-to-ico", "image-to-heic", "video-to-mp4", "video-to-mov", "video-to-webm", "video-to-mkv", "video-to-avi", "audio-to-mp3", "audio-to-wav", "audio-to-flac", "audio-to-aac", "audio-to-m4a", "audio-to-ogg", "audio-to-opus", "audio-to-aiff", "audio-to-alac", "audio-to-ac3", "audio-to-amr", "audio-to-wma"}},
+		{"all", []string{png, jpeg, webp}, []string{"image-to-jxl", "image-to-avif", "image-to-gif", "image-to-bmp", "image-to-tiff", "image-to-ico", "image-to-heic", "video-to-mp4", "video-to-mov", "video-to-webm", "video-to-mkv", "video-to-avi", "audio-to-mp3", "audio-to-wav", "audio-to-flac", "audio-to-aac", "audio-to-m4a", "audio-to-ogg", "audio-to-opus", "audio-to-aiff", "audio-to-alac", "audio-to-ac3", "audio-to-amr", "audio-to-wma"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := Targets(tc.files)

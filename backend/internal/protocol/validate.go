@@ -35,6 +35,11 @@ var supportedPresets = []Target{
 	{Preset: "audio-to-m4a", Label: "M4A Audio", Format: "m4a", Category: "audio", Enabled: true},
 	{Preset: "audio-to-ogg", Label: "OGG Audio", Format: "ogg", Category: "audio", Enabled: true},
 	{Preset: "audio-to-opus", Label: "Opus Audio", Format: "opus", Category: "audio", Enabled: true},
+	{Preset: "audio-to-aiff", Label: "AIFF Audio", Format: "aiff", Category: "audio", Enabled: true},
+	{Preset: "audio-to-alac", Label: "ALAC Audio", Format: "alac", Category: "audio", Enabled: true},
+	{Preset: "audio-to-ac3", Label: "AC3 Audio", Format: "ac3", Category: "audio", Enabled: true},
+	{Preset: "audio-to-amr", Label: "AMR Audio", Format: "amr", Category: "audio", Enabled: true},
+	{Preset: "audio-to-wma", Label: "WMA Audio", Format: "wma", Category: "audio", Enabled: true},
 }
 
 // SupportedPresets returns the image conversion targets supported by this slice.
