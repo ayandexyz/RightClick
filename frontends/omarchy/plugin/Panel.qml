@@ -84,6 +84,15 @@ Panel {
               }
             }
           }
+          Text {
+            visible: text !== ""
+            width: parent.width
+            text: root.service ? root.service.jobSummary(job) : ""
+            color: root.barForeground
+            opacity: 0.65
+            elide: Text.ElideRight
+            font.pixelSize: Style.font.body
+          }
           Rectangle {
             width: parent.width
             height: Style.space(6)

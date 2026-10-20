@@ -131,3 +131,57 @@ func TestImageMagickCancellationKillsProcessGroup(t *testing.T) {
 		t.Fatal("child process survived cancellation")
 	}
 }
+
+func TestPlanOutputExcludingTreatsInFlightDestinationsAsTaken(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(t.TempDir(), "image.png")
+	if err := os.WriteFile(source, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	taken := map[string]bool{filepath.Join(dir, "image.jpg"): true}
+	isTaken := func(path string) bool { return taken[path] }
+
+	rename, err := PlanOutputExcluding(dir, source, "jpg", protocol.ConflictRename, isTaken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rename.Rollback()
+	if want := filepath.Join(dir, "image (1).jpg"); rename.Destination != want {
+		t.Fatalf("rename destination = %s, want %s", rename.Destination, want)
+	}
+
+	skip, err := PlanOutputExcluding(dir, source, "jpg", protocol.ConflictSkip, isTaken)
+	if err != nil || !skip.Skipped() {
+		t.Fatalf("skip plan = %+v, %v", skip, err)
+	}
+
+	// An in-flight sibling has no file yet to back up, so overwrite must not clobber it.
+	overwrite, err := PlanOutputExcluding(dir, source, "jpg", protocol.ConflictOverwrite, isTaken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer overwrite.Rollback()
+	if want := filepath.Join(dir, "image (1).jpg"); overwrite.Destination != want && overwrite.Destination != filepath.Join(dir, "image (2).jpg") {
+		t.Fatalf("overwrite destination = %s", overwrite.Destination)
+	}
+	if overwrite.Destination == filepath.Join(dir, "image.jpg") {
+		t.Fatal("overwrite claimed an in-flight destination")
+	}
+}
+
+func TestPlanOutputExcludingSkipsTakenRenameCandidates(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(t.TempDir(), "image.png")
+	if err := os.WriteFile(source, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	taken := map[string]bool{filepath.Join(dir, "image.jpg"): true, filepath.Join(dir, "image (1).jpg"): true}
+	plan, err := PlanOutputExcluding(dir, source, "jpg", protocol.ConflictRename, func(p string) bool { return taken[p] })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer plan.Rollback()
+	if want := filepath.Join(dir, "image (2).jpg"); plan.Destination != want {
+		t.Fatalf("destination = %s, want %s", plan.Destination, want)
+	}
+}

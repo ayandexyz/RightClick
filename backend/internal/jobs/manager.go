@@ -22,7 +22,7 @@ type Converter interface {
 	Convert(context.Context, string, formats.Format, string, formats.Format, protocol.ImageOptions) error
 }
 
-var planOutputPath = engine.PlanOutputPath
+var planOutputPath = engine.PlanOutputPathExcluding
 var commitOutput = func(ctx context.Context, plan engine.OutputPlan) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -52,10 +52,29 @@ type SubmitRequest struct {
 	Events    func(protocol.Event)
 }
 
+// maxDefaultWorkers keeps the default pool from oversubscribing machines with
+// many cores: ImageMagick and FFmpeg are themselves multithreaded.
+const maxDefaultWorkers = 8
+
+// DefaultWorkers is the number of conversions run at once unless overridden.
+func DefaultWorkers() int {
+	n := runtime.NumCPU()
+	if n > maxDefaultWorkers {
+		n = maxDefaultWorkers
+	}
+	if n < 1 {
+		n = 1
+	}
+	return n
+}
+
 type Manager struct {
 	router      Router
 	mu          sync.Mutex
 	outputMu    sync.Mutex
+	reserved    map[string]struct{} // destinations planned but not yet written; guarded by outputMu
+	videoMu     sync.Mutex          // at most one video conversion runs at a time
+	workers     atomic.Int64
 	subscribers map[uint64]func(protocol.Event)
 	next        atomic.Uint64
 	nextSub     atomic.Uint64
@@ -87,9 +106,24 @@ func NewManager(converter Converter) *Manager {
 }
 
 func NewManagerWithRegistry(router Router) *Manager {
-	m := &Manager{router: router, jobs: make(map[string]*job), subscribers: make(map[uint64]func(protocol.Event)), queue: make(chan *job, 64), done: make(chan struct{}), loopDone: make(chan struct{})}
+	m := &Manager{router: router, reserved: make(map[string]struct{}), jobs: make(map[string]*job), subscribers: make(map[uint64]func(protocol.Event)), queue: make(chan *job, 64), done: make(chan struct{}), loopDone: make(chan struct{})}
+	m.workers.Store(int64(DefaultWorkers()))
 	go m.loop()
 	return m
+}
+
+// SetMaxWorkers bounds how many conversions run at once; values below one
+// mean one. Jobs already running keep the bound they started with.
+func (m *Manager) SetMaxWorkers(n int) {
+	if n < 1 {
+		n = 1
+	}
+	m.workers.Store(int64(n))
+}
+
+func (m *Manager) isReserved(path string) bool {
+	_, ok := m.reserved[path]
+	return ok
 }
 
 type converterEngine struct{ converter Converter }
@@ -288,6 +322,41 @@ func (e *eventEmitter) emit(name string, force bool) {
 	e.manager.broadcast(event)
 }
 
+type lane struct {
+	order   []int
+	workers int
+}
+
+// planLanes splits a job's files across the worker budget. Video work gets a
+// lane of one worker, because FFmpeg already uses every core, and the other
+// files share the remaining workers. Lane choice only affects scheduling:
+// convertFile enforces the video limit itself, so a file whose kind is only
+// known after probing is still serialized.
+func (m *Manager) planLanes(j *job, target formats.Format) []lane {
+	limit := int(m.workers.Load())
+	var video, other []int
+	for i, source := range j.req.Files {
+		sourceFormat, _ := formats.FormatFromExtension(source)
+		if formats.IsVideoFormat(sourceFormat) || formats.IsVideoFormat(target) {
+			video = append(video, i)
+		} else {
+			other = append(other, i)
+		}
+	}
+	all := make([]int, len(j.req.Files))
+	for i := range all {
+		all[i] = i
+	}
+	if limit < 2 || len(video) == 0 {
+		return []lane{{order: all, workers: min(limit, len(all))}}
+	}
+	lanes := []lane{{order: video, workers: 1}}
+	if len(other) > 0 {
+		lanes = append(lanes, lane{order: other, workers: min(limit-1, len(other))})
+	}
+	return lanes
+}
+
 type fileResult struct {
 	index int
 	file  protocol.FileJob
@@ -310,32 +379,30 @@ func (m *Manager) run(j *job) {
 		emitter.emit("job.updated", true)
 	}
 
-	workers := runtime.NumCPU()
-	if workers > len(files) {
-		workers = len(files)
-	}
-	indices := make(chan int)
 	results := make(chan fileResult, len(files))
 	var wg sync.WaitGroup
-	for worker := 0; worker < workers; worker++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for index := range indices {
-				results <- m.convertFile(j, index, j.req.Files[index], target)
-			}
-		}()
-	}
-	go func() {
-		defer close(indices)
-		for index := range j.req.Files {
-			select {
-			case indices <- index:
-			case <-j.ctx.Done():
-				return
-			}
+	for _, l := range m.planLanes(j, target) {
+		indices := make(chan int)
+		for worker := 0; worker < l.workers; worker++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for index := range indices {
+					results <- m.convertFile(j, index, j.req.Files[index], target)
+				}
+			}()
 		}
-	}()
+		go func(order []int) {
+			defer close(indices)
+			for _, index := range order {
+				select {
+				case indices <- index:
+				case <-j.ctx.Done():
+					return
+				}
+			}
+		}(l.order)
+	}
 	go func() {
 		wg.Wait()
 		close(results)
@@ -448,7 +515,7 @@ func (m *Manager) convertMany(j *job, index int, file protocol.FileJob, route re
 			file.Error = &protocol.FileError{Code: "internal", Message: "multi-page engine returned unsafe output"}
 			return fileResult{index: index, file: file}
 		}
-		plans[i], err = planOutputPath(outputDir, source, ext, i+1, j.req.Conflict)
+		plans[i], err = planOutputPath(outputDir, source, ext, i+1, j.req.Conflict, m.isReserved)
 		if err != nil {
 			removePlans()
 			file.State = "failed"
@@ -568,6 +635,14 @@ func (m *Manager) convertFile(j *job, index int, source string, target formats.F
 	if err != nil {
 		return unsupported(err.Error())
 	}
+	if formats.IsVideoFormat(sourceFormat) || formats.IsVideoFormat(target) {
+		m.videoMu.Lock()
+		defer m.videoMu.Unlock()
+		if j.ctx.Err() != nil {
+			file.State = "cancelled"
+			return fileResult{index: index, file: file}
+		}
+	}
 	outputDir := j.items[index].OutputDir(j.req.OutputDir)
 	if multi, ok := route.(registry.MultiOutputEngine); ok {
 		if outputDir == "" {
@@ -575,9 +650,22 @@ func (m *Manager) convertFile(j *job, index int, source string, target formats.F
 		}
 		return m.convertMany(j, index, file, multi, source, sourceFormat, target, ext, outputDir)
 	}
+	// Only planning is serialized: the destination stays reserved in memory
+	// until this file is committed, so other workers cannot pick the same
+	// name while the conversion itself runs unlocked.
 	m.outputMu.Lock()
-	defer m.outputMu.Unlock()
-	plan, err := engine.PlanOutput(outputDir, source, ext, j.req.Conflict)
+	plan, err := engine.PlanOutputExcluding(outputDir, source, ext, j.req.Conflict, m.isReserved)
+	if err == nil && !plan.Skipped() {
+		m.reserved[plan.Destination] = struct{}{}
+	}
+	m.outputMu.Unlock()
+	if err == nil && !plan.Skipped() {
+		defer func() {
+			m.outputMu.Lock()
+			delete(m.reserved, plan.Destination)
+			m.outputMu.Unlock()
+		}()
+	}
 	if err != nil {
 		file.State = "failed"
 		file.Error = &protocol.FileError{Code: "internal", Message: err.Error()}

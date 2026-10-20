@@ -63,7 +63,7 @@ BarWidget {
     text: !root.service || root.activeCount === 0 ? "⇣"
       : root.service.runningCount === 0 ? "✓"
       : "⇣ " + root.service.filesDone + "/" + root.service.filesTotal
-    tooltipText: "File conversion progress"
+    tooltipText: root.service && root.service.fileSummary !== "" ? "File conversions: " + root.service.fileSummary : "File conversion progress"
     onPressed: function(buttonCode) {
       if (buttonCode === Qt.LeftButton) root.toggle()
     }

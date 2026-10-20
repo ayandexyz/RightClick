@@ -204,17 +204,31 @@ type OutputPlan struct {
 }
 
 func PlanOutput(dir, source string, targetExt string, conflict protocol.ConflictPolicy) (OutputPlan, error) {
-	return planOutput(dir, source, targetExt, "", conflict)
+	return planOutput(dir, source, targetExt, "", conflict, nil)
+}
+
+// PlanOutputExcluding is PlanOutput for callers that run conversions
+// concurrently: taken reports destinations reserved by conversions that have
+// not yet written their file, which must be treated as already existing.
+func PlanOutputExcluding(dir, source string, targetExt string, conflict protocol.ConflictPolicy, taken func(string) bool) (OutputPlan, error) {
+	return planOutput(dir, source, targetExt, "", conflict, taken)
 }
 
 func PlanOutputPath(dir, source string, targetExt string, page int, conflict protocol.ConflictPolicy) (OutputPlan, error) {
+	return PlanOutputPathExcluding(dir, source, targetExt, page, conflict, nil)
+}
+
+func PlanOutputPathExcluding(dir, source string, targetExt string, page int, conflict protocol.ConflictPolicy, taken func(string) bool) (OutputPlan, error) {
 	if page < 1 {
 		return OutputPlan{}, fmt.Errorf("page number must be positive")
 	}
-	return planOutput(dir, source, targetExt, "-"+strconv.Itoa(page), conflict)
+	return planOutput(dir, source, targetExt, "-"+strconv.Itoa(page), conflict, taken)
 }
 
-func planOutput(dir, source string, targetExt, suffix string, conflict protocol.ConflictPolicy) (OutputPlan, error) {
+func planOutput(dir, source string, targetExt, suffix string, conflict protocol.ConflictPolicy, taken func(string) bool) (OutputPlan, error) {
+	if taken == nil {
+		taken = func(string) bool { return false }
+	}
 	if !filepath.IsAbs(source) {
 		return OutputPlan{}, fmt.Errorf("source path must be absolute")
 	}
@@ -239,23 +253,29 @@ func planOutput(dir, source string, targetExt, suffix string, conflict protocol.
 		return OutputPlan{}, fmt.Errorf("output would overwrite source")
 	}
 	existing := false
-	if _, err := os.Stat(destination); err == nil {
-		existing = true
-		switch conflict {
-		case "skip":
+	_, statErr := os.Stat(destination)
+	if statErr != nil && !os.IsNotExist(statErr) {
+		return OutputPlan{}, statErr
+	}
+	onDisk, inFlight := statErr == nil, taken(destination)
+	if onDisk || inFlight {
+		existing = onDisk
+		switch {
+		case conflict == "skip":
 			return OutputPlan{Destination: destination, skip: true}, nil
-		case "overwrite":
+		case conflict == "overwrite" && !inFlight:
 		default:
+			// An in-flight sibling has no file to back up or replace yet, so
+			// even overwrite picks a fresh name rather than clobber it.
+			existing = false
 			for i := 1; ; i++ {
 				candidate := filepath.Join(dir, strings.TrimSuffix(base, "."+targetExt)+" ("+strconv.Itoa(i)+")."+targetExt)
-				if _, err := os.Stat(candidate); os.IsNotExist(err) {
+				if _, err := os.Stat(candidate); os.IsNotExist(err) && !taken(candidate) {
 					destination = candidate
 					break
 				}
 			}
 		}
-	} else if !os.IsNotExist(err) {
-		return OutputPlan{}, err
 	}
 	tempFile, err := os.CreateTemp(dir, ".file-converter-*")
 	if err != nil {

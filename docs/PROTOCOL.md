@@ -65,6 +65,9 @@ Targets are ordered by the user's toolbar profile, so frontends keep the order.
 ### `convert`
 `params: {files: [path], preset: string, output_dir?: string, on_conflict?: "rename"|"skip"|"overwrite", quality?: 1..100, max_size?: positive integer, background?: color, recursive?: bool}`
 
+### Concurrency
+Files in a job convert in parallel, up to `fcd serve --max-workers N` at once (default: the CPU count, at most 8). Jobs themselves run one after another in submission order. Video conversions (video source or video target) share a single lane and never overlap, because FFmpeg already uses every core; with more than one worker, the other files use the remaining workers. Destinations are reserved while a conversion runs, so same-named outputs from parallel files still get distinct names (`name.jpg`, `name (1).jpg`). Results keep input order whatever order files finish in. Cancelling a queued job completes it as `cancelled` without running anything; cancelling a running job stops its conversions and rolls back unpublished outputs.
+
 ### Folders
 `files` may contain folders as well as files. A folder contributes its top-level files, or every file below it when `recursive` is true. Expansion is deterministic: files keep request order and the files a folder contributes are sorted by path. Hidden files and folders and symbolic links found while scanning are skipped, so a scan never leaves the folder. Files named directly are kept even if hidden.
 

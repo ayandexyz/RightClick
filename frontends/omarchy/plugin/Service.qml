@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import "counts.js" as Counts
 
 Item {
   id: root
@@ -30,6 +31,14 @@ Item {
     }
     return count
   }
+  // Per-file outcomes summed over every tracked job.
+  readonly property var fileCounts: {
+    var total = Counts.empty()
+    for (var id in jobs) total = Counts.add(total, Counts.summarize(jobs[id].files))
+    return total
+  }
+  readonly property string fileSummary: Counts.describe(fileCounts)
+  function jobSummary(job) { return Counts.describe(Counts.summarize(job.files)) }
   readonly property int completedCount: {
     var count = 0
     for (var id in jobs) if (jobs[id].state === "completed" || jobs[id].state === "completed_with_errors" || jobs[id].state === "failed" || jobs[id].state === "cancelled") count++

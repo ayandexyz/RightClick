@@ -685,8 +685,8 @@ func TestManagerRestoresOverwriteDestinationWhenCancelledAfterPlanning(t *testin
 	defer func() { planOutputPath = originalPlan }()
 	planningPage2 := make(chan struct{})
 	release := make(chan struct{})
-	planOutputPath = func(dir, source, ext string, page int, conflict protocol.ConflictPolicy) (engine.OutputPlan, error) {
-		plan, err := engine.PlanOutputPath(dir, source, ext, page, conflict)
+	planOutputPath = func(dir, source, ext string, page int, conflict protocol.ConflictPolicy, taken func(string) bool) (engine.OutputPlan, error) {
+		plan, err := engine.PlanOutputPathExcluding(dir, source, ext, page, conflict, taken)
 		if page == 2 {
 			close(planningPage2)
 			<-release
@@ -909,12 +909,12 @@ func TestManagerCleansEarlierPlansWhenLaterPagePlanningFails(t *testing.T) {
 	original := planOutputPath
 	defer func() { planOutputPath = original }()
 	calls := 0
-	planOutputPath = func(dir, source, ext string, page int, conflict protocol.ConflictPolicy) (engine.OutputPlan, error) {
+	planOutputPath = func(dir, source, ext string, page int, conflict protocol.ConflictPolicy, taken func(string) bool) (engine.OutputPlan, error) {
 		calls++
 		if page == 2 {
 			return engine.OutputPlan{}, fmt.Errorf("planning failure")
 		}
-		return engine.PlanOutputPath(dir, source, ext, page, conflict)
+		return engine.PlanOutputPathExcluding(dir, source, ext, page, conflict, taken)
 	}
 	r := registry.New()
 	r.Register(&fakeMultiConverter{pages: 2})

@@ -23,6 +23,7 @@ func main() {
 	}
 	flags := flag.NewFlagSet("serve", flag.ExitOnError)
 	idleExit := flags.Duration("idle-exit", 5*time.Minute, "exit after this duration without clients or jobs (0 disables it)")
+	maxWorkers := flags.Int("max-workers", jobs.DefaultWorkers(), "maximum conversions to run at once")
 	_ = flags.Parse(os.Args[2:])
 	path, err := transport.SocketPath()
 	if err != nil {
@@ -37,6 +38,7 @@ func main() {
 	defer cleanup()
 	engines, enginePath := setupEngines()
 	manager := jobs.NewManagerWithRegistry(engines)
+	manager.SetMaxWorkers(*maxWorkers)
 	defer manager.Close()
 	srv := server.New(server.Dependencies{Jobs: manager, Registry: engines, Engine: enginePath, Version: "0.1.0"})
 	stop := make(chan os.Signal, 1)
