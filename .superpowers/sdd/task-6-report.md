@@ -55,3 +55,10 @@ The real FFmpeg E2E test passed in this environment with both dependencies insta
 - Both E2E conversion helpers reject zero-byte outputs, and `ffprobe` validates the MP4 container/video stream and MP3 container/audio stream.
 - The video target assertion remains four video routes plus all twelve audio routes because the MKV fixture is excluded by same-format rules. The MP3 target assertion remains the eleven other audio routes and no video routes.
 - Fresh verification: `gofmt -w e2e_test.go`, `go test ./...`, `go test ./... -run TestE2E -v`, `go vet ./...`, and `git diff --check` all exited successfully. The dedicated FFmpeg E2E test passed.
+
+## Final review follow-up (2026-10-20)
+
+- Replaced the raw E2E reader with a connection-scoped stream that buffers unmatched messages. `waitForJob` can now observe a fast `job.finished` event before the convert response, retain it, then correlate it by the response job ID and preset without discarding it.
+- Applied a deadline directly to the `net.Conn` before each buffered read. A stalled daemon read now returns at the requested timeout instead of blocking past the helper's deadline check.
+- Existing image and FFmpeg conversion flows use the same stream and retain their request/event behavior.
+- Fresh verification: `gofmt -w e2e_test.go`, `go test ./...`, `go test ./... -run TestE2E -v`, `go test ./... -run '^TestE2E|^TestDaemonEndToEndImageConversion$' -count=1`, `go vet ./...`, and `git diff --check` all exited successfully. Image and FFmpeg E2E tests passed.

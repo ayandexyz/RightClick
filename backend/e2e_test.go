@@ -50,9 +50,9 @@ func TestDaemonEndToEndImageConversion(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	reader := bufio.NewReader(conn)
+	stream := newE2EStream(conn)
 
-	hello := request(t, conn, reader, map[string]any{
+	hello := request(t, stream, map[string]any{
 		"id": 1, "method": "hello", "params": map[string]any{"client": "e2e", "protocol": 1},
 	})
 	if hello["error"] != nil {
@@ -69,7 +69,7 @@ func TestDaemonEndToEndImageConversion(t *testing.T) {
 	}
 	outputDir := t.TempDir()
 
-	targets := request(t, conn, reader, map[string]any{
+	targets := request(t, stream, map[string]any{
 		"id": 2, "method": "targets", "params": map[string]any{"files": []string{input}},
 	})
 	if targets["error"] != nil {
@@ -86,7 +86,7 @@ func TestDaemonEndToEndImageConversion(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	jobID, finished := waitForJob(t, reader, 3, "image-to-jpeg", 15*time.Second)
+	jobID, finished := waitForJob(t, stream, 3, "image-to-jpeg", 15*time.Second)
 	job, ok := finished["data"].(map[string]any)
 	if !ok || job["state"] != "completed" {
 		t.Fatalf("unexpected finished job: %#v", finished)
@@ -124,15 +124,15 @@ func TestE2EFFmpegMediaConversion(t *testing.T) {
 		t.Fatalf("generate media fixture: %v\\n%s", err, output)
 	}
 
-	conn, reader, cleanup := startE2EDaemon(t)
+	conn, stream, cleanup := startE2EDaemon(t)
 	defer cleanup()
-	if hello := request(t, conn, reader, map[string]any{
+	if hello := request(t, stream, map[string]any{
 		"id": 1, "method": "hello", "params": map[string]any{"client": "e2e", "protocol": 1},
 	}); hello["error"] != nil {
 		t.Fatalf("hello failed: %#v", hello)
 	}
 
-	targets := request(t, conn, reader, map[string]any{
+	targets := request(t, stream, map[string]any{
 		"id": 2, "method": "targets", "params": map[string]any{"files": []string{video}},
 	})
 	if targets["error"] != nil {
@@ -141,12 +141,12 @@ func TestE2EFFmpegMediaConversion(t *testing.T) {
 	assertTargetPresets(t, targets, append([]string{"video-to-mp4", "video-to-mov", "video-to-webm", "video-to-avi"}, audioPresetsForE2E()...))
 
 	outputDir := t.TempDir()
-	mp4 := convertAndAssertOutput(t, conn, reader, 3, video, "video-to-mp4", outputDir, ".mp4")
+	mp4 := convertAndAssertOutput(t, conn, stream, 3, video, "video-to-mp4", outputDir, ".mp4")
 	assertMediaOutput(t, mp4, "mp4", "video")
-	mp3 := convertAndAssertOutput(t, conn, reader, 4, video, "audio-to-mp3", outputDir, ".mp3")
+	mp3 := convertAndAssertOutput(t, conn, stream, 4, video, "audio-to-mp3", outputDir, ".mp3")
 	assertMediaOutput(t, mp3, "mp3", "audio")
 
-	audioTargets := request(t, conn, reader, map[string]any{
+	audioTargets := request(t, stream, map[string]any{
 		"id": 5, "method": "targets", "params": map[string]any{"files": []string{mp3}},
 	})
 	if audioTargets["error"] != nil {
@@ -163,7 +163,7 @@ func TestE2EFFmpegMediaConversion(t *testing.T) {
 	}
 }
 
-func startE2EDaemon(t *testing.T) (net.Conn, *bufio.Reader, func()) {
+func startE2EDaemon(t *testing.T) (net.Conn, *e2eStream, func()) {
 	t.Helper()
 	runtimeDir := t.TempDir()
 	socket := filepath.Join(runtimeDir, "file-converter", "fcd.sock")
@@ -185,53 +185,59 @@ func startE2EDaemon(t *testing.T) (net.Conn, *bufio.Reader, func()) {
 		daemon.Wait()
 		t.Fatal(err)
 	}
-	return conn, bufio.NewReader(conn), func() {
+	return conn, newE2EStream(conn), func() {
 		_ = conn.Close()
 		_ = daemon.Process.Kill()
 		_, _ = daemon.Process.Wait()
 	}
 }
 
-func waitForJob(t *testing.T, reader *bufio.Reader, requestID int, preset string, timeout time.Duration) (string, wireMessage) {
+func waitForJob(t *testing.T, stream *e2eStream, requestID int, preset string, timeout time.Duration) (string, wireMessage) {
 	t.Helper()
+	deadline := time.Now().Add(timeout)
 	var jobID string
-	deadline := time.After(timeout)
 	for {
-		select {
-		case <-deadline:
+		message, ok := stream.takeMatching(func(message wireMessage) bool {
+			responseID, responseOK := message["id"].(float64)
+			if responseOK && int(responseID) == requestID {
+				result, resultOK := message["result"].(map[string]any)
+				if message["error"] != nil {
+					t.Fatalf("%s failed: %#v", preset, message)
+				}
+				if !resultOK {
+					t.Fatalf("%s response missing result: %#v", preset, message)
+				}
+				jobID, _ = result["job"].(string)
+				if jobID == "" {
+					t.Fatalf("%s response missing job id: %#v", preset, message)
+				}
+				return true
+			}
+			if message["event"] == "job.finished" {
+				job, jobOK := message["data"].(map[string]any)
+				return jobOK && jobID != "" && job["id"] == jobID && job["preset"] == preset
+			}
+			return false
+		})
+		if ok {
+			job, jobOK := message["data"].(map[string]any)
+			if jobOK && job["id"] == jobID && job["preset"] == preset {
+				return jobID, message
+			}
+			continue
+		}
+		if time.Now().After(deadline) {
 			t.Fatalf("timed out waiting for %s", preset)
-		default:
 		}
-		message, err := readMessage(reader)
+		message, err := stream.read(time.Until(deadline))
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("waiting for %s: %v", preset, err)
 		}
-		if responseID, ok := message["id"].(float64); ok && int(responseID) == requestID {
-			if message["error"] != nil {
-				t.Fatalf("%s failed: %#v", preset, message)
-			}
-			result, ok := message["result"].(map[string]any)
-			if !ok {
-				t.Fatalf("%s response missing result: %#v", preset, message)
-			}
-			jobID, _ = result["job"].(string)
-			if jobID == "" {
-				t.Fatalf("%s response missing job id: %#v", preset, message)
-			}
-			continue
-		}
-		if message["event"] != "job.finished" {
-			continue
-		}
-		job, ok := message["data"].(map[string]any)
-		if !ok || job["id"] != jobID || job["preset"] != preset {
-			continue
-		}
-		return jobID, message
+		stream.pending = append(stream.pending, message)
 	}
 }
 
-func convertAndAssertOutput(t *testing.T, conn net.Conn, reader *bufio.Reader, id int, input, preset, outputDir, extension string) string {
+func convertAndAssertOutput(t *testing.T, conn net.Conn, stream *e2eStream, id int, input, preset, outputDir, extension string) string {
 	t.Helper()
 	if err := writeMessage(conn, map[string]any{
 		"id": id, "method": "convert", "params": map[string]any{
@@ -240,7 +246,7 @@ func convertAndAssertOutput(t *testing.T, conn net.Conn, reader *bufio.Reader, i
 	}); err != nil {
 		t.Fatal(err)
 	}
-	jobID, finished := waitForJob(t, reader, id, preset, 30*time.Second)
+	jobID, finished := waitForJob(t, stream, id, preset, 30*time.Second)
 	job, ok := finished["data"].(map[string]any)
 	if !ok || job["state"] != "completed" {
 		t.Fatalf("unexpected %s job: %#v", preset, finished)
@@ -323,12 +329,39 @@ func audioPresetsForE2E() []string {
 	return []string{"audio-to-mp3", "audio-to-wav", "audio-to-flac", "audio-to-aac", "audio-to-m4a", "audio-to-ogg", "audio-to-opus", "audio-to-aiff", "audio-to-alac", "audio-to-ac3", "audio-to-amr", "audio-to-wma"}
 }
 
-func request(t *testing.T, conn net.Conn, reader *bufio.Reader, value map[string]any) wireMessage {
+type e2eStream struct {
+	conn    net.Conn
+	reader  *bufio.Reader
+	pending []wireMessage
+}
+
+func newE2EStream(conn net.Conn) *e2eStream {
+	return &e2eStream{conn: conn, reader: bufio.NewReader(conn)}
+}
+
+func (stream *e2eStream) read(timeout time.Duration) (wireMessage, error) {
+	if err := stream.conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+		return nil, err
+	}
+	return readMessage(stream.reader)
+}
+
+func (stream *e2eStream) takeMatching(match func(wireMessage) bool) (wireMessage, bool) {
+	for index, message := range stream.pending {
+		if match(message) {
+			stream.pending = append(stream.pending[:index], stream.pending[index+1:]...)
+			return message, true
+		}
+	}
+	return nil, false
+}
+
+func request(t *testing.T, stream *e2eStream, value map[string]any) wireMessage {
 	t.Helper()
-	if err := writeMessage(conn, value); err != nil {
+	if err := writeMessage(stream.conn, value); err != nil {
 		t.Fatal(err)
 	}
-	message, err := readMessage(reader)
+	message, err := stream.read(15 * time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
