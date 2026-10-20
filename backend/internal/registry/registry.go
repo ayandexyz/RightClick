@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"file-converter/backend/internal/engine"
 	"file-converter/backend/internal/formats"
 	"file-converter/backend/internal/protocol"
 )
@@ -66,7 +67,10 @@ func (r *Registry) TargetsForFiles(paths []string) ([]protocol.Target, error) {
 	for _, path := range paths {
 		source, err := formats.Detect(path)
 		if err != nil {
-			return nil, err
+			source, err = r.mediaSource(path)
+			if err != nil {
+				return nil, err
+			}
 		}
 		available := make(map[formats.Format]bool)
 		for _, target := range allSupportedFormats() {
@@ -94,6 +98,37 @@ func (r *Registry) TargetsForFiles(paths []string) ([]protocol.Target, error) {
 		}
 	}
 	return out, nil
+}
+
+type MediaProber interface {
+	Probe(context.Context, string) (engine.MediaKind, error)
+}
+
+func (r *Registry) mediaSource(path string) (formats.Format, error) {
+	for _, registered := range r.engines {
+		prober, ok := registered.(MediaProber)
+		if !ok {
+			continue
+		}
+		if _, err := registered.Available(); err != nil {
+			continue
+		}
+		kind, err := prober.Probe(context.Background(), path)
+		if err != nil {
+			continue
+		}
+		switch kind {
+		case engine.MediaAudio:
+			if format, ok := formats.FormatFromExtension(path); ok && formats.IsAudioFormat(format) {
+				return format, nil
+			}
+		case engine.MediaVideo:
+			if format, ok := formats.FormatFromExtension(path); ok && formats.IsVideoFormat(format) {
+				return format, nil
+			}
+		}
+	}
+	return "", formats.ErrUnsupported
 }
 
 func allSupportedFormats() []formats.Format {

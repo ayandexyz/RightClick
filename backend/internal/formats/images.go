@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"file-converter/backend/internal/protocol"
 )
@@ -192,6 +193,37 @@ func brandInFTYP(path string, size uint32) Format {
 		return HEIC
 	}
 	return ""
+}
+
+func FormatFromExtension(path string) (Format, bool) {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".mp4":
+		return MP4, true
+	case ".mov":
+		return MOV, true
+	case ".webm":
+		return WebM, true
+	case ".mkv":
+		return MKV, true
+	case ".avi":
+		return AVI, true
+	case ".mp3":
+		return MP3, true
+	case ".wav":
+		return WAV, true
+	case ".flac":
+		return FLAC, true
+	case ".aac":
+		return AAC, true
+	case ".m4a":
+		return M4A, true
+	case ".ogg":
+		return OGG, true
+	case ".opus":
+		return Opus, true
+	default:
+		return "", false
+	}
 }
 
 func IsVideoFormat(format Format) bool {
