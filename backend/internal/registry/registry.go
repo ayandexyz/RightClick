@@ -39,11 +39,21 @@ func (r *Registry) Register(engine Engine) {
 }
 
 func (r *Registry) Resolve(source, target formats.Format) (Engine, error) {
+	var unavailable error
 	for _, engine := range r.engines {
 		_, err := engine.Available()
-		if err == nil && engine.Supports(source, target) {
+		if err != nil {
+			if unavailable == nil {
+				unavailable = err
+			}
+			continue
+		}
+		if engine.Supports(source, target) {
 			return engine, nil
 		}
+	}
+	if unavailable != nil {
+		return nil, fmt.Errorf("no engine supports %s to %s: %w", source, target, unavailable)
 	}
 	return nil, fmt.Errorf("no engine supports %s to %s", source, target)
 }

@@ -2,9 +2,11 @@ package registry
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"file-converter/backend/internal/formats"
@@ -97,4 +99,17 @@ func (allImageEngine) Supports(source, target formats.Format) bool {
 }
 func (allImageEngine) Convert(context.Context, string, formats.Format, string, formats.Format, protocol.ImageOptions) error {
 	return nil
+}
+
+type missingEngine struct{ fakeEngine }
+
+func (missingEngine) Available() (string, error) { return "", errors.New("imagemagick not found") }
+
+func TestResolveReportsUnavailableEngine(t *testing.T) {
+	r := New()
+	r.Register(missingEngine{fakeEngine{id: "imagemagick"}})
+	_, err := r.Resolve(formats.PNG, formats.WebP)
+	if err == nil || !strings.Contains(err.Error(), "imagemagick not found") {
+		t.Fatalf("error = %v, want imagemagick not found", err)
+	}
 }

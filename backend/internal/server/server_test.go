@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,7 +19,14 @@ import (
 
 type testEngine struct {
 	block   bool
+	mu      sync.Mutex
 	options protocol.ImageOptions
+}
+
+func (e *testEngine) lastOptions() protocol.ImageOptions {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.options
 }
 
 func (e *testEngine) ID() string                 { return "test" }
@@ -27,7 +35,9 @@ func (e *testEngine) Supports(source, target formats.Format) bool {
 	return source != target && source != "" && target != ""
 }
 func (e *testEngine) Convert(ctx context.Context, _ string, _ formats.Format, destination string, _ formats.Format, options protocol.ImageOptions) error {
+	e.mu.Lock()
 	e.options = options
+	e.mu.Unlock()
 	if e.block {
 		<-ctx.Done()
 		return ctx.Err()
@@ -274,12 +284,12 @@ func TestServerNormalizesBackgroundOption(t *testing.T) {
 	}
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if engine.options.Background == "#abc" {
+		if engine.lastOptions().Background == "#abc" {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("background was not normalized: %#v", engine.options)
+	t.Fatalf("background was not normalized: %#v", engine.lastOptions())
 }
 
 func TestServerConvertReturnsJobAndFinishedEvent(t *testing.T) {

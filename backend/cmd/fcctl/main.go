@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,6 +21,9 @@ type command struct {
 	preset     string
 	outputDir  string
 	conflict   string
+	quality    *int
+	maxSize    *int
+	background string
 	job        string
 	jsonOutput bool
 }
@@ -136,6 +140,28 @@ func parseArgs(args []string) (command, error) {
 				return command{}, err
 			}
 			cmd.outputDir, i = value, next
+		case "--quality", "--max-size":
+			flag := args[i]
+			value, next, err := optionValue(args, i)
+			if err != nil {
+				return command{}, err
+			}
+			n, err := strconv.Atoi(value)
+			if err != nil {
+				return command{}, fmt.Errorf("%s must be an integer", flag)
+			}
+			if flag == "--quality" {
+				cmd.quality = &n
+			} else {
+				cmd.maxSize = &n
+			}
+			i = next
+		case "--background":
+			value, next, err := optionValue(args, i)
+			if err != nil {
+				return command{}, err
+			}
+			cmd.background, i = value, next
 		case "--on-conflict":
 			value, next, err := optionValue(args, i)
 			if err != nil {
@@ -168,7 +194,7 @@ func parseArgs(args []string) (command, error) {
 	if cmd.name == "cancel" && cmd.job == "" {
 		return command{}, fmt.Errorf("job id is required")
 	}
-	if cmd.name != "convert" && (cmd.outputDir != "" || cmd.preset != "") {
+	if cmd.name != "convert" && (cmd.outputDir != "" || cmd.preset != "" || cmd.quality != nil || cmd.maxSize != nil || cmd.background != "") {
 		return command{}, fmt.Errorf("conversion options require convert")
 	}
 	return cmd, nil
@@ -217,7 +243,17 @@ func commandRequest(cmd command) protocol.Request {
 	case "cancel":
 		return protocol.Request{ID: 1, Method: "cancel", Params: raw(map[string]any{"job": cmd.job})}
 	default:
-		return protocol.Request{ID: 1, Method: "convert", Params: raw(map[string]any{"files": cmd.files, "preset": cmd.preset, "output_dir": cmd.outputDir, "on_conflict": cmd.conflict})}
+		params := map[string]any{"files": cmd.files, "preset": cmd.preset, "output_dir": cmd.outputDir, "on_conflict": cmd.conflict}
+		if cmd.quality != nil {
+			params["quality"] = *cmd.quality
+		}
+		if cmd.maxSize != nil {
+			params["max_size"] = *cmd.maxSize
+		}
+		if cmd.background != "" {
+			params["background"] = cmd.background
+		}
+		return protocol.Request{ID: 1, Method: "convert", Params: raw(params)}
 	}
 }
 
@@ -267,6 +303,6 @@ func formatHumanEvent(message wireEvent) string {
 
 func raw(value any) json.RawMessage { data, _ := json.Marshal(value); return data }
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: fcctl hello | targets FILE... [--json] | convert FILE... (--to png|jpeg|webp|jxl | --preset PRESET) [--output-dir DIR] [--on-conflict POLICY] [--json] | cancel JOB [--json]")
+	fmt.Fprintln(os.Stderr, "usage: fcctl hello | targets FILE... [--json] | convert FILE... (--to png|jpeg|webp|jxl|avif|gif|bmp|tiff|ico|heic | --preset PRESET) [--quality 1-100] [--max-size PX] [--background COLOR] [--output-dir DIR] [--on-conflict POLICY] [--json] | cancel JOB [--json]")
 }
 func fatal(err error) { fmt.Fprintln(os.Stderr, err); os.Exit(1) }

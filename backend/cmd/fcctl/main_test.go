@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -37,5 +38,31 @@ func TestFormatFailedEventIncludesPerFileError(t *testing.T) {
 	line := formatHumanEvent(message)
 	if !strings.Contains(line, "file not found") || !strings.Contains(line, "/tmp/missing.png") {
 		t.Fatalf("unexpected output: %q", line)
+	}
+}
+
+func TestParseConvertImageOptions(t *testing.T) {
+	cmd, err := parseArgs([]string{"convert", "/a.png", "--to", "jpeg", "--quality", "80", "--max-size", "2048", "--background", "#fff"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var params map[string]any
+	if err := json.Unmarshal(commandRequest(cmd).Params, &params); err != nil {
+		t.Fatal(err)
+	}
+	if params["quality"] != float64(80) || params["max_size"] != float64(2048) || params["background"] != "#fff" {
+		t.Fatalf("params = %#v", params)
+	}
+}
+
+func TestParseImageOptionsRejectBadValuesAndNonConvert(t *testing.T) {
+	for _, args := range [][]string{
+		{"convert", "/a.png", "--to", "jpeg", "--quality", "high"},
+		{"convert", "/a.png", "--to", "jpeg", "--max-size"},
+		{"targets", "/a.png", "--quality", "80"},
+	} {
+		if _, err := parseArgs(args); err == nil {
+			t.Fatalf("parseArgs(%v) succeeded", args)
+		}
 	}
 }
