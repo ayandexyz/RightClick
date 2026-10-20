@@ -69,6 +69,7 @@ type job struct {
 
 	publicationMu sync.Mutex
 	published     bool
+	pending       []engine.OutputPlan
 }
 
 func NewManager(converter Converter) *Manager {
@@ -163,6 +164,9 @@ func (m *Manager) Cancel(id string) error {
 	defer j.publicationMu.Unlock()
 	if !j.published {
 		j.cancel()
+		for _, plan := range j.pending {
+			plan.Rollback()
+		}
 	}
 	return nil
 }
@@ -314,10 +318,27 @@ func (m *Manager) run(j *job) {
 			emitter.emit("job.updated", false)
 		}
 	}
+	beforePublish()
+	j.publicationMu.Lock()
+	if j.ctx.Err() != nil {
+		for _, plan := range j.pending {
+			plan.Rollback()
+		}
+		j.pending = nil
+	} else {
+		j.published = true
+		for _, plan := range j.pending {
+			plan.Finalize()
+		}
+		j.pending = nil
+	}
+	j.publicationMu.Unlock()
 	if j.ctx.Err() != nil {
 		for i := range files {
-			if files[i].State == "pending" || files[i].State == "running" {
+			if files[i].State == "pending" || files[i].State == "running" || files[i].State == "done" || files[i].State == "skipped" {
 				files[i].State = "cancelled"
+				files[i].Progress = 0
+				files[i].Outputs = nil
 			}
 		}
 		emitter.files = files
@@ -450,7 +471,6 @@ func (m *Manager) convertMany(j *job, index int, file protocol.FileJob, route re
 			}
 		}
 	}
-	beforePublish()
 	j.publicationMu.Lock()
 	if j.ctx.Err() != nil {
 		j.publicationMu.Unlock()
@@ -459,11 +479,8 @@ func (m *Manager) convertMany(j *job, index int, file protocol.FileJob, route re
 		file.State = "cancelled"
 		return fileResult{index: index, file: file}
 	}
-	j.published = true
+	j.pending = append(j.pending, plans...)
 	j.publicationMu.Unlock()
-	for _, plan := range plans {
-		plan.Finalize()
-	}
 	if len(file.Outputs) == 0 {
 		file.State = "skipped"
 	} else {
@@ -544,7 +561,6 @@ func (m *Manager) convertFile(j *job, index int, source string, target formats.F
 		file.Error = &protocol.FileError{Code: "internal", Message: err.Error()}
 		return fileResult{index: index, file: file}
 	}
-	beforePublish()
 	j.publicationMu.Lock()
 	if j.ctx.Err() != nil {
 		j.publicationMu.Unlock()
@@ -552,8 +568,7 @@ func (m *Manager) convertFile(j *job, index int, source string, target formats.F
 		file.State = "cancelled"
 		return fileResult{index: index, file: file}
 	}
-	j.published = true
-	plan.Finalize()
+	j.pending = append(j.pending, plan)
 	j.publicationMu.Unlock()
 	file.State, file.Progress, file.Outputs = "done", 1, []string{output}
 	return fileResult{index: index, file: file}

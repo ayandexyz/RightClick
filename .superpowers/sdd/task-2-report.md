@@ -61,8 +61,9 @@ The earlier Task 2 implementation added the registry routing coverage in `backen
 - The actual PDF engine implementation remains intentionally deferred to the renderer task; Task 2 only covers safe multi-page job planning, validation, and publication.
 
 ## Final publication-boundary race fix
-- Coordinated cancellation with a per-job publication mutex and publication flag. Cancellation now linearizes against the final publication boundary: cancellation that wins rolls back all committed pages and overwrite backups, while cancellation after publication cannot change a successful result to cancelled.
-- Added a deterministic `beforePublish` barrier seam and `TestManagerCancellationBeforePublicationRollsBackAllOutputs`, proving cancellation immediately before finalization leaves no outputs.
+- Coordinated cancellation with a per-job publication mutex and job-level pending-plan list. Individual file workers stage committed outputs, but only the manager's final job boundary finalizes them. Cancellation before overall completion rolls back every pending plan, including outputs from already-finished files; cancellation after publication cannot change a successful result to cancelled.
+- Added deterministic `beforePublish` barrier coverage for both single-file and multi-file jobs, proving cancellation immediately before overall publication leaves no outputs.
+- This follow-up commit changes only `backend/internal/jobs/manager.go`, `backend/internal/jobs/manager_test.go`, and this report. Earlier Task 2 implementation changes to engine/registry are historical context, not part of this commit.
 
 ## Final publication-boundary verification
 - Focused tests passed: `go test ./internal/jobs -run 'TestManager(CancellationBeforePublicationRollsBackAllOutputs|CancelsDuringCommitAndPublishesNoOutputs|RestoresOverwrittenPagesWhenLaterCommitFails)' -count=1`.
