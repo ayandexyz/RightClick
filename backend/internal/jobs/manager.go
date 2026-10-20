@@ -332,7 +332,11 @@ func (m *Manager) run(j *job) {
 }
 
 func (m *Manager) convertMany(j *job, index int, file protocol.FileJob, route registry.MultiOutputEngine, source string, sourceFormat, target formats.Format, ext string) fileResult {
-	renderDir, err := os.MkdirTemp(j.req.OutputDir, ".file-converter-render-")
+	outputDir := j.req.OutputDir
+	if outputDir == "" {
+		outputDir = filepath.Dir(source)
+	}
+	renderDir, err := os.MkdirTemp(outputDir, ".file-converter-render-")
 	if err != nil {
 		file.State = "failed"
 		file.Error = &protocol.FileError{Code: "internal", Message: err.Error()}
@@ -354,20 +358,39 @@ func (m *Manager) convertMany(j *job, index int, file protocol.FileJob, route re
 		file.Error = &protocol.FileError{Code: "internal", Message: "multi-page engine returned no outputs"}
 		return fileResult{index: index, file: file}
 	}
+	if j.ctx.Err() != nil {
+		file.State = "cancelled"
+		return fileResult{index: index, file: file}
+	}
 	plans := make([]engine.OutputPlan, len(pages))
+	removePlans := func() {
+		for _, plan := range plans {
+			plan.RemoveTemp()
+		}
+	}
 	for i, page := range pages {
 		clean := filepath.Clean(page)
-		if filepath.Dir(clean) != filepath.Clean(renderDir) || filepath.Ext(clean) != "."+ext {
+		info, statErr := os.Lstat(clean)
+		if statErr != nil || filepath.Dir(clean) != filepath.Clean(renderDir) || filepath.Ext(clean) != "."+ext || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+			removePlans()
 			file.State = "failed"
 			file.Error = &protocol.FileError{Code: "internal", Message: "multi-page engine returned unsafe output"}
 			return fileResult{index: index, file: file}
 		}
-		plans[i], err = engine.PlanOutputPath(j.req.OutputDir, source, ext, i+1, j.req.Conflict)
+		plans[i], err = engine.PlanOutputPath(outputDir, source, ext, i+1, j.req.Conflict)
 		if err != nil {
+			removePlans()
 			file.State = "failed"
 			file.Error = &protocol.FileError{Code: "internal", Message: err.Error()}
 			return fileResult{index: index, file: file}
 		}
+	}
+	if j.ctx.Err() != nil {
+		for _, pending := range plans {
+			pending.RemoveTemp()
+		}
+		file.State = "cancelled"
+		return fileResult{index: index, file: file}
 	}
 	for i, plan := range plans {
 		if plan.Skipped() {
@@ -382,16 +405,34 @@ func (m *Manager) convertMany(j *job, index int, file protocol.FileJob, route re
 			return fileResult{index: index, file: file}
 		}
 	}
+	if j.ctx.Err() != nil {
+		removePlans()
+		file.State = "cancelled"
+		return fileResult{index: index, file: file}
+	}
+	committed := make([]string, 0, len(plans))
 	for _, plan := range plans {
 		if !plan.Skipped() {
-			if _, err := plan.Commit(); err != nil {
-				for _, pending := range plans {
-					pending.RemoveTemp()
+			if j.ctx.Err() != nil {
+				removePlans()
+				for _, destination := range committed {
+					_ = os.Remove(destination)
 				}
+				file.Outputs = nil
+				file.State = "cancelled"
+				return fileResult{index: index, file: file}
+			}
+			if _, err := plan.Commit(); err != nil {
+				removePlans()
+				for _, destination := range committed {
+					_ = os.Remove(destination)
+				}
+				file.Outputs = nil
 				file.State = "failed"
 				file.Error = &protocol.FileError{Code: "internal", Message: err.Error()}
 				return fileResult{index: index, file: file}
 			}
+			committed = append(committed, plan.Destination)
 			file.Outputs = append(file.Outputs, plan.Destination)
 		}
 	}

@@ -85,6 +85,40 @@ func TestTargetsForPDFInputsExposeExactlyPDFPresets(t *testing.T) {
 	assertPresets(t, got, []string{"pdf-to-png", "pdf-to-jpeg", "pdf-to-webp"})
 }
 
+func TestTargetsForFilesExcludesPDFTargetsForRasterSVGMediaAndMixedInputs(t *testing.T) {
+	dir := t.TempDir()
+	paths := []string{
+		filepath.Join(dir, "photo.png"), filepath.Join(dir, "vector.svg"), filepath.Join(dir, "audio.mp3"), filepath.Join(dir, "document.pdf"),
+	}
+	if err := os.WriteFile(paths[0], []byte("\x89PNG\r\n\x1a\nfixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths[1], []byte(`<svg xmlns="http://www.w3.org/2000/svg"/>`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths[2], []byte("media fixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths[3], []byte("%PDF-1.7 fixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, files := range [][]string{{paths[0]}, {paths[1]}, {paths[2]}, {paths[3], paths[0]}} {
+		r := New()
+		r.Register(pdfImageEngine{})
+		r.Register(allImageEngine{})
+		r.Register(mediaEngine{kind: engine.MediaAudio})
+		got, err := r.TargetsForFiles(files)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, target := range got {
+			if strings.HasPrefix(target.Preset, "pdf-to-") {
+				t.Fatalf("files %v exposed PDF target %q", files, target.Preset)
+			}
+		}
+	}
+}
+
 func TestTargetsForFilesIncludesRegisteredMediaRoutes(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "photo.png")
 	if err := os.WriteFile(path, []byte("\x89PNG\r\n\x1a\nfixture"), 0o600); err != nil {

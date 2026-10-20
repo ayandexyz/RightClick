@@ -23,9 +23,14 @@ type fakeConverter struct {
 }
 
 type fakeMultiConverter struct {
-	pages       int
-	fail        bool
-	outsidePath string
+	pages         int
+	fail          bool
+	outsidePath   string
+	rendered      chan struct{}
+	release       <-chan struct{}
+	destinationCh chan string
+	outputMode    string
+	cancel        context.CancelFunc
 }
 
 func (f *fakeMultiConverter) ID() string                 { return "pdf" }
@@ -36,7 +41,24 @@ func (f *fakeMultiConverter) Supports(source, target formats.Format) bool {
 func (f *fakeMultiConverter) Convert(context.Context, string, formats.Format, string, formats.Format, protocol.ImageOptions) error {
 	return nil
 }
-func (f *fakeMultiConverter) ConvertMany(_ context.Context, _ string, _ formats.Format, destination string, target formats.Format, _ protocol.ImageOptions) ([]string, error) {
+func (f *fakeMultiConverter) ConvertMany(ctx context.Context, _ string, _ formats.Format, destination string, target formats.Format, _ protocol.ImageOptions) ([]string, error) {
+	if f.destinationCh != nil {
+		f.destinationCh <- destination
+	}
+	if f.rendered != nil {
+		select {
+		case <-f.rendered:
+		default:
+			close(f.rendered)
+		}
+	}
+	if f.release != nil {
+		select {
+		case <-f.release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 	if f.fail {
 		return nil, context.Canceled
 	}
@@ -46,6 +68,20 @@ func (f *fakeMultiConverter) ConvertMany(_ context.Context, _ string, _ formats.
 		if err := os.WriteFile(paths[i], []byte(fmt.Sprintf("page %d", i+1)), 0o600); err != nil {
 			return nil, err
 		}
+	}
+	if f.outputMode == "symlink" {
+		link := filepath.Join(destination, "page-link.png")
+		if err := os.Symlink(paths[0], link); err != nil {
+			return nil, err
+		}
+		return []string{link}, nil
+	}
+	if f.outputMode == "directory" {
+		dir := filepath.Join(destination, "page-dir.png")
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			return nil, err
+		}
+		return []string{dir}, nil
 	}
 	if f.outsidePath != "" {
 		return append(paths, f.outsidePath), nil
@@ -210,6 +246,118 @@ func TestManagerCommitsMultiPageOutputsInEngineOrder(t *testing.T) {
 	entries, err := os.ReadDir(output)
 	if err != nil || len(entries) != 2 {
 		t.Fatalf("output directory entries = %v, err = %v", entries, err)
+	}
+}
+
+func TestManagerUsesSourceDirectoryWhenOutputDirIsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "document.pdf")
+	if err := os.WriteFile(source, []byte("%PDF-1.7"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := registry.New()
+	r.Register(&fakeMultiConverter{pages: 1})
+	m := NewManagerWithRegistry(r)
+	defer m.Close()
+	events := make(chan protocol.Event, 8)
+	if _, err := m.Submit(SubmitRequest{Files: []string{source}, Preset: "pdf-to-png", Conflict: protocol.ConflictRename, Events: func(e protocol.Event) { events <- e }}); err != nil {
+		t.Fatal(err)
+	}
+	job := waitJob(t, events)
+	if job.Files[0].State != "done" || filepath.Dir(job.Files[0].Outputs[0]) != dir {
+		t.Fatalf("job = %+v", job)
+	}
+}
+
+func TestManagerDoesNotPublishMultiPageOutputsAfterCancellation(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "document.pdf")
+	if err := os.WriteFile(source, []byte("%PDF-1.7"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output := t.TempDir()
+	rendered := make(chan struct{})
+	release := make(chan struct{})
+	r := registry.New()
+	r.Register(&fakeMultiConverter{pages: 2, rendered: rendered, release: release})
+	m := NewManagerWithRegistry(r)
+	defer m.Close()
+	events := make(chan protocol.Event, 8)
+	id, err := m.Submit(SubmitRequest{Files: []string{source}, Preset: "pdf-to-png", OutputDir: output, Conflict: protocol.ConflictRename, Events: func(e protocol.Event) { events <- e }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-rendered
+	if err := m.Cancel(id); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	job := waitJob(t, events)
+	if job.State != "cancelled" || len(job.Files[0].Outputs) != 0 {
+		t.Fatalf("job = %+v", job)
+	}
+	entries, _ := os.ReadDir(output)
+	if len(entries) != 0 {
+		t.Fatalf("partial outputs = %v", entries)
+	}
+}
+
+func TestManagerRollsBackCommittedPagesWhenLaterCommitFails(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "document.pdf")
+	if err := os.WriteFile(source, []byte("%PDF-1.7"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output := t.TempDir()
+	if err := os.Mkdir(filepath.Join(output, "document-2.png"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	r := registry.New()
+	r.Register(&fakeMultiConverter{pages: 2})
+	m := NewManagerWithRegistry(r)
+	defer m.Close()
+	events := make(chan protocol.Event, 8)
+	if _, err := m.Submit(SubmitRequest{Files: []string{source}, Preset: "pdf-to-png", OutputDir: output, Conflict: protocol.ConflictOverwrite, Events: func(e protocol.Event) { events <- e }}); err != nil {
+		t.Fatal(err)
+	}
+	job := waitJob(t, events)
+	if job.Files[0].State != "failed" || len(job.Files[0].Outputs) != 0 {
+		t.Fatalf("job = %+v", job)
+	}
+	if _, err := os.Stat(filepath.Join(output, "document-1.png")); !os.IsNotExist(err) {
+		t.Fatalf("rolled back output exists: %v", err)
+	}
+}
+
+func TestManagerRejectsSymlinkAndNonRegularPageOutputs(t *testing.T) {
+	for _, name := range []string{"symlink", "directory"} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			source := filepath.Join(dir, "document.pdf")
+			if err := os.WriteFile(source, []byte("%PDF-1.7"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			outside := filepath.Join(dir, "outside.png")
+			if err := os.WriteFile(outside, []byte("x"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			converter := &fakeMultiConverter{pages: 1, outputMode: name}
+			if name == "symlink" {
+				converter.outsidePath = outside
+			}
+			r := registry.New()
+			r.Register(converter)
+			m := NewManagerWithRegistry(r)
+			defer m.Close()
+			events := make(chan protocol.Event, 8)
+			if _, err := m.Submit(SubmitRequest{Files: []string{source}, Preset: "pdf-to-png", OutputDir: t.TempDir(), Conflict: protocol.ConflictRename, Events: func(e protocol.Event) { events <- e }}); err != nil {
+				t.Fatal(err)
+			}
+			job := waitJob(t, events)
+			if job.Files[0].State != "failed" {
+				t.Fatalf("job = %+v", job)
+			}
+		})
 	}
 }
 
