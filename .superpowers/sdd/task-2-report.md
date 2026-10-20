@@ -28,7 +28,7 @@ Implemented Task 2 only. The PDF renderer itself was not implemented or changed.
 - The actual PDF engine implementation remains intentionally deferred to the renderer task.
 
 ## Task 2 review fixes
-Changed in this review-fix commit: `backend/internal/jobs/manager.go`, `backend/internal/jobs/manager_test.go`, `backend/internal/registry/registry_test.go`, and this report. `backend/internal/registry/registry.go` was not modified by this fix; its PDF target routing was already present and is covered by the added regression test.
+The earlier Task 2 implementation added the registry routing coverage in `backend/internal/registry/registry_test.go`. This approval-fix commit changes only `backend/internal/jobs/manager.go`, `backend/internal/jobs/manager_test.go`, `backend/internal/engine/imagemagick.go`, and this report; `backend/internal/registry/registry.go` and its existing tests are unchanged by the approval fix.
 
 - Use the effective output directory, falling back to the source directory when `OutputDir` is empty, before creating the private render directory.
 - Check cancellation immediately after `ConvertMany`, after planning/staging, and before each commit so cancellation does not publish pages.
@@ -55,6 +55,7 @@ Changed in this review-fix commit: `backend/internal/jobs/manager.go`, `backend/
 - `go vet ./...` passed with no diagnostics.
 - `gofmt -l internal/jobs/manager.go internal/jobs/manager_test.go internal/engine/imagemagick.go` produced no output; files are formatted.
 - `git diff --check` passed with no whitespace errors.
+- These commands were executed in `/tmp/file-converter-pdf/backend` (except `git diff --check`, executed at repository root).
 
 ## Remaining concerns
 - The actual PDF engine implementation remains intentionally deferred to the renderer task; Task 2 only covers safe multi-page job planning, validation, and publication.
