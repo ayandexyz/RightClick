@@ -2,7 +2,7 @@
 
 ## Scope
 
-Implemented only the dedicated FFmpeg engine and probe model requested for Task 2. Existing Task 1 format and protocol work was left unchanged, and later registry/daemon/job wiring was not added.
+Implemented the dedicated FFmpeg engine and probe model requested for Task 2, plus the minimum daemon registration required to make the engine reachable from the real application path. Existing Task 1 format/protocol work and later media job/target integration were otherwise left unchanged.
 
 ## Implementation
 
@@ -16,65 +16,58 @@ Created `backend/internal/engine/ffmpeg.go` with:
 - JSON stream classification where any video stream takes precedence, otherwise audio streams classify the input as audio.
 - Media-only route support for all Task 1 video/audio formats.
 - Rejection of audio-to-video and image/media routes.
-- Safe path checks using absolute paths and the existing unsafe basename rules.
+- Safe path checks using absolute paths and unsafe basename rules.
 - Deterministic command construction using individual arguments, `-y`, `-f <target>`, fixed video container defaults, `-vn` for audio outputs, and `--` before the destination path.
 - Process-group execution with `Setpgid: true` and process-group termination on context cancellation.
 
-Created `backend/internal/engine/ffmpeg_test.go` with TDD coverage for:
+Updated `backend/cmd/fcd/main.go` so the daemon registers both ImageMagick and FFmpeg independently. FFmpeg availability remains independently reported through the registry status path, so a missing FFmpeg binary does not prevent image engine registration.
 
-- Audio-only, video-only, and mixed stream JSON classification.
-- Invalid and unsupported probe responses.
-- Exact ffprobe argument construction through the injected probe.
-- Supported and rejected conversion routes.
-- All twelve media output routes and target format selection.
-- `-vn` audio extraction behavior.
-- Unsafe path and audio-to-video rejection.
-- Missing FFmpeg availability reporting.
+Added a daemon regression test in `backend/cmd/fcd/main_test.go` proving the runtime engine registry includes FFmpeg.
 
 ## TDD evidence
 
 1. Wrote the focused FFmpeg tests first.
-2. Ran `go test ./internal/engine -run FFmpeg -v` before implementation and observed the expected build failure because the FFmpeg types and parser did not exist.
-3. Implemented the minimal engine and parser.
-4. Re-ran the focused tests successfully.
-5. Added the complete output-route table coverage and re-ran the focused tests successfully.
+2. Ran `go test ./internal/engine -run FFmpeg -v` before implementation and observed the expected missing-type/parser build failure.
+3. Implemented the minimal engine and parser, then verified focused tests passed.
+4. Added all output-route coverage and verified it passed.
+5. After the reachability review identified missing daemon registration, wrote `TestEngineRegistryIncludesFFmpeg` first and observed the expected `undefined: newEngineRegistry` build failure.
+6. Added the smallest registry setup helper and FFmpeg registration, then verified the new test passed.
 
 ## Verification
 
-Focused engine tests:
+Focused engine and daemon tests:
 
 ```text
-go test ./internal/engine -run FFmpeg -v
-PASS
+go test ./cmd/fcd ./internal/engine
+ok
 ```
 
-Full engine package:
+Focused vet:
 
 ```text
-go test ./internal/engine -v
-PASS
+go vet ./cmd/fcd ./internal/engine
+passed
 ```
 
 Full backend suite:
 
 ```text
 go test ./...
+ok for all backend packages
 ```
 
-Most packages passed, but the pre-existing `internal/server.TestServerCancelStopsActiveJob` timed out after 10 minutes. The stack trace shows it blocked in the existing test engine/job manager cancellation path, not in the new FFmpeg tests. The full suite therefore did not complete successfully.
-
 `git diff --check` passed.
-
-`go vet ./...` was started as part of verification, but the full verification command sequence was interrupted by the 10-minute full-suite timeout before a usable vet result was available.
 
 ## Files changed
 
 - `backend/internal/engine/ffmpeg.go`
 - `backend/internal/engine/ffmpeg_test.go`
+- `backend/cmd/fcd/main.go`
+- `backend/cmd/fcd/main_test.go`
 - `.superpowers/sdd/task-2-report.md`
 
-## Concerns
+## Concerns / boundaries
 
-- This task intentionally does not register FFmpeg with the daemon or modify registry target discovery, job output planning, or server behavior. Those belong to later staged tasks.
-- The full backend suite has an existing cancellation timeout in `internal/server`; this remains unresolved and prevents claiming a fully green repository-wide test run.
-- Fixed codec defaults are included only for video containers and WebM, as required by the dedicated engine scope. Detailed codec/bitrate/progress options remain out of scope.
+- Registry target discovery, media input detection in jobs, output planning, server media behavior, CLI media presets, and end-to-end FFmpeg conversion remain later staged work.
+- The daemon now exposes FFmpeg in its runtime registry, but media routes will become fully usable only after those later integration tasks are completed.
+- Fixed codec defaults are included only for video containers and WebM. Detailed codec/bitrate/progress options remain out of scope.

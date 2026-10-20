@@ -35,11 +35,7 @@ func main() {
 		os.Exit(1)
 	}
 	defer cleanup()
-	imageEngine := engine.NewImageMagick(nil)
-	_ = imageEngine.ProbeCapabilities()
-	enginePath, _ := imageEngine.Available()
-	engines := registry.New()
-	engines.Register(imageEngine)
+	engines, enginePath := setupEngines()
 	manager := jobs.NewManagerWithRegistry(engines)
 	defer manager.Close()
 	srv := server.New(server.Dependencies{Jobs: manager, Registry: engines, Engine: enginePath, Version: "0.1.0"})
@@ -53,6 +49,21 @@ func main() {
 		}
 	}
 	srv.Wait()
+}
+
+func setupEngines() (*registry.Registry, string) {
+	imageEngine := engine.NewImageMagick(nil)
+	_ = imageEngine.ProbeCapabilities()
+	enginePath, _ := imageEngine.Available()
+	engines := registry.New()
+	engines.Register(imageEngine)
+	engines.Register(engine.NewFFmpeg(nil, nil))
+	return engines, enginePath
+}
+
+func newEngineRegistry() *registry.Registry {
+	engines, _ := setupEngines()
+	return engines
 }
 
 func isClosed(err error) bool {

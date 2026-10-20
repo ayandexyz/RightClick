@@ -17,3 +17,17 @@ func TestIsClosedRecognizesListenerCloseErrors(t *testing.T) {
 		t.Fatal("unexpectedly recognized unrelated error")
 	}
 }
+
+func TestEngineRegistryIncludesFFmpeg(t *testing.T) {
+	engines := newEngineRegistry()
+	var found bool
+	for _, registered := range engines.Engines() {
+		if registered.ID() == "ffmpeg" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("daemon engine registry does not include ffmpeg")
+	}
+}
