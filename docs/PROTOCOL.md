@@ -146,6 +146,43 @@ A failure is reported as `invalid_pdf` only when the input itself cannot be open
 
 Merge attributes an unreadable input to that file alone: the unreadable file is `failed` with its own code, and every other input is `skipped` with the notice `not merged: <basename> could not be read`. The job state becomes `failed`.
 
+### `pdf_info`
+`params: {file}` → `{pages: int, sizes?: [{w, h, rot}]}`
+
+Reports a document's page count and, when `pdfinfo` is installed, each page's
+size in points and its `/Rotate` value. The page count is authoritative and always
+present; `sizes` is omitted entirely when it could not be read, so a client must
+not treat a missing `sizes` as pages of zero size. Errors: `password_required`,
+`invalid_pdf`, `bad_request`.
+
+### `pdf_thumbnails`
+`params: {file, pages: [int], width?: int}` → `{pages: [{page, path, w, h}]}`
+
+Renders a thumbnail per requested page and returns the path to each PNG. `width`
+is the cap on the longest side in pixels, 64–800, default 200. At most 50 pages
+per request; page numbers start at 1 and must be within the document. A page
+already cached is returned without rendering.
+
+Thumbnails are cached privately: under
+`$XDG_CACHE_HOME/file-converter/thumbs` (falling back to
+`~/.cache/file-converter/thumbs`), in a directory created mode 0700 with files
+mode 0600. The cache key is the SHA-256 of the file's *content* plus the width,
+so a renamed or moved document reuses its thumbnails and an edited one does not.
+The cache is bounded by total size (256 MB) and age (7 days) and is pruned at
+daemon start and after each render batch; files younger than 60 seconds are never
+pruned, so a render in flight cannot lose its output.
+
+Errors: `password_required`, `invalid_pdf`, `bad_request`. A render failure is
+`internal`; a request the cache rejects (width out of range, too many pages, a
+page below 1) is `bad_request`.
+
+### `cache_clear`
+`params: {}` → `{removed: int}`
+
+Removes every cached thumbnail and reports how many files went. Reached from the
+CLI as `fcctl cache clear`. It removes everything or nothing, so it is safe to
+run at any time; a request in flight may re-render its pages afterwards.
+
 ### `jobs`
 `params: {}` → `{jobs: [Job]}` (running and recent, for a tray or history view)
 

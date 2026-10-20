@@ -78,6 +78,12 @@ func ValidateRequest(req Request) *Error {
 		code, msg = validateOperations(req.Params)
 	case "pdf_info":
 		code, msg = validatePDFInfo(req.Params)
+	case "pdf_thumbnails":
+		code, msg = validatePDFThumbnails(req.Params)
+	case "cache_clear":
+		// No params: clearing the whole cache is the only operation, and it
+		// carries no path a client could get wrong.
+		code, msg = validateCacheClear(req.Params)
 	case "run_operation":
 		code, msg = validateRunOperation(req.Params)
 	case "cancel":
@@ -237,6 +243,42 @@ func validatePDFInfo(params json.RawMessage) (string, string) {
 	if !filepath.IsAbs(p.File) {
 		return "bad_request", fmt.Sprintf("path must be absolute: %s", p.File)
 	}
+	return "", ""
+}
+
+// validatePDFThumbnails checks a thumbnail request. The document must be an
+// absolute path; the width and page-count bounds are enforced by the thumb
+// cache itself, which is their single source of truth, so this only rejects
+// requests that cannot mean anything.
+func validatePDFThumbnails(params json.RawMessage) (string, string) {
+	var p struct {
+		File  string `json:"file"`
+		Pages []int  `json:"pages"`
+		Width int    `json:"width"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return "bad_request", "invalid pdf_thumbnails params"
+	}
+	if p.File == "" {
+		return "bad_request", "file is required"
+	}
+	if !filepath.IsAbs(p.File) {
+		return "bad_request", fmt.Sprintf("path must be absolute: %s", p.File)
+	}
+	if len(p.Pages) == 0 {
+		return "bad_request", "pdf_thumbnails needs at least one page"
+	}
+	for _, page := range p.Pages {
+		if page < 1 {
+			return "bad_request", fmt.Sprintf("page numbers start at 1, got %d", page)
+		}
+	}
+	return "", ""
+}
+
+// validateCacheClear accepts anything: there is no per-request state, and a
+// client that sends params anyway has not made a mistake worth reporting.
+func validateCacheClear(json.RawMessage) (string, string) {
 	return "", ""
 }
 

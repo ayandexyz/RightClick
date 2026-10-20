@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -19,6 +20,7 @@ import (
 	"file-converter/backend/internal/pdfops"
 	"file-converter/backend/internal/protocol"
 	"file-converter/backend/internal/registry"
+	"file-converter/backend/internal/thumbs"
 )
 
 type Dependencies struct {
@@ -30,6 +32,11 @@ type Dependencies struct {
 	// PDFInfo serves pdf_info. The interface lives in pdfops so tests can pass
 	// a stub; the daemon constructs the real implementation.
 	PDFInfo pdfops.InfoBackend
+
+	// Thumbs renders and caches thumbnails for pdf_thumbnails and cache_clear.
+	// It is optional: without pdftocairo the daemon still serves every other
+	// method, and only thumbnail requests report that it is unavailable.
+	Thumbs *thumbs.Cache
 	// MenuPath overrides the menu policy file; empty uses menu.Path().
 	MenuPath string
 }
@@ -87,7 +94,15 @@ func (s *Server) ServeWithIdle(listener net.Listener, idle time.Duration) error 
 	}
 }
 
+// handle serves one client connection. A thumbnail request can take a while, so
+// the connection's context is cancelled once the loop ends or the connection
+// fails; that is what stops a render the client has abandoned.
+//
+// The context is deliberately not tied to a reader goroutine: this loop already
+// owns the connection's reads, and a second reader would race it for bytes.
 func (s *Server) handle(conn net.Conn) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	s.active.Add(1)
 	defer s.active.Add(-1)
 	defer conn.Close()
@@ -205,8 +220,30 @@ func (s *Server) handle(conn net.Conn) {
 			if write(protocol.Response{ID: req.ID, Result: s.handleOperations(req.Params)}) != nil {
 				return
 			}
+		case "pdf_thumbnails":
+			result, code, msg := s.handlePDFThumbnails(ctx, req.Params)
+			if code != "" {
+				if writeError(write, req.ID, code, msg) != nil {
+					return
+				}
+				continue
+			}
+			if write(protocol.Response{ID: req.ID, Result: result}) != nil {
+				return
+			}
+		case "cache_clear":
+			result, code, msg := s.handleCacheClear()
+			if code != "" {
+				if writeError(write, req.ID, code, msg) != nil {
+					return
+				}
+				continue
+			}
+			if write(protocol.Response{ID: req.ID, Result: result}) != nil {
+				return
+			}
 		case "pdf_info":
-			result, code, msg := s.handlePDFInfo(req.Params)
+			result, code, msg := s.handlePDFInfo(ctx, req.Params)
 			if code != "" {
 				if writeError(write, req.ID, code, msg) != nil {
 					return
@@ -499,7 +536,7 @@ func (s *Server) handleMenu(params json.RawMessage) (map[string]any, string, str
 // convenience that a missing pdfinfo only removes. Failures a client can act on
 // are reported with the same codes every other PDF surface uses, so an editor
 // and a menu phrase a locked or damaged file identically.
-func (s *Server) handlePDFInfo(params json.RawMessage) (map[string]any, string, string) {
+func (s *Server) handlePDFInfo(ctx context.Context, params json.RawMessage) (map[string]any, string, string) {
 	var p struct {
 		File string `json:"file"`
 	}
@@ -518,7 +555,7 @@ func (s *Server) handlePDFInfo(params json.RawMessage) (map[string]any, string, 
 	if s.deps.PDFInfo == nil {
 		return nil, "internal", "no PDF engine is available"
 	}
-	result, err := s.deps.PDFInfo.Pdf(context.Background(), p.File)
+	result, err := s.deps.PDFInfo.Pdf(ctx, p.File)
 	if err != nil {
 		return nil, pdfops.ErrorCode(err), err.Error()
 	}
@@ -531,4 +568,80 @@ func (s *Server) handlePDFInfo(params json.RawMessage) (map[string]any, string, 
 		out["sizes"] = sizes
 	}
 	return out, "", ""
+}
+
+// handlePDFThumbnails answers pdf_thumbnails: a thumbnail per requested page,
+// rendered on demand and cached privately. Missing pages are rendered; pages
+// already cached are returned immediately.
+//
+// Requests for a locked or damaged document fail with the same codes every
+// other PDF surface uses, so a page grid and a context menu phrase one file
+// identically.
+func (s *Server) handlePDFThumbnails(ctx context.Context, params json.RawMessage) (map[string]any, string, string) {
+	var p struct {
+		File  string `json:"file"`
+		Pages []int  `json:"pages"`
+		Width int    `json:"width"`
+	}
+	if json.Unmarshal(params, &p) != nil {
+		return nil, "bad_request", "invalid pdf_thumbnails params"
+	}
+	if err := formats.ValidateInput(p.File); err != nil {
+		return nil, "bad_request", err.Error()
+	}
+	if !isPDFFile(p.File) {
+		return nil, "invalid_pdf", "not a PDF file"
+	}
+	if s.deps.Thumbs == nil {
+		return nil, "internal", "no thumbnail renderer is available"
+	}
+	// The page count bounds the request: asking for page 900 of a 12-page
+	// document should fail as a request error, not as a render failure.
+	if s.deps.PDFInfo != nil {
+		info, err := s.deps.PDFInfo.Pdf(ctx, p.File)
+		if err != nil {
+			return nil, pdfops.ErrorCode(err), err.Error()
+		}
+		for _, page := range p.Pages {
+			if page > info.PageCount {
+				return nil, "bad_request", fmt.Sprintf("page %d is past the end of a %d page document", page, info.PageCount)
+			}
+		}
+	}
+	pages, err := s.deps.Thumbs.Render(ctx, thumbs.Request{File: p.File, Pages: p.Pages, Width: p.Width})
+	if err != nil {
+		return nil, thumbsCode(err), err.Error()
+	}
+	entries := make([]map[string]any, len(pages))
+	for i, page := range pages {
+		entries[i] = map[string]any{"page": page.Page, "path": page.Path, "w": page.W, "h": page.H}
+	}
+	return map[string]any{"pages": entries}, "", ""
+}
+
+// thumbsCode maps a thumbnail failure onto a protocol code. The cache's own
+// errors describe a bad request; anything else is the renderer's problem.
+func thumbsCode(err error) string {
+	switch {
+	case errors.Is(err, thumbs.ErrBadWidth),
+		errors.Is(err, thumbs.ErrTooManyPages),
+		errors.Is(err, thumbs.ErrNoPages),
+		errors.Is(err, thumbs.ErrBadPage):
+		return "bad_request"
+	}
+	return "internal"
+}
+
+// handleCacheClear empties the thumbnail cache. It is the one method that
+// removes files the user cannot see, so it reports how many it removed rather
+// than failing quietly.
+func (s *Server) handleCacheClear() (map[string]any, string, string) {
+	if s.deps.Thumbs == nil {
+		return map[string]any{"removed": 0}, "", ""
+	}
+	removed, err := s.deps.Thumbs.Clear()
+	if err != nil {
+		return nil, "internal", err.Error()
+	}
+	return map[string]any{"removed": removed}, "", ""
 }

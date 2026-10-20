@@ -546,3 +546,35 @@ func TestUnknownMethodIsStillRejected(t *testing.T) {
 		t.Fatal("an unknown method should be rejected")
 	}
 }
+
+func TestValidatePDFThumbnails(t *testing.T) {
+	if code, msg := validatePDFThumbnails(json.RawMessage(`{"file":"/tmp/a.pdf","pages":[1,2]}`)); code != "" {
+		t.Fatalf("valid request = %q %q, want accepted", code, msg)
+	}
+	for _, tc := range []struct{ name, params string }{
+		{"not json", `{`},
+		{"missing file", `{"pages":[1]}`},
+		{"relative path", `{"file":"a.pdf","pages":[1]}`},
+		{"no pages", `{"file":"/tmp/a.pdf"}`},
+		{"empty pages", `{"file":"/tmp/a.pdf","pages":[]}`},
+		{"page zero", `{"file":"/tmp/a.pdf","pages":[0]}`},
+		{"negative page", `{"file":"/tmp/a.pdf","pages":[-1]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if code, _ := validatePDFThumbnails(json.RawMessage(tc.params)); code == "" {
+				t.Fatal("expected rejection")
+			}
+		})
+	}
+}
+
+// cache_clear takes no params, so anything a client sends is accepted; the
+// method removes everything or nothing.
+func TestValidateCacheClear(t *testing.T) {
+	if code, msg := validateCacheClear(json.RawMessage(`{}`)); code != "" {
+		t.Fatalf("cache_clear = %q %q, want accepted", code, msg)
+	}
+	if code, msg := validateCacheClear(json.RawMessage(`{"anything":true}`)); code != "" {
+		t.Fatalf("cache_clear with params = %q %q, want accepted", code, msg)
+	}
+}

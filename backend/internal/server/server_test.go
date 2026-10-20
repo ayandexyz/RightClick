@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -21,6 +22,7 @@ import (
 	"file-converter/backend/internal/pdfops"
 	"file-converter/backend/internal/protocol"
 	"file-converter/backend/internal/registry"
+	"file-converter/backend/internal/thumbs"
 )
 
 type testEngine struct {
@@ -1208,4 +1210,166 @@ func writeRealPDF(t *testing.T, dir, name string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+// startThumbServer starts a daemon wired to a thumbnail cache over a stub
+// renderer, so the wire shape is covered without pdftocairo.
+func startThumbServer(t *testing.T, pageCount int) (net.Conn, *bufio.Reader, *thumbs.Cache, func()) {
+	return startThumbServerWith(t, pageCount, &stubThumbRenderer{})
+}
+
+func startThumbServerWith(t *testing.T, pageCount int, renderer thumbs.Renderer) (net.Conn, *bufio.Reader, *thumbs.Cache, func()) {
+	t.Helper()
+	listener, err := net.Listen("unix", filepath.Join(t.TempDir(), "fcd.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := jobs.NewManagerWithRegistry(registry.New())
+	defer manager.Close()
+	cache := thumbs.NewCache(filepath.Join(t.TempDir(), "thumbs"), thumbs.Limits{}, renderer)
+	srv := New(Dependencies{
+		Jobs:     manager,
+		Registry: registry.New(),
+		Version:  "test",
+		PDFInfo:  &stubPDFInfo{output: pagesOutput(pageCount)},
+		Thumbs:   cache,
+	})
+	go func() { _ = srv.Serve(listener) }()
+	conn, err := net.Dial("unix", listener.Addr().String())
+	if err != nil {
+		listener.Close()
+		t.Fatal(err)
+	}
+	return conn, bufio.NewReader(conn), cache, func() {
+		conn.Close()
+		_ = listener.Close()
+	}
+}
+
+func pagesOutput(count int) string {
+	return fmt.Sprintf("Pages:           %d\n", count)
+}
+
+// stubThumbRenderer writes a valid PNG per page without running a tool.
+type stubThumbRenderer struct{ err error }
+
+func (s *stubThumbRenderer) Render(_ context.Context, _ string, pages []int, _ int, dir string) ([]string, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	out := make([]string, 0, len(pages))
+	for _, page := range pages {
+		path := filepath.Join(dir, fmt.Sprintf("page-%d.png", page))
+		if err := os.WriteFile(path, testPNG, 0o600); err != nil {
+			return nil, err
+		}
+		out = append(out, path)
+	}
+	return out, nil
+}
+
+// testPNG is a 1x1 PNG: enough for the header the cache reads.
+var testPNG = []byte{
+	0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a,
+	0, 0, 0, 13, 'I', 'H', 'D', 'R',
+	0, 0, 0, 1, 0, 0, 0, 1,
+	8, 6, 0, 0, 0,
+	0x1f, 0x15, 0xc4, 0x89,
+}
+
+func TestServerPDFThumbnailsRendersRequestedPages(t *testing.T) {
+	tmp := t.TempDir()
+	pdf := writeRealPDF(t, tmp, "a.pdf")
+	conn, reader, _, cleanup := startThumbServer(t, 5)
+	defer cleanup()
+
+	resp := exchange(t, conn, reader, protocol.Request{ID: 1, Method: "pdf_thumbnails",
+		Params: mustJSON(map[string]any{"file": pdf, "pages": []int{1, 3}, "width": 200})})
+	if resp["error"] != nil {
+		t.Fatalf("pdf_thumbnails: %#v", resp["error"])
+	}
+	result := resp["result"].(map[string]any)
+	pages := result["pages"].([]any)
+	if len(pages) != 2 {
+		t.Fatalf("pages = %d, want 2", len(pages))
+	}
+	for i, want := range []int{1, 3} {
+		entry := pages[i].(map[string]any)
+		if int(entry["page"].(float64)) != want {
+			t.Fatalf("entry %d page = %v, want %d", i, entry["page"], want)
+		}
+		if _, err := os.Stat(entry["path"].(string)); err != nil {
+			t.Fatalf("entry %d has no thumbnail file: %v", i, err)
+		}
+	}
+}
+
+func TestServerPDFThumbnailsRejectsBadRequests(t *testing.T) {
+	tmp := t.TempDir()
+	pdf := writeRealPDF(t, tmp, "a.pdf")
+	notPDF := filepath.Join(tmp, "notes.txt")
+	if err := os.WriteFile(notPDF, []byte("hello"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	conn, reader, _, cleanup := startThumbServer(t, 3)
+	defer cleanup()
+
+	for _, tc := range []struct {
+		name, code string
+		params     map[string]any
+	}{
+		{"not a pdf", "invalid_pdf", map[string]any{"file": notPDF, "pages": []int{1}}},
+		{"page past the end", "bad_request", map[string]any{"file": pdf, "pages": []int{9}}},
+		{"no pages", "bad_request", map[string]any{"file": pdf}},
+		{"relative path", "bad_request", map[string]any{"file": "a.pdf", "pages": []int{1}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := exchange(t, conn, reader, protocol.Request{ID: 1, Method: "pdf_thumbnails", Params: mustJSON(tc.params)})
+			err, ok := resp["error"].(map[string]any)
+			if !ok {
+				t.Fatalf("expected an error, got %#v", resp)
+			}
+			if err["code"] != tc.code {
+				t.Fatalf("code = %v, want %s", err["code"], tc.code)
+			}
+		})
+	}
+}
+
+// A renderer failure must not be reported as a bad request: the client's
+// request was fine and the daemon failed it.
+func TestServerPDFThumbnailsReportsARenderFailure(t *testing.T) {
+	tmp := t.TempDir()
+	pdf := writeRealPDF(t, tmp, "a.pdf")
+	conn, reader, _, cleanup := startThumbServerWith(t, 5, &stubThumbRenderer{err: errors.New("pdftocairo exploded")})
+	defer cleanup()
+	resp := exchange(t, conn, reader, protocol.Request{ID: 1, Method: "pdf_thumbnails",
+		Params: mustJSON(map[string]any{"file": pdf, "pages": []int{1}})})
+	err := resp["error"].(map[string]any)
+	if err["code"] != "internal" {
+		t.Fatalf("code = %v, want internal", err["code"])
+	}
+}
+
+func TestServerCacheClearRemovesThumbnails(t *testing.T) {
+	tmp := t.TempDir()
+	pdf := writeRealPDF(t, tmp, "a.pdf")
+	conn, reader, cache, cleanup := startThumbServer(t, 5)
+	defer cleanup()
+
+	if _, err := cache.Render(context.Background(), thumbs.Request{File: pdf, Pages: []int{1, 2}, Width: 200}); err != nil {
+		t.Fatal(err)
+	}
+	resp := exchange(t, conn, reader, protocol.Request{ID: 1, Method: "cache_clear", Params: mustJSON(map[string]any{})})
+	if resp["error"] != nil {
+		t.Fatalf("cache_clear: %#v", resp["error"])
+	}
+	if removed := int(resp["result"].(map[string]any)["removed"].(float64)); removed != 2 {
+		t.Fatalf("removed = %d, want 2", removed)
+	}
+	// A second clear finds nothing, which is what makes it safe to run.
+	again := exchange(t, conn, reader, protocol.Request{ID: 2, Method: "cache_clear", Params: mustJSON(map[string]any{})})
+	if removed := int(again["result"].(map[string]any)["removed"].(float64)); removed != 0 {
+		t.Fatalf("second clear removed %d, want 0", removed)
+	}
 }

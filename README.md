@@ -44,6 +44,33 @@ Operation-level errors include:
 
 Ghostscript compress reports `skipped` with `already as small as it can get` rather than failing when output is not smaller than input.
 
+### Inspecting and thumbnailing PDFs
+
+Two read-only daemon methods expose a document's shape without changing it:
+
+```sh
+fcctl pdf info FILE          # page count, and each page's size and rotation
+fcctl pdf thumbs FILE --pages 1-5 --width 200   # one PNG per page, paths printed
+```
+
+`pdf_thumbnails` renders through `pdftocairo`. Thumbnails are cached so scrolling a
+page grid does not re-render: the cache lives under
+`$XDG_CACHE_HOME/file-converter/thumbs` (or `~/.cache/file-converter/thumbs`), in a
+directory readable only by you, with files readable only by you. It is keyed by the
+file's content, so a renamed document keeps its thumbnails and an edited one does
+not.
+
+**Thumbnails of a sensitive page stay on disk for up to 7 days**, or until the cache
+grows past 256 MB, whichever comes first. To remove them now:
+
+```sh
+fcctl cache clear
+```
+
+The daemon also prunes the cache at start-up and after every render batch. Without
+`pdftocairo` installed the daemon keeps serving every other method and reports
+thumbnails as unavailable.
+
 ## Backend status
 
 The Linux Go backend supports image conversion plus FFmpeg-backed video and audio conversion. Image targets are filtered by the installed ImageMagick build; media targets require both `ffmpeg` and `ffprobe`. These engines are independent: missing FFmpeg/ffprobe does not disable ImageMagick image conversion, and missing ImageMagick does not disable media conversion:

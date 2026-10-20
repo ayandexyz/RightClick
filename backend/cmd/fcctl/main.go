@@ -39,6 +39,13 @@ type command struct {
 	pdfAngle *int
 	pdfList  bool
 	pdfInfo  bool
+	// pdfThumbs carries "pdf thumbs", whose page list is parsed here rather
+	// than by the daemon, because the CLI reports the pages it asked for.
+	pdfThumbs bool
+	pdfWidth  int
+	// cacheSub is "clear" for the cache command; other cache subcommands are
+	// rejected rather than ignored.
+	cacheSub string
 }
 
 type wireEvent struct {
@@ -114,7 +121,7 @@ func main() {
 		}
 		// convert and pdf run a job, so wait for job.finished; everything else
 		// answers with a single result and is done.
-		waitsForJob := cmd.name == "convert" || (cmd.name == "pdf" && !cmd.pdfList && !cmd.pdfInfo)
+		waitsForJob := cmd.name == "convert" || (cmd.name == "pdf" && !cmd.pdfList && !cmd.pdfInfo && !cmd.pdfThumbs)
 		if !waitsForJob {
 			if _, hasResult := value["result"]; hasResult {
 				return
@@ -136,6 +143,9 @@ func parseArgs(args []string) (command, error) {
 	}
 	if args[0] == "pdf" {
 		return parsePDFArgs(args)
+	}
+	if args[0] == "cache" {
+		return parseCacheArgs(args)
 	}
 	return parseCommonArgs(args)
 }
@@ -214,7 +224,7 @@ func parseCommonArgs(args []string) (command, error) {
 			}
 		}
 	}
-	if cmd.name != "hello" && cmd.name != "engines" && cmd.name != "menu" && cmd.name != "targets" && cmd.name != "convert" && cmd.name != "cancel" {
+	if cmd.name != "hello" && cmd.name != "engines" && cmd.name != "menu" && cmd.name != "targets" && cmd.name != "convert" && cmd.name != "cancel" && cmd.name != "cache" {
 		return command{}, fmt.Errorf("unknown command: %s", cmd.name)
 	}
 	if cmd.name == "targets" || cmd.name == "convert" {
@@ -283,6 +293,8 @@ func parsePDFArgs(args []string) (command, error) {
 		cmd.op, cmd.pdfList = "pdf-list", true
 	} else if sub == "info" {
 		cmd.op, cmd.pdfInfo = "pdf-info", true
+	} else if sub == "thumbs" {
+		cmd.op, cmd.pdfThumbs = "pdf-thumbs", true
 	} else {
 		op, ok := pdfCommandByShortName(sub)
 		if !ok {
@@ -313,6 +325,16 @@ func parsePDFArgs(args []string) (command, error) {
 				return command{}, err
 			}
 			cmd.pdfPages, i = value, next
+		case "--width":
+			value, next, err := optionValue(rest, i)
+			if err != nil {
+				return command{}, err
+			}
+			n, err := strconv.Atoi(value)
+			if err != nil {
+				return command{}, fmt.Errorf("--width must be an integer")
+			}
+			cmd.pdfWidth, i = n, next
 		case "--angle":
 			value, next, err := optionValue(rest, i)
 			if err != nil {
@@ -340,6 +362,20 @@ func parsePDFArgs(args []string) (command, error) {
 	if cmd.pdfInfo {
 		if len(cmd.files) != 1 {
 			return command{}, fmt.Errorf("pdf info takes exactly one file")
+		}
+		return cmd, nil
+	}
+	if cmd.pdfThumbs {
+		if len(cmd.files) != 1 {
+			return command{}, fmt.Errorf("pdf thumbs takes exactly one file")
+		}
+		if cmd.pdfPages == "" {
+			return command{}, fmt.Errorf("pdf thumbs requires --pages")
+		}
+		// Parse here so a typo is a CLI error, not a round trip. The daemon
+		// validates the same spec again against the real page count.
+		if _, err := pdfops.ParsePages(cmd.pdfPages, thumbsMaxPages); err != nil {
+			return command{}, fmt.Errorf("--pages: %w", err)
 		}
 		return cmd, nil
 	}
@@ -423,6 +459,8 @@ func commandRequest(cmd command) protocol.Request {
 			}
 		}
 		return protocol.Request{ID: 1, Method: "menu", Params: raw(params)}
+	case "cache":
+		return protocol.Request{ID: 1, Method: "cache_clear", Params: raw(map[string]any{})}
 	case "cancel":
 		return protocol.Request{ID: 1, Method: "cancel", Params: raw(map[string]any{"job": cmd.job})}
 	case "pdf":
@@ -432,6 +470,17 @@ func commandRequest(cmd command) protocol.Request {
 		}
 		if cmd.pdfInfo {
 			return protocol.Request{ID: 1, Method: "pdf_info", Params: raw(map[string]any{"file": files[0]})}
+		}
+		if cmd.pdfThumbs {
+			// The spec was already parsed during argument validation, so a
+			// failure here would mean the arguments changed underneath us.
+			pages, err := pdfops.ParsePages(cmd.pdfPages, thumbsMaxPages)
+			if err != nil {
+				return protocol.Request{ID: 1, Method: "pdf_thumbnails", Params: raw(nil)}
+			}
+			return protocol.Request{ID: 1, Method: "pdf_thumbnails", Params: raw(map[string]any{
+				"file": files[0], "pages": pages, "width": cmd.pdfWidth,
+			})}
 		}
 		params := map[string]any{
 			"op":          cmd.op,
@@ -477,6 +526,23 @@ func writeRequest(conn net.Conn, req protocol.Request) error {
 	return err
 }
 
+// formatResult renders a successful result. Which method produced it is not
+// passed in, so the shape decides: pdf_thumbnails returns a list of page
+// objects, pdf_info returns a count, and cache_clear returns a tally.
+func formatResult(result map[string]any) string {
+	if removed, ok := result["removed"]; ok {
+		return fmt.Sprintf("removed %v cached thumbnails", removed)
+	}
+	pages, ok := result["pages"]
+	if !ok {
+		return fmt.Sprintf("result: %v", result)
+	}
+	if list, isList := pages.([]any); isList {
+		return formatThumbnails(list)
+	}
+	return formatPDFInfo(result, pages)
+}
+
 func formatHuman(value map[string]any) string {
 	if errValue, ok := value["error"].(map[string]any); ok {
 		return fmt.Sprintf("error: %v", errValue["message"])
@@ -500,12 +566,33 @@ func formatHuman(value map[string]any) string {
 		if operations, ok := result["operations"].([]any); ok {
 			return formatOperations(operations)
 		}
-		if pages, ok := result["pages"]; ok {
-			return formatPDFInfo(result, pages)
-		}
-		return fmt.Sprintf("result: %v", result)
+		return formatResult(result)
 	}
 	return fmt.Sprintf("%v", value)
+}
+
+// formatThumbnails prints one line per thumbnail. The path is the point of the
+// command: a caller wants the files, not a summary.
+func formatThumbnails(pages []any) string {
+	lines := make([]string, 0, len(pages))
+	for _, item := range pages {
+		entry, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		page, w, h := 0, 0.0, 0.0
+		if v, ok := entry["page"].(float64); ok {
+			page = int(v)
+		}
+		if v, ok := entry["w"].(float64); ok {
+			w = v
+		}
+		if v, ok := entry["h"].(float64); ok {
+			h = v
+		}
+		lines = append(lines, fmt.Sprintf("%d\t%dx%d\t%s", page, int(w), int(h), entry["path"]))
+	}
+	return strings.Join(lines, "\n")
 }
 
 // formatPDFInfo prints a document's shape for a human reading a terminal. The
@@ -647,7 +734,7 @@ func absolutePaths(paths []string) []string {
 
 func raw(value any) json.RawMessage { data, _ := json.Marshal(value); return data }
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: fcctl hello | engines [--json] | targets FILE... [--menu] [--json] | menu show | menu set CATEGORY FORMAT... | menu reset [CATEGORY] | convert FILE... (--to png|jpeg|webp|jxl|avif|gif|bmp|tiff|ico|heic | --preset PRESET) [--quality 1-100] [--max-size PX] [--background COLOR] [--out-dir DIR] [--recursive] [--on-conflict POLICY] [--json] | cancel JOB [--json] | pdf (merge FILE FILE... | extract FILE... --pages SPEC | delete FILE... --pages SPEC | rotate FILE... --angle 90|180|270 [--pages SPEC] | reverse FILE... | list FILE | info FILE) [--out-dir DIR] [--on-conflict POLICY] [--json]")
+	fmt.Fprintln(os.Stderr, "usage: fcctl hello | engines [--json] | targets FILE... [--menu] [--json] | menu show | menu set CATEGORY FORMAT... | menu reset [CATEGORY] | convert FILE... (--to png|jpeg|webp|jxl|avif|gif|bmp|tiff|ico|heic | --preset PRESET) [--quality 1-100] [--max-size PX] [--background COLOR] [--out-dir DIR] [--recursive] [--on-conflict POLICY] [--json] | cancel JOB [--json] | pdf (merge FILE FILE... | extract FILE... --pages SPEC | delete FILE... --pages SPEC | rotate FILE... --angle 90|180|270 [--pages SPEC] | reverse FILE... | list FILE | info FILE | thumbs FILE --pages SPEC) [--width PX] [--on-conflict POLICY] [--json] | cache clear [--json]")
 }
 func fatal(err error) { fmt.Fprintln(os.Stderr, err); os.Exit(1) }
 
@@ -706,4 +793,29 @@ func pdfShortNames() []string {
 		names = append(names, pdfShortName(op.ID))
 	}
 	return names
+}
+
+// thumbsMaxPages is the page count the CLI parses a --pages spec against when
+// the daemon's own limit has not been consulted yet. The daemon re-validates
+// against the real page count, so this only has to be generous enough not to
+// reject a legitimate request.
+const thumbsMaxPages = 1000
+
+// parseCacheArgs handles "cache clear". Only clearing is offered: inspecting or
+// sizing the cache is a diagnostic nobody asked for, and a half-implemented
+// command is worse than a missing one.
+func parseCacheArgs(args []string) (command, error) {
+	if len(args) < 2 || args[1] != "clear" {
+		return command{}, errors.New("usage: fcctl cache clear")
+	}
+	cmd := command{name: "cache"}
+	for _, arg := range args[2:] {
+		switch arg {
+		case "--json":
+			cmd.jsonOutput = true
+		default:
+			return command{}, fmt.Errorf("unknown option for cache clear: %s", arg)
+		}
+	}
+	return cmd, nil
 }

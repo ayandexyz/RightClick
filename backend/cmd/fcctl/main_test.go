@@ -393,3 +393,91 @@ func TestFormatPDFInfoOmitsSizesWhenAbsent(t *testing.T) {
 		t.Fatalf("got %q, want both pages with sizes and rotation", got)
 	}
 }
+
+func TestParsePDFThumbsRequiresPagesAndOneFile(t *testing.T) {
+	if _, err := parsePDFArgs([]string{"pdf", "thumbs", "--pages", "1-3", "/tmp/a.pdf"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parsePDFArgs([]string{"pdf", "thumbs", "/tmp/a.pdf"}); err == nil {
+		t.Fatal("pdf thumbs without --pages should be rejected")
+	}
+	if _, err := parsePDFArgs([]string{"pdf", "thumbs", "--pages", "1", "a.pdf", "b.pdf"}); err == nil {
+		t.Fatal("pdf thumbs with two files should be rejected")
+	}
+	// A malformed spec is caught here, not on the daemon.
+	if _, err := parsePDFArgs([]string{"pdf", "thumbs", "--pages", "9-3", "/tmp/a.pdf"}); err == nil {
+		t.Fatal("a reversed range should be rejected")
+	}
+}
+
+func TestPDFThumbsRequestBody(t *testing.T) {
+	cmd, err := parsePDFArgs([]string{"pdf", "thumbs", "--pages", "1-3", "--width", "128", "a.pdf"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := commandRequest(cmd)
+	if req.Method != "pdf_thumbnails" {
+		t.Fatalf("method = %q, want pdf_thumbnails", req.Method)
+	}
+	var params struct {
+		File  string `json:"file"`
+		Pages []int  `json:"pages"`
+		Width int    `json:"width"`
+	}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		t.Fatal(err)
+	}
+	if len(params.Pages) != 3 || params.Pages[0] != 1 || params.Pages[2] != 3 {
+		t.Fatalf("pages = %v, want 1,2,3", params.Pages)
+	}
+	if params.Width != 128 {
+		t.Fatalf("width = %d, want 128", params.Width)
+	}
+}
+
+func TestParseCacheArgs(t *testing.T) {
+	cmd, err := parseCacheArgs([]string{"cache", "clear"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if commandRequest(cmd).Method != "cache_clear" {
+		t.Fatalf("method = %q, want cache_clear", commandRequest(cmd).Method)
+	}
+	for _, args := range [][]string{{"cache"}, {"cache", "list"}, {"cache", "clear", "--nope"}} {
+		if _, err := parseCacheArgs(args); err == nil {
+			t.Fatalf("%v should have been rejected", args)
+		}
+	}
+}
+
+func TestFormatThumbnailsPrintsOneLinePerPage(t *testing.T) {
+	got := formatThumbnails([]any{
+		map[string]any{"page": 1.0, "path": "/a.png", "w": 200.0, "h": 283.0},
+		map[string]any{"page": 2.0, "path": "/b.png", "w": 200.0, "h": 283.0},
+	})
+	lines := strings.Split(got, "\n")
+	if len(lines) != 2 {
+		t.Fatalf("got %d lines, want 2", len(lines))
+	}
+	if !strings.Contains(lines[0], "/a.png") || !strings.Contains(lines[1], "/b.png") {
+		t.Fatalf("lines should carry the paths, got %q", got)
+	}
+}
+
+func TestFormatResultDistinguishesThumbnailsFromPageCount(t *testing.T) {
+	// pdf_info returns a count; pdf_thumbnails returns a list. Guessing wrong
+	// would print thumbnails as if they were a page count.
+	info := formatResult(map[string]any{"pages": 12.0})
+	if info != "pages: 12" {
+		t.Fatalf("pdf_info rendered as %q", info)
+	}
+	thumbs := formatResult(map[string]any{"pages": []any{
+		map[string]any{"page": 1.0, "path": "/a.png", "w": 200.0, "h": 283.0},
+	}})
+	if !strings.Contains(thumbs, "/a.png") {
+		t.Fatalf("pdf_thumbnails rendered as %q", thumbs)
+	}
+	if cleared := formatResult(map[string]any{"removed": 3.0}); cleared != "removed 3 cached thumbnails" {
+		t.Fatalf("cache_clear rendered as %q", cleared)
+	}
+}

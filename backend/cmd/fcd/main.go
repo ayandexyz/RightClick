@@ -14,6 +14,7 @@ import (
 	"file-converter/backend/internal/pdfops"
 	"file-converter/backend/internal/registry"
 	"file-converter/backend/internal/server"
+	"file-converter/backend/internal/thumbs"
 	"file-converter/backend/internal/transport"
 )
 
@@ -54,7 +55,29 @@ func main() {
 	manager.SetPDFToolbox(pdfToolbox)
 	defer manager.Close()
 	pdfInfo := pdfops.NewInfo(nil, pdfToolbox.PDFCPU)
-	srv := server.New(server.Dependencies{Jobs: manager, Registry: engines, Engine: enginePath, Version: "0.1.0", PDFToolbox: pdfToolbox, PDFInfo: pdfInfo})
+
+	// Thumbnails are optional: without pdftocairo the daemon still serves every
+	// other method and only thumbnail requests report it unavailable.
+	var thumbCache *thumbs.Cache
+	if err := (thumbs.NewPDFTool(nil)).Available(); err == nil {
+		root, err := thumbs.CacheRoot()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "thumbnails: %v\n", err)
+		} else {
+			thumbCache = thumbs.NewCache(root, thumbs.Limits{}, thumbs.NewPDFTool(nil))
+			if err := thumbCache.Ensure(); err != nil {
+				fmt.Fprintf(os.Stderr, "thumbnail cache: %v\n", err)
+				thumbCache = nil
+			} else {
+				// Prune once at start so a cache left over from a previous run
+				// does not grow without bound.
+				if err := thumbCache.Prune(time.Now()); err != nil {
+					fmt.Fprintf(os.Stderr, "thumbnail cache prune: %v\n", err)
+				}
+			}
+		}
+	}
+	srv := server.New(server.Dependencies{Jobs: manager, Registry: engines, Engine: enginePath, Version: "0.1.0", PDFToolbox: pdfToolbox, PDFInfo: pdfInfo, Thumbs: thumbCache})
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	go func() { <-stop; _ = listener.Close() }()
