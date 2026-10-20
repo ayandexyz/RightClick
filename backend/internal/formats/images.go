@@ -300,6 +300,8 @@ func PresetFormat(preset string) (Format, bool) {
 		return MKV, true
 	case "video-to-avi":
 		return AVI, true
+	case "video-to-gif":
+		return GIF, true
 	case "audio-to-mp3":
 		return MP3, true
 	case "audio-to-wav":

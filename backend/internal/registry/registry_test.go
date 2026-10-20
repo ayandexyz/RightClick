@@ -216,7 +216,7 @@ func assertPresets(t *testing.T, got []protocol.Target, want []string) {
 }
 
 func videoPresets() []string {
-	return []string{"video-to-mp4", "video-to-mov", "video-to-webm", "video-to-mkv", "video-to-avi"}
+	return []string{"video-to-mp4", "video-to-mov", "video-to-webm", "video-to-mkv", "video-to-avi", "video-to-gif"}
 }
 
 func audioPresets() []string {

@@ -110,8 +110,9 @@ func parseProbe(data []byte) (MediaKind, error) {
 }
 
 func (e *FFmpeg) Supports(source, target formats.Format) bool {
+	targetIsVideo := formats.IsVideoFormat(target) || target == formats.GIF
 	return (formats.IsAudioFormat(source) || formats.IsVideoFormat(source)) &&
-		(formats.IsAudioFormat(target) || formats.IsVideoFormat(target)) &&
+		(formats.IsAudioFormat(target) || targetIsVideo) &&
 		(!formats.IsAudioFormat(source) || formats.IsAudioFormat(target))
 }
 
@@ -211,6 +212,8 @@ func targetDefaults(target formats.Format) []string {
 		return []string{"-c:v", "libvpx-vp9", "-c:a", "libopus"}
 	case formats.MP4, formats.MOV, formats.MKV, formats.AVI:
 		return []string{"-c:v", "libx264", "-c:a", "aac"}
+	case formats.GIF:
+		return []string{"-vf", "fps=12,scale='min(720,iw)':-2:flags=lanczos,split[a][b];[a]palettegen[p];[b][p]paletteuse", "-an"}
 	default:
 		return nil
 	}

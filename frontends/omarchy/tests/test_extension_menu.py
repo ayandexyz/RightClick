@@ -69,6 +69,25 @@ class ExtensionMenuTests(unittest.TestCase):
         provider = self.module.FileConverterMenuProvider()
         self.assertEqual(provider.get_file_items([FakeFile("/tmp/a.txt", "text/plain")]), [])
 
+    def test_video_selection_builds_convert_menu(self):
+        targets = [
+            types.SimpleNamespace(preset="video-to-mp4", label="MP4 Video", enabled=True),
+            types.SimpleNamespace(preset="video-to-gif", label="GIF Animation", enabled=True),
+        ]
+        with mock.patch.object(self.module, "FcClient") as client:
+            client.return_value.targets.return_value = targets
+            menu = self.module.FileConverterMenuProvider().get_file_items([FakeFile("/tmp/a.mkv", "video/x-matroska")])
+        self.assertEqual(menu[0].label, "Convert to")
+        self.assertEqual(menu[0].submenu.items[0].label, "MP4 Video")
+
+    def test_audio_selection_builds_convert_menu(self):
+        targets = [types.SimpleNamespace(preset="audio-to-mp3", label="MP3 Audio", enabled=True)]
+        with mock.patch.object(self.module, "FcClient") as client:
+            client.return_value.targets.return_value = targets
+            menu = self.module.FileConverterMenuProvider().get_file_items([FakeFile("/tmp/a.flac", "audio/flac")])
+        self.assertEqual(menu[0].label, "Convert to")
+        self.assertEqual(menu[0].submenu.items[0].label, "MP3 Audio")
+
     def test_enabled_targets_are_ordered_and_disabled_dropped(self):
         targets = [
             types.SimpleNamespace(preset="image-to-webp", label="WebP", enabled=True),

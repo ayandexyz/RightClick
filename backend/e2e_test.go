@@ -138,11 +138,13 @@ func TestE2EFFmpegMediaConversion(t *testing.T) {
 	if targets["error"] != nil {
 		t.Fatalf("video targets failed: %#v", targets)
 	}
-	assertTargetPresets(t, targets, append([]string{"video-to-mp4", "video-to-mov", "video-to-webm", "video-to-avi"}, audioPresetsForE2E()...))
+	assertTargetPresets(t, targets, append([]string{"video-to-mp4", "video-to-mov", "video-to-webm", "video-to-avi", "video-to-gif"}, audioPresetsForE2E()...))
 
 	outputDir := t.TempDir()
 	mp4 := convertAndAssertOutput(t, conn, stream, 3, video, "video-to-mp4", outputDir, ".mp4")
 	assertMediaOutput(t, mp4, "mp4", "video")
+	gif := convertAndAssertOutput(t, conn, stream, 4, video, "video-to-gif", outputDir, ".gif")
+	assertMediaOutput(t, gif, "gif", "video")
 	mp3 := convertAndAssertOutput(t, conn, stream, 4, video, "audio-to-mp3", outputDir, ".mp3")
 	assertMediaOutput(t, mp3, "mp3", "audio")
 

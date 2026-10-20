@@ -85,10 +85,11 @@ func TestFFmpegProbeUsesExpectedArguments(t *testing.T) {
 func TestFFmpegSupportsMediaRoutes(t *testing.T) {
 	f := NewFFmpeg(nil, nil)
 	video := []formats.Format{formats.MP4, formats.MOV, formats.WebM, formats.MKV, formats.AVI}
+	videoTargets := append(append([]formats.Format(nil), video...), formats.GIF)
 	audio := []formats.Format{formats.MP3, formats.WAV, formats.FLAC, formats.AAC, formats.M4A, formats.OGG, formats.Opus, formats.AIFF, formats.ALAC, formats.AC3, formats.AMR, formats.WMA}
 	images := []formats.Format{formats.PNG, formats.JPEG, formats.WebP, formats.JXL, formats.AVIF, formats.GIF, formats.BMP, formats.TIFF, formats.ICO, formats.HEIC}
 	for _, source := range video {
-		for _, target := range append(append([]formats.Format(nil), video...), audio...) {
+		for _, target := range append(append([]formats.Format(nil), videoTargets...), audio...) {
 			if !f.Supports(source, target) {
 				t.Errorf("video to %s should be supported", target)
 			}
@@ -107,14 +108,14 @@ func TestFFmpegSupportsMediaRoutes(t *testing.T) {
 		}
 	}
 	for _, source := range images {
-		for _, target := range append(append([]formats.Format(nil), video...), audio...) {
+		for _, target := range append(append([]formats.Format(nil), videoTargets...), audio...) {
 			if f.Supports(source, target) {
 				t.Errorf("image to %s should be rejected", target)
 			}
 		}
 	}
 	for _, source := range append(append([]formats.Format(nil), video...), audio...) {
-		for _, target := range images {
+		for _, target := range []formats.Format{formats.PNG, formats.JPEG, formats.WebP, formats.JXL, formats.AVIF, formats.BMP, formats.TIFF, formats.ICO, formats.HEIC} {
 			if f.Supports(source, target) {
 				t.Errorf("media to image %s should be rejected", target)
 			}

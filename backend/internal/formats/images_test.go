@@ -97,6 +97,7 @@ func TestMediaPresetFormats(t *testing.T) {
 		"video-to-webm": WebM,
 		"video-to-mkv":  MKV,
 		"video-to-avi":  AVI,
+		"video-to-gif":  GIF,
 		"audio-to-mp3":  MP3,
 		"audio-to-wav":  WAV,
 		"audio-to-flac": FLAC,
@@ -145,9 +146,9 @@ func TestTargetsAreOrderedAndExcludeInputFormats(t *testing.T) {
 		files []string
 		want  []string
 	}{
-		{"png", []string{png}, []string{"image-to-jpeg", "image-to-webp", "image-to-jxl", "image-to-avif", "image-to-gif", "image-to-bmp", "image-to-tiff", "image-to-ico", "image-to-heic", "video-to-mp4", "video-to-mov", "video-to-webm", "video-to-mkv", "video-to-avi", "audio-to-mp3", "audio-to-wav", "audio-to-flac", "audio-to-aac", "audio-to-m4a", "audio-to-ogg", "audio-to-opus", "audio-to-aiff", "audio-to-alac", "audio-to-ac3", "audio-to-amr", "audio-to-wma"}},
-		{"mixed", []string{png, jpeg}, []string{"image-to-webp", "image-to-jxl", "image-to-avif", "image-to-gif", "image-to-bmp", "image-to-tiff", "image-to-ico", "image-to-heic", "video-to-mp4", "video-to-mov", "video-to-webm", "video-to-mkv", "video-to-avi", "audio-to-mp3", "audio-to-wav", "audio-to-flac", "audio-to-aac", "audio-to-m4a", "audio-to-ogg", "audio-to-opus", "audio-to-aiff", "audio-to-alac", "audio-to-ac3", "audio-to-amr", "audio-to-wma"}},
-		{"all", []string{png, jpeg, webp}, []string{"image-to-jxl", "image-to-avif", "image-to-gif", "image-to-bmp", "image-to-tiff", "image-to-ico", "image-to-heic", "video-to-mp4", "video-to-mov", "video-to-webm", "video-to-mkv", "video-to-avi", "audio-to-mp3", "audio-to-wav", "audio-to-flac", "audio-to-aac", "audio-to-m4a", "audio-to-ogg", "audio-to-opus", "audio-to-aiff", "audio-to-alac", "audio-to-ac3", "audio-to-amr", "audio-to-wma"}},
+		{"png", []string{png}, []string{"image-to-jpeg", "image-to-webp", "image-to-jxl", "image-to-avif", "image-to-gif", "image-to-bmp", "image-to-tiff", "image-to-ico", "image-to-heic", "video-to-mp4", "video-to-mov", "video-to-webm", "video-to-mkv", "video-to-avi", "video-to-gif", "audio-to-mp3", "audio-to-wav", "audio-to-flac", "audio-to-aac", "audio-to-m4a", "audio-to-ogg", "audio-to-opus", "audio-to-aiff", "audio-to-alac", "audio-to-ac3", "audio-to-amr", "audio-to-wma"}},
+		{"mixed", []string{png, jpeg}, []string{"image-to-webp", "image-to-jxl", "image-to-avif", "image-to-gif", "image-to-bmp", "image-to-tiff", "image-to-ico", "image-to-heic", "video-to-mp4", "video-to-mov", "video-to-webm", "video-to-mkv", "video-to-avi", "video-to-gif", "audio-to-mp3", "audio-to-wav", "audio-to-flac", "audio-to-aac", "audio-to-m4a", "audio-to-ogg", "audio-to-opus", "audio-to-aiff", "audio-to-alac", "audio-to-ac3", "audio-to-amr", "audio-to-wma"}},
+		{"all", []string{png, jpeg, webp}, []string{"image-to-jxl", "image-to-avif", "image-to-gif", "image-to-bmp", "image-to-tiff", "image-to-ico", "image-to-heic", "video-to-mp4", "video-to-mov", "video-to-webm", "video-to-mkv", "video-to-avi", "video-to-gif", "audio-to-mp3", "audio-to-wav", "audio-to-flac", "audio-to-aac", "audio-to-m4a", "audio-to-ogg", "audio-to-opus", "audio-to-aiff", "audio-to-alac", "audio-to-ac3", "audio-to-amr", "audio-to-wma"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := Targets(tc.files)

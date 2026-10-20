@@ -18,6 +18,11 @@ SUPPORTED_MIME_TYPES = {
     "image/png", "image/jpeg", "image/webp", "image/jxl", "image/avif",
     "image/gif", "image/bmp", "image/x-ms-bmp", "image/tiff",
     "image/vnd.microsoft.icon", "image/x-icon", "image/heic", "image/heif",
+    "video/mp4", "video/quicktime", "video/webm", "video/x-matroska",
+    "video/x-msvideo", "video/mpeg", "video/ogg",
+    "audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav", "audio/flac",
+    "audio/aac", "audio/mp4", "audio/x-m4a", "audio/ogg", "audio/opus",
+    "audio/aiff", "audio/x-aiff", "audio/ac3", "audio/amr", "audio/x-ms-wma",
 }
 
 try:

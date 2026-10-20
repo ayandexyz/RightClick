@@ -96,13 +96,13 @@ func (m *Manager) Submit(req SubmitRequest) (string, error) {
 		targetPreset = "image-to-webp"
 	case "jxl":
 		targetPreset = "image-to-jxl"
-	case "avif", "gif", "bmp", "tiff", "ico", "heic":
+	case "avif", "bmp", "tiff", "ico", "heic":
 		targetPreset = "image-to-" + targetPreset
 	case "tif":
 		targetPreset = "image-to-tiff"
 	case "heif":
 		targetPreset = "image-to-heic"
-	case "mp4", "mov", "webm", "mkv", "avi":
+	case "mp4", "mov", "webm", "mkv", "avi", "gif":
 		targetPreset = "video-to-" + targetPreset
 	case "mp3", "wav", "flac", "aac", "m4a", "ogg", "opus", "aiff", "alac", "ac3", "amr", "wma":
 		targetPreset = "audio-to-" + targetPreset

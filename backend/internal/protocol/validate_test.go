@@ -267,7 +267,7 @@ func TestValidateRequest(t *testing.T) {
 func TestSupportedMediaPresets(t *testing.T) {
 	wantCategories := map[string]string{
 		"video-to-mp4": "video", "video-to-mov": "video", "video-to-webm": "video",
-		"video-to-mkv": "video", "video-to-avi": "video", "audio-to-mp3": "audio",
+		"video-to-mkv": "video", "video-to-avi": "video", "video-to-gif": "video", "audio-to-mp3": "audio",
 		"audio-to-wav": "audio", "audio-to-flac": "audio", "audio-to-aac": "audio",
 		"audio-to-m4a": "audio", "audio-to-ogg": "audio", "audio-to-opus": "audio",
 		"audio-to-aiff": "audio", "audio-to-alac": "audio", "audio-to-ac3": "audio",

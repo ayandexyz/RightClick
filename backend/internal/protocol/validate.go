@@ -28,6 +28,7 @@ var supportedPresets = []Target{
 	{Preset: "video-to-webm", Label: "WebM Video", Format: "webm", Category: "video", Enabled: true},
 	{Preset: "video-to-mkv", Label: "MKV Video", Format: "mkv", Category: "video", Enabled: true},
 	{Preset: "video-to-avi", Label: "AVI Video", Format: "avi", Category: "video", Enabled: true},
+	{Preset: "video-to-gif", Label: "GIF Animation", Format: "gif", Category: "video", Enabled: true},
 	{Preset: "audio-to-mp3", Label: "MP3 Audio", Format: "mp3", Category: "audio", Enabled: true},
 	{Preset: "audio-to-wav", Label: "WAV Audio", Format: "wav", Category: "audio", Enabled: true},
 	{Preset: "audio-to-flac", Label: "FLAC Audio", Format: "flac", Category: "audio", Enabled: true},
