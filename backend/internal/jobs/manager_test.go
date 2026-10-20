@@ -361,6 +361,44 @@ func TestManagerRejectsSymlinkAndNonRegularPageOutputs(t *testing.T) {
 	}
 }
 
+func TestManagerCleansEarlierPlansWhenLaterPagePlanningFails(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "document.pdf")
+	if err := os.WriteFile(source, []byte("%PDF-1.7"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output := t.TempDir()
+	original := planOutputPath
+	defer func() { planOutputPath = original }()
+	calls := 0
+	planOutputPath = func(dir, source, ext string, page int, conflict protocol.ConflictPolicy) (engine.OutputPlan, error) {
+		calls++
+		if page == 2 {
+			return engine.OutputPlan{}, fmt.Errorf("planning failure")
+		}
+		return engine.PlanOutputPath(dir, source, ext, page, conflict)
+	}
+	r := registry.New()
+	r.Register(&fakeMultiConverter{pages: 2})
+	m := NewManagerWithRegistry(r)
+	defer m.Close()
+	events := make(chan protocol.Event, 8)
+	if _, err := m.Submit(SubmitRequest{Files: []string{source}, Preset: "pdf-to-png", OutputDir: output, Conflict: protocol.ConflictRename, Events: func(e protocol.Event) { events <- e }}); err != nil {
+		t.Fatal(err)
+	}
+	job := waitJob(t, events)
+	if calls != 2 || job.Files[0].State != "failed" || len(job.Files[0].Outputs) != 0 {
+		t.Fatalf("calls=%d job=%+v", calls, job)
+	}
+	entries, err := os.ReadDir(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("planning temp files remain: %v", entries)
+	}
+}
+
 func TestManagerDoesNotCommitPartialMultiPageOutputs(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "document.pdf")

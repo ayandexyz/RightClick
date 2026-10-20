@@ -28,6 +28,8 @@ Implemented Task 2 only. The PDF renderer itself was not implemented or changed.
 - The actual PDF engine implementation remains intentionally deferred to the renderer task.
 
 ## Task 2 review fixes
+Changed in this review-fix commit: `backend/internal/jobs/manager.go`, `backend/internal/jobs/manager_test.go`, `backend/internal/registry/registry_test.go`, and this report. `backend/internal/registry/registry.go` was not modified by this fix; its PDF target routing was already present and is covered by the added regression test.
+
 - Use the effective output directory, falling back to the source directory when `OutputDir` is empty, before creating the private render directory.
 - Check cancellation immediately after `ConvertMany`, after planning/staging, and before each commit so cancellation does not publish pages.
 - Track committed destinations and remove them, clear `FileJob.Outputs`, and remove all temporary plans if a later commit fails.
@@ -36,8 +38,11 @@ Implemented Task 2 only. The PDF renderer itself was not implemented or changed.
 - Added focused manager tests for source-directory fallback, cancellation before publication, commit rollback, and symlink/non-regular rejection. Added registry coverage for excluding PDF targets from raster, SVG, media, and mixed selections.
 
 ## Review-fix verification
-- `go test ./internal/jobs ./internal/engine ./internal/registry` passed.
-- `go test ./...` passed.
-- `go vet ./...` passed.
-- `git diff --check` passed.
-- Commit follows after final diff review.
+- `gofmt -w backend/internal/jobs/manager.go backend/internal/jobs/manager_test.go` completed successfully.
+- `go test ./internal/jobs ./internal/engine ./internal/registry` passed: jobs, engine, and registry packages all passed.
+- `go test ./...` passed: backend, command packages, and all internal packages passed.
+- `go vet ./...` passed with no diagnostics.
+- `git diff --check` passed with no whitespace errors.
+
+## Remaining concerns
+- The actual PDF engine implementation remains intentionally deferred to the renderer task; Task 2 only covers safe multi-page job planning, validation, and publication.

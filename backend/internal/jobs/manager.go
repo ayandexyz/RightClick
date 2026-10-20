@@ -21,6 +21,8 @@ type Converter interface {
 	Convert(context.Context, string, formats.Format, string, formats.Format, protocol.ImageOptions) error
 }
 
+var planOutputPath = engine.PlanOutputPath
+
 type Router interface {
 	Resolve(source, target formats.Format) (registry.Engine, error)
 }
@@ -377,7 +379,7 @@ func (m *Manager) convertMany(j *job, index int, file protocol.FileJob, route re
 			file.Error = &protocol.FileError{Code: "internal", Message: "multi-page engine returned unsafe output"}
 			return fileResult{index: index, file: file}
 		}
-		plans[i], err = engine.PlanOutputPath(outputDir, source, ext, i+1, j.req.Conflict)
+		plans[i], err = planOutputPath(outputDir, source, ext, i+1, j.req.Conflict)
 		if err != nil {
 			removePlans()
 			file.State = "failed"
