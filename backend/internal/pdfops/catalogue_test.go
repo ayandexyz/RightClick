@@ -90,6 +90,8 @@ func TestValidateRequiredParams(t *testing.T) {
 		{op: "pdf-rotate", files: file, params: Params{Angle: 90}},
 		{op: "pdf-rotate", files: file, params: Params{Angle: 180}},
 		{op: "pdf-rotate", files: file, params: Params{Angle: 270}},
+		{op: "pdf-rotate", files: file, params: Params{Angle: 90, Pages: "1-2"}},
+		{op: "pdf-reverse", files: file, params: Params{Pages: "1"}, wantErr: "page selection"},
 		{op: "pdf-rotate", files: file, params: Params{Angle: -90}, wantErr: "angle"},
 		{op: "pdf-rotate", files: file, params: Params{Angle: 0}, wantErr: "angle"},
 		{op: "pdf-merge", files: merge, params: Params{Pages: "1"}, wantErr: "page selection"},

@@ -35,6 +35,7 @@ type Operation struct {
 	MinInputs        int
 	MaxInputs        int // 0 means unlimited
 	NeedsPages       bool
+	OptionalPages    bool // accepts a page selection but defaults to all pages
 	NeedsAngle       bool
 	Suffix           string // appended to the source name to form the output name; unused by merge
 	Merges           bool   // all inputs produce one output
@@ -82,7 +83,7 @@ func (o Operation) Validate(files []string, p Params) error {
 			return fmt.Errorf("%s needs an angle of 90, 180 or 270", o.ID)
 		}
 	}
-	if !o.NeedsPages && p.Pages != "" {
+	if !o.NeedsPages && !o.OptionalPages && p.Pages != "" {
 		return fmt.Errorf("%s does not take a page selection", o.ID)
 	}
 	if !o.NeedsAngle && p.Angle != 0 {
