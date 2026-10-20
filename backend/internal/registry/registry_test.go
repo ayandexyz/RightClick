@@ -59,6 +59,32 @@ func TestTargetsUsesRegisteredCapabilities(t *testing.T) {
 	}
 }
 
+func TestTargetsNeverIncludesPDFAsAnOutput(t *testing.T) {
+	r := New()
+	r.Register(anyFormatEngine{})
+
+	for _, target := range r.Targets(formats.PNG) {
+		if target == formats.PDF {
+			t.Fatal("PDF was exposed as an output target")
+		}
+	}
+}
+
+func TestTargetsForPDFInputsExposeExactlyPDFPresets(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "input.pdf")
+	if err := os.WriteFile(path, []byte("%PDF-1.7 fixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	r := New()
+	r.Register(pdfImageEngine{})
+	got, err := r.TargetsForFiles([]string{path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPresets(t, got, []string{"pdf-to-png", "pdf-to-jpeg", "pdf-to-webp"})
+}
+
 func TestTargetsForFilesIncludesRegisteredMediaRoutes(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "photo.png")
 	if err := os.WriteFile(path, []byte("\x89PNG\r\n\x1a\nfixture"), 0o600); err != nil {
@@ -324,6 +350,28 @@ func (svgTestEngine) Supports(source, target formats.Format) bool {
 	return formats.IsSVGFormat(source) && (target == formats.PNG || target == formats.JPEG || target == formats.WebP)
 }
 func (svgTestEngine) Convert(context.Context, string, formats.Format, string, formats.Format, protocol.ImageOptions) error {
+	return nil
+}
+
+type anyFormatEngine struct{}
+
+func (anyFormatEngine) ID() string                 { return "any-format" }
+func (anyFormatEngine) Available() (string, error) { return "any-format", nil }
+func (anyFormatEngine) Supports(source, target formats.Format) bool {
+	return source != target
+}
+func (anyFormatEngine) Convert(context.Context, string, formats.Format, string, formats.Format, protocol.ImageOptions) error {
+	return nil
+}
+
+type pdfImageEngine struct{}
+
+func (pdfImageEngine) ID() string                 { return "pdf-images" }
+func (pdfImageEngine) Available() (string, error) { return "pdf-images", nil }
+func (pdfImageEngine) Supports(source, target formats.Format) bool {
+	return formats.IsPDFFormat(source) && (target == formats.PNG || target == formats.JPEG || target == formats.WebP)
+}
+func (pdfImageEngine) Convert(context.Context, string, formats.Format, string, formats.Format, protocol.ImageOptions) error {
 	return nil
 }
 

@@ -81,3 +81,18 @@ ok   file-converter/backend/internal/transport
 ## Follow-up correction
 
 A verifier identified that the initial implementation left the registry's candidate list image-only. This was corrected in the follow-up commit by replacing the hard-coded image list with an ordered all-format list filtered through `IsImageFormat`, `IsVideoFormat`, and `IsAudioFormat`, plus a regression test for registry-backed media target discovery.
+
+## Task 1 review findings fixed
+
+- Registry source discovery now considers PDF separately from output target candidates. PDF is checked as an input source, but is never returned by `Registry.Targets` as an output target.
+- PDF-only target discovery exposes exactly `pdf-to-png`, `pdf-to-jpeg`, and `pdf-to-webp`; mixed PDF/non-PDF selections do not expose PDF presets.
+- `formats.Targets` applies the same PDF-only filtering while preserving existing SVG and raster/media target behavior.
+- Added regressions proving PDF cannot be an output target and PDF target listings contain exactly the three explicit PDF presets.
+
+## Review-fix verification
+
+Commands run from the repository root unless noted:
+
+- `cd backend && go test ./...` -> PASS
+- `cd backend && go vet ./...` -> PASS
+- `git diff --check` -> PASS

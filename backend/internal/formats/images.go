@@ -17,6 +17,7 @@ import (
 type Format string
 
 const (
+	PDF  Format = "pdf"
 	PNG  Format = "png"
 	JPEG Format = "jpeg"
 	WebP Format = "webp"
@@ -111,6 +112,9 @@ func Detect(path string) (Format, error) {
 	}
 	header := prefix
 	n := len(header)
+	if n >= 5 && string(header[:5]) == "%PDF-" {
+		return PDF, nil
+	}
 	if n >= 8 && string(header[:8]) == "\x89PNG\r\n\x1a\n" {
 		return PNG, nil
 	}
@@ -273,6 +277,8 @@ func FormatFromExtension(path string) (Format, bool) {
 		return AMR, true
 	case ".wma":
 		return WMA, true
+	case ".pdf":
+		return PDF, true
 	case ".svg":
 		return SVG, true
 	default:
@@ -302,6 +308,10 @@ func IsSVGFormat(format Format) bool {
 	return format == SVG
 }
 
+func IsPDFFormat(format Format) bool {
+	return format == PDF
+}
+
 func IsImageFormat(format Format) bool {
 	switch format {
 	case PNG, JPEG, WebP, JXL, AVIF, GIF, BMP, TIFF, ICO, HEIC:
@@ -313,6 +323,12 @@ func IsImageFormat(format Format) bool {
 
 func PresetFormat(preset string) (Format, bool) {
 	switch preset {
+	case "pdf-to-png":
+		return PNG, true
+	case "pdf-to-jpeg":
+		return JPEG, true
+	case "pdf-to-webp":
+		return WebP, true
 	case "image-to-png", "svg-to-png":
 		return PNG, true
 	case "image-to-jpeg", "svg-to-jpeg":
@@ -389,6 +405,12 @@ func Targets(paths []string) ([]protocol.Target, error) {
 	out := make([]protocol.Target, 0, len(protocol.SupportedPresets()))
 	for _, target := range protocol.SupportedPresets() {
 		if strings.HasPrefix(target.Preset, "svg-to-") && !inputFormats[SVG] {
+			continue
+		}
+		if inputFormats[PDF] && !strings.HasPrefix(target.Preset, "pdf-to-") {
+			continue
+		}
+		if strings.HasPrefix(target.Preset, "pdf-to-") && !inputFormats[PDF] {
 			continue
 		}
 		format, ok := PresetFormat(target.Preset)
