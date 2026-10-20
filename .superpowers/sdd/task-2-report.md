@@ -189,3 +189,7 @@ ok   file-converter/backend and all packages
 $ cd /home/ayan-de/Projects/omarchy-projects/file-converter && git diff --check
 passed with no output
 ```
+
+## Final review cleanup
+
+The final review found no implementation defects. Historical notes above retain the original command-construction description for auditability; the final implementation no longer passes `--` to FFmpeg, as documented in the later fix sections. Cosmetic captured-output wording is retained as historical evidence.
