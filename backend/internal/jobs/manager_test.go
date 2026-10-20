@@ -36,6 +36,7 @@ type fakeMultiConverter struct {
 }
 
 func (f *fakeMultiConverter) ID() string                 { return "pdf" }
+func (f *fakeMultiConverter) PDFRasterizer()             {}
 func (f *fakeMultiConverter) Available() (string, error) { return "pdf", nil }
 func (f *fakeMultiConverter) Supports(source, target formats.Format) bool {
 	return source == formats.PDF && (target == formats.PNG || target == formats.JPEG || target == formats.WebP)

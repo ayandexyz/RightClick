@@ -22,6 +22,11 @@ type MultiOutputEngine interface {
 	ConvertMany(context.Context, string, formats.Format, string, formats.Format, protocol.ImageOptions) ([]string, error)
 }
 
+type PDFRasterizer interface {
+	Engine
+	PDFRasterizer()
+}
+
 type Registry struct {
 	engines []Engine
 }
@@ -51,8 +56,10 @@ func (r *Registry) Resolve(source, target formats.Format) (Engine, error) {
 	}
 	var unavailable error
 	for _, engine := range r.engines {
-		if source == formats.PDF && engine.ID() != "pdf" {
-			continue
+		if source == formats.PDF {
+			if _, ok := engine.(PDFRasterizer); !ok {
+				continue
+			}
 		}
 		_, err := engine.Available()
 		if err != nil {

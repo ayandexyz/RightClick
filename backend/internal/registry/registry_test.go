@@ -65,6 +65,20 @@ func TestResolveRoutesPDFOnlyThroughPDFEngine(t *testing.T) {
 	}
 }
 
+func TestResolveDoesNotIdentifyPDFEngineByPublicID(t *testing.T) {
+	r := New()
+	r.Register(pdfIDEngine{})
+	r.Register(pdfImageEngine{})
+
+	got, err := r.Resolve(formats.PDF, formats.PNG)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got.(pdfImageEngine); !ok {
+		t.Fatalf("Resolve(PDF, PNG) selected %T, want dedicated PDF engine", got)
+	}
+}
+
 func TestResolveRejectsRoutesOutsidePDFRasterization(t *testing.T) {
 	r := New()
 	r.Register(anyFormatEngine{})
@@ -465,9 +479,14 @@ func (anyFormatEngine) Convert(context.Context, string, formats.Format, string, 
 	return nil
 }
 
+type pdfIDEngine struct{ anyFormatEngine }
+
+func (pdfIDEngine) ID() string { return "pdf" }
+
 type pdfImageEngine struct{}
 
 func (pdfImageEngine) ID() string                 { return "pdf" }
+func (pdfImageEngine) PDFRasterizer()             {}
 func (pdfImageEngine) Available() (string, error) { return "pdf", nil }
 func (pdfImageEngine) Supports(source, target formats.Format) bool {
 	return formats.IsPDFFormat(source) && (target == formats.PNG || target == formats.JPEG || target == formats.WebP)

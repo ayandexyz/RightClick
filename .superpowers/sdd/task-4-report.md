@@ -69,4 +69,22 @@ Integrated PDF-only registry routing while retaining the daemon registration fro
 
 - Dedicated PDF routing relies on the stable engine ID `pdf`, matching `engine.PDF.ID()` and the daemon registration. This prevents broad or future generic engines from claiming PDF input, as required.
 
+## PDF routing identity review follow-up
+
+### Outcome
+
+Replaced PDF routing's public `ID() == "pdf"` identity check with an explicit `registry.PDFRasterizer` marker capability implemented by `engine.PDF`. An unrelated broad engine can now use the public ID `pdf` without being eligible to claim PDF input.
+
+### TDD and verification evidence
+
+- RED: `cd backend && go test -count=1 ./internal/registry -run TestResolveDoesNotIdentifyPDFEngineByPublicID -v` -> exit 1; the unrelated `pdfIDEngine` was selected before the dedicated PDF test engine.
+- GREEN (focused): `cd backend && go test -count=1 ./internal/registry -v` -> exit 0; all registry tests passed, including the new colliding-ID regression test.
+- Static checks: `cd backend && go vet ./...` -> exit 0 with no output; `git diff --check` -> exit 0 with no output.
+- Full suite: `cd backend && go test -count=1 ./...` -> exit 1 after `TestServerCancelStopsActiveJob` timed out at 10 minutes. All other reported packages passed, including `internal/engine`, `internal/jobs`, and `internal/registry`. The timeout occurred in the existing server cancellation test and did not involve PDF routing.
+
+### Coverage and concerns
+
+- The production PDF engine and PDF test doubles used by registry/job tests explicitly implement `PDFRasterizer`; non-PDF routing and the existing PDF raster target restrictions are unchanged.
+- The full-suite server timeout remains a verification concern. Its stack trace shows `testEngine.Convert` blocked while `Manager.Close` waited for the active job during `TestServerCancelStopsActiveJob`; this change does not touch that server path.
+
 (End of file - total 46 lines)

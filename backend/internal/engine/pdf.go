@@ -25,6 +25,8 @@ func NewPDF(runner Runner) *PDF { return &PDF{runner: runner} }
 
 func (e *PDF) ID() string { return "pdf" }
 
+func (e *PDF) PDFRasterizer() {}
+
 func (e *PDF) Available() (string, error) {
 	path, err := exec.LookPath("pdftocairo")
 	if err != nil {
