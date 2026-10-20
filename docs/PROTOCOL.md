@@ -105,20 +105,32 @@ An operation may be present but `enabled: false` with a `reason`: merge with one
 
 Operations:
 
-| ID | Engine | Inputs | Params | Output name |
+| ID | Engine | Mode | Inputs | Output |
 | --- | --- | --- | --- | --- |
-| `pdf-merge` | pdfcpu | 2 or more PDFs | none | `merged.pdf` next to the first input or in `output_dir` |
-| `pdf-extract` | pdfcpu | 1 or more PDFs | `pages` (required) | `<stem>-extracted.pdf` |
-| `pdf-delete` | pdfcpu | 1 or more PDFs | `pages` (required) | `<stem>-edited.pdf` |
-| `pdf-rotate` | pdfcpu | 1 or more PDFs | `angle` (90/180/270, required), `pages` (optional, all pages if omitted) | `<stem>-rotated.pdf` |
-| `pdf-rotate-cw` | pdfcpu | 1 or more PDFs | none | `<stem>-rotated.pdf` |
-| `pdf-rotate-ccw` | pdfcpu | 1 or more PDFs | none | `<stem>-rotated.pdf` |
-| `pdf-rotate-180` | pdfcpu | 1 or more PDFs | none | `<stem>-rotated.pdf` |
-| `pdf-reverse` | pdfcpu | 1 or more PDFs | none | `<stem>-reversed.pdf` |
+| `pdf-merge` | pdfcpu | instant | 2 or more PDFs | `merged.pdf` next to first input or in `output_dir` |
+| `pdf-extract` | pdfcpu | studio | 1 or more PDFs | `<stem>-extracted.pdf` |
+| `pdf-delete` | pdfcpu | studio | 1 or more PDFs | `<stem>-edited.pdf` |
+| `pdf-rotate` | pdfcpu | studio | 1 or more PDFs | `<stem>-rotated.pdf`; `pages` (optional) |
+| `pdf-rotate-cw` | pdfcpu | instant | 1 or more PDFs | `<stem>-rotated.pdf` (90°) |
+| `pdf-rotate-ccw` | pdfcpu | instant | 1 or more PDFs | `<stem>-rotated.pdf` (-90°) |
+| `pdf-rotate-180` | pdfcpu | instant | 1 or more PDFs | `<stem>-rotated.pdf` (180°) |
+| `pdf-reverse` | pdfcpu | instant | 1 or more PDFs | `<stem>-reversed.pdf` |
+| `pdf-repair` | qpdf | instant | 1 or more PDFs | `<stem>-repaired.pdf` |
+| `pdf-linearize` | qpdf | instant | 1 or more PDFs | `<stem>-linearized.pdf` |
+| `pdf-flatten` | qpdf | instant | 1 or more PDFs | `<stem>-flattened.pdf` |
+| `pdf-compress-light` | ghostscript | instant | 1 or more PDFs | `<stem>-compressed.pdf` (`/printer`) |
+| `pdf-compress-balanced` | ghostscript | instant | 1 or more PDFs | `<stem>-compressed.pdf` (`/ebook`); `compress` is an alias |
+| `pdf-compress-strong` | ghostscript | instant | 1 or more PDFs | `<stem>-compressed.pdf` (`/screen`) |
+| `pdf-grayscale` | ghostscript | instant | 1 or more PDFs | `<stem>-gray.pdf` |
+| `pdf-to-text` | poppler | instant | 1 or more PDFs | `<stem>-text.txt` |
+| `pdf-extract-images` | poppler | instant | 1 or more PDFs | `<stem>-image-1.png`, `<stem>-image-2.png`, ... |
+| `pdf-strip-metadata` | pdfcpu | instant | 1 or more PDFs | `<stem>-clean.pdf` |
+| `pdf-ocr` | tesseract | studio | 1 or more PDFs | `<stem>-ocr.pdf` |
+| `pdf-from-images` | pdfcpu | instant | 1 or more JPEG / PNG / TIFF | `images.pdf` in `output_dir` |
 
-The `pdf-rotate-*` variants rotate every page by a fixed angle and are `instant`, so they need no parameters and reject an explicit `angle`. `pdf-rotate` is `studio` because it needs the caller to choose the angle.
+Studio operations require either `pages` (page spec, see below) or `angle` (90, 180, 270) in `params`. Instant operations reject those params. Image-only operations (`pdf-from-images`) work on a selection of all-images; the daemon reports the operation disabled with `<format> is not supported for PDF import` for selections containing any unsupported format.
 
-Merge yields one output for N inputs in the order given; the output path is reported on the first file entry, the remaining entries are `done` with no `outputs`. Every other operation produces one output per input file. Conflicts follow the same rules as `convert`: rename, skip, or overwrite, with `rename` as the default.
+Compress emits `skipped` with notice `already as small as it can get` when Ghostscript produces output that is not smaller than its input, rather than failing. Extract-images reports `skipped` with notice `no embedded images` for PDFs that contain no images.
 
 The page spec is comma-separated items; each is `N`, `N-M`, `N-` (to the last page), `-M` (from page 1), or `z` (the last page). 1-based, whitespace ignored. Duplicates and overlaps are allowed. Out-of-range pages, reversed ranges (`5-3`), garbage, and an empty spec are errors. A selection expanding to more than the daemon's per-document page ceiling (1000) is also rejected. Examples: `1-3,7,10-`, `z`, `-2`.
 

@@ -3,6 +3,46 @@
 Convert files from where you are: pick a file, choose a target format in a radial menu, done.
 One backend, a native frontend per platform.
 
+## PDF tools
+
+Beyond rasterizing pages, the backend offers structural PDF tools. The Nautilus menu and `fcctl pdf` reach every one through the same `operations` catalogue, with each tool recorded as one of three modes: `instant` (one click, no further input), `studio` (needs a page selection or angle), `import` (assembles a new PDF).
+
+| ID | Engine | Mode | Notes |
+| --- | --- | --- | --- |
+| `pdf-merge` | pdfcpu | instant | 2 or more files; one `merged.pdf` |
+| `pdf-extract` | pdfcpu | studio | needs `--pages` |
+| `pdf-delete` | pdfcpu | studio | needs `--pages` |
+| `pdf-rotate` | pdfcpu | studio | needs `--angle` (90/180/270), optional `--pages` |
+| `pdf-rotate-cw` | pdfcpu | instant | 90° clockwise |
+| `pdf-rotate-ccw` | pdfcpu | instant | 90° counter-clockwise |
+| `pdf-rotate-180` | pdfcpu | instant | flip 180° |
+| `pdf-reverse` | pdfcpu | instant | |
+| `pdf-repair` | qpdf | instant | rewrites damaged files |
+| `pdf-linearize` | qpdf | instant | web-optimised output |
+| `pdf-flatten` | qpdf | instant | flatten form annotations |
+| `pdf-compress-light` | ghostscript | instant | `/printer` |
+| `pdf-compress-balanced` | ghostscript | instant | `/ebook` (alias: `compress`) |
+| `pdf-compress-strong` | ghostscript | instant | `/screen` |
+| `pdf-grayscale` | ghostscript | instant | |
+| `pdf-to-text` | poppler | instant | extract text to `<stem>-text.txt` |
+| `pdf-extract-images` | poppler | instant | numbered PNGs `<stem>-image-N.png` |
+| `pdf-strip-metadata` | pdfcpu | instant | remove Info dictionary entries |
+| `pdf-from-images` | pdfcpu | instant | JPEG / PNG / TIFF to a single PDF |
+| `pdf-ocr` | tesseract | studio | rasterise via pdftocairo, OCR with tesseract |
+
+PDF tools, like conversions, report per-file state (`done`, `failed`, `skipped`) and per-file error codes: `password_required` for encrypted PDFs, `invalid_pdf` for files that cannot be opened as a PDF (which includes bad headers and corrupted structures).
+
+### Errors from PDF operations
+
+Operation-level errors include:
+
+| Code | Meaning |
+| --- | --- |
+| `password_required` | the PDF is encrypted (no passwords in this version) |
+| `invalid_pdf` | the file cannot be read as a PDF; merge attributes the failure to that file and `skipped`s the rest |
+
+Ghostscript compress reports `skipped` with `already as small as it can get` rather than failing when output is not smaller than input.
+
 ## Backend status
 
 The Linux Go backend supports image conversion plus FFmpeg-backed video and audio conversion. Image targets are filtered by the installed ImageMagick build; media targets require both `ffmpeg` and `ffprobe`. These engines are independent: missing FFmpeg/ffprobe does not disable ImageMagick image conversion, and missing ImageMagick does not disable media conversion:

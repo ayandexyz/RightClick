@@ -34,6 +34,19 @@ class Target:
     reason: str = ""
 
 
+@dataclass
+class Operation:
+    """One PDF tool the daemon offers for the current selection."""
+
+    id: str
+    label: str
+    group: str
+    mode: str
+    engine: str = ""
+    enabled: bool = False
+    reason: str = ""
+
+
 class FcClient:
     def __init__(self, path, connect_timeout=0.3, request_timeout=0.5, convert_timeout=2.0, silence_timeout=60.0):
         self.path = path
@@ -119,6 +132,50 @@ class FcClient:
                 line = file.readline()
                 if not line:
                     raise DaemonUnavailable("fcd closed the connection while converting")
+                message = json.loads(line)
+                if message.get("event") in ("job.updated", "job.finished"):
+                    yield message
+                if message.get("event") == "job.finished" and message.get("data", {}).get("id") == job_id:
+                    return
+        except socket.timeout as exc:
+            raise DaemonUnavailable("no fcd job event for 60 seconds") from exc
+        finally:
+            file.close()
+            sock.close()
+
+    def operations(self, paths):
+        """Ask the daemon which PDF tools apply to this selection.
+
+        A daemon older than the operations method answers with an unknown-method
+        error; callers treat that as "this daemon has no PDF tools" rather than
+        failing, so the rest of the menu still works.
+        """
+        with self._connect() as sock:
+            with sock.makefile("rwb") as file:
+                deadline = time.monotonic() + self.request_timeout
+                self._hello(sock, file, deadline)
+                result = self._request(sock, file, "operations", {"files": paths}, deadline=deadline)
+        fields = ("id", "label", "group", "mode", "engine", "enabled", "reason")
+        return [Operation(**{key: operation.get(key, "") for key in fields}) for operation in result.get("operations", [])]
+
+    def run_operation(self, paths, op, params=None):
+        """Run one PDF operation and yield job events until it finishes."""
+        sock = self._connect()
+        file = sock.makefile("rwb")
+        try:
+            self._hello(sock, file)
+            payload = {"files": paths, "op": op}
+            if params:
+                payload["params"] = params
+            result = self._request(sock, file, "run_operation", payload, self.convert_timeout)
+            job_id = result.get("job")
+            if not job_id:
+                raise ProtocolError("run_operation response did not include a job")
+            while True:
+                sock.settimeout(self.silence_timeout)
+                line = file.readline()
+                if not line:
+                    raise DaemonUnavailable("fcd closed the connection while running the operation")
                 message = json.loads(line)
                 if message.get("event") in ("job.updated", "job.finished"):
                     yield message

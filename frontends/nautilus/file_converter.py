@@ -6,7 +6,7 @@ _here = os.path.dirname(__file__)
 if _here not in sys.path:
     sys.path.insert(0, _here)
 
-from fc_client.client import FcClient, FcError, DaemonUnavailable
+from fc_client.client import FcClient, FcError, DaemonUnavailable, RequestError
 from fc_client.daemon import ensure_daemon
 from fc_client.notify import send
 
@@ -62,8 +62,9 @@ class FileConverterMenuProvider(*((GObject.GObject, Nautilus.MenuProvider) if Na
                 return []
             paths.append(path)
 
+        client = FcClient(_socket_path())
         try:
-            targets = [target for target in FcClient(_socket_path()).targets(paths, menu=True) if target.enabled]
+            targets = [target for target in client.targets(paths, menu=True) if target.enabled]
         except DaemonUnavailable as exc:
             log.debug("fcd unavailable while building menu: %s", exc)
             _spawn_helper("--warm")
@@ -71,20 +72,60 @@ class FileConverterMenuProvider(*((GObject.GObject, Nautilus.MenuProvider) if Na
         except FcError:
             log.exception("failed to build file converter menu")
             return []
-        if not targets:
-            return []
 
+        items = []
+        if targets:
+            submenu = Nautilus.Menu()
+            for target in targets:
+                item = Nautilus.MenuItem(name=f"FileConverter::{target.preset}", label=target.label)
+                item.connect("activate", self._activate, paths, target.preset)
+                submenu.append_item(item)
+            top = Nautilus.MenuItem(name="FileConverter::ConvertTo", label="Convert to")
+            top.set_submenu(submenu)
+            items.append(top)
+
+        pdf_tools = self._pdf_tools_menu(client, paths)
+        if pdf_tools is not None:
+            items.append(pdf_tools)
+        return items
+
+    def _pdf_tools_menu(self, client, paths):
+        """Build the PDF Tools submenu, or return None when it does not apply.
+
+        Studio operations need a page selection or an angle that the Nautilus
+        menu cannot collect, so they are left for the CLI; offering them here
+        would fail on activation.
+        """
+        try:
+            operations = client.operations(paths)
+        except DaemonUnavailable as exc:
+            log.debug("fcd unavailable while listing operations: %s", exc)
+            return None
+        except RequestError as exc:
+            # A daemon older than the operations method answers unknown_method.
+            log.debug("daemon does not offer PDF operations: %s", exc)
+            return None
+        except FcError:
+            log.exception("failed to list PDF operations")
+            return None
+
+        instant = [op for op in operations if op.enabled and op.mode == "instant"]
+        if not instant:
+            return None
         submenu = Nautilus.Menu()
-        for target in targets:
-            item = Nautilus.MenuItem(name=f"FileConverter::{target.preset}", label=target.label)
-            item.connect("activate", self._activate, paths, target.preset)
+        for op in instant:
+            item = Nautilus.MenuItem(name=f"FileConverter::pdf::{op.id}", label=op.label)
+            item.connect("activate", self._activate_operation, paths, op.id)
             submenu.append_item(item)
-        top = Nautilus.MenuItem(name="FileConverter::ConvertTo", label="Convert to")
+        top = Nautilus.MenuItem(name="FileConverter::PDFTools", label="PDF Tools")
         top.set_submenu(submenu)
-        return [top]
+        return top
 
     def _activate(self, _item, paths, preset):
         _spawn_helper("--convert", preset, *paths)
+
+    def _activate_operation(self, _item, paths, op):
+        _spawn_helper("--operation", op, *paths)
 
     @staticmethod
     def _convert(paths, preset):
@@ -99,6 +140,20 @@ class FileConverterMenuProvider(*((GObject.GObject, Nautilus.MenuProvider) if Na
                 send("File Converter is not running", "Start it with: systemctl --user start fcd")
             else:
                 send("Conversion failed", str(exc))
+
+    @staticmethod
+    def _run_operation(paths, op):
+        try:
+            final = None
+            for event in FcClient(_socket_path()).run_operation(paths, op):
+                if event.get("event") == "job.finished":
+                    final = event.get("data", {})
+            _notify_operation(final or {}, op)
+        except FcError as exc:
+            if isinstance(exc, DaemonUnavailable):
+                send("File Converter is not running", "Start it with: systemctl --user start fcd")
+            else:
+                send("PDF operation failed", str(exc))
 
 
 def _spawn_helper(*args):
@@ -149,8 +204,96 @@ def _notify_job(job):
         send("Conversion failed", message)
 
 
+def _notify_operation(job, op):
+    """Notification text for a PDF operation completion, tailored per outcome."""
+    state = job.get("state")
+    files = job.get("files", [])
+    done = [item for item in files if item.get("state") == "done"]
+    failed = [item for item in files if item.get("state") == "failed"]
+    skipped = [item for item in files if item.get("state") == "skipped"]
+    title = OPERATION_TITLES.get(op, "PDF operation complete")
+    if state == "completed" and not failed:
+        body = " ".join(_sizes(done)) or f"{len(done)} done, {len(skipped)} skipped"
+        if len(done) and len(failed) == 0:
+            send(title, body)
+        else:
+            send(title, f"{len(done)} done, {len(skipped)} skipped")
+    elif state == "failed":
+        first = failed[0].get("error", {})
+        code = first.get("code", "")
+        message = first.get("message", "")
+        if code == "invalid_pdf":
+            send(title, f"PDF could not be read: {message}")
+        elif code == "password_required":
+            send(title, "PDF is locked — passwords are not supported yet")
+        elif message:
+            send(f"{title} failed", message)
+        else:
+            send(f"{title} failed", "Operation failed")
+    elif state == "cancelled":
+        send(f"{title} cancelled", "")
+    else:
+        send(title, f"{len(done)} done, {len(skipped)} skipped, {len(failed)} failed")
+
+
+def _sizes(done):
+    """Render the input→output size for completed compress jobs, else return empty body."""
+    messages = []
+    for item in done:
+        source = item.get("source")
+        outputs = item.get("outputs") or []
+        if not source or not outputs:
+            continue
+        try:
+            before = os.path.getsize(source)
+        except OSError:
+            continue
+        try:
+            after = os.path.getsize(outputs[0])
+        except OSError:
+            continue
+        messages.append(f"{os.path.basename(source)}: {_format_size(before)} → {_format_size(after)}")
+    return messages
+
+
+def _format_size(n):
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024:
+            return f"{n:.0f}{unit}" if unit == "B" else f"{n:.1f}{unit}"
+        n /= 1024
+    return f"{n:.1f}TB"
+
+
+# Friendly titles for the operation IDs the menu exposes. Falls back to a generic
+# "PDF operation complete" inside _notify_operation.
+OPERATION_TITLES = {
+    "pdf-merge": "PDFs merged",
+    "pdf-repair": "PDF repaired",
+    "pdf-linearize": "PDF linearized",
+    "pdf-flatten": "PDF flattened",
+    "pdf-compress-light": "PDF compressed (light)",
+    "pdf-compress-balanced": "PDF compressed",
+    "pdf-compress-strong": "PDF compressed (strong)",
+    "pdf-grayscale": "PDF converted to grayscale",
+    "pdf-rotate": "PDF rotated",
+    "pdf-rotate-cw": "PDF rotated 90°",
+    "pdf-rotate-ccw": "PDF rotated 90°",
+    "pdf-rotate-180": "PDF rotated 180°",
+    "pdf-reverse": "PDF reversed",
+    "pdf-extract": "PDF pages extracted",
+    "pdf-delete": "PDF pages deleted",
+    "pdf-strip-metadata": "PDF metadata stripped",
+    "pdf-to-text": "Text extracted",
+    "pdf-extract-images": "Images extracted",
+    "pdf-ocr": "PDF OCR'd",
+    "pdf-from-images": "Images combined into PDF",
+}
+
+
 if __name__ == "__main__":
     if sys.argv[1:2] == ["--warm"]:
         _warm_daemon()
     elif sys.argv[1:2] == ["--convert"] and len(sys.argv) > 3:
         FileConverterMenuProvider._convert(sys.argv[3:], sys.argv[2])
+    elif sys.argv[1:2] == ["--operation"] and len(sys.argv) > 3:
+        FileConverterMenuProvider._run_operation(sys.argv[3:], sys.argv[2])

@@ -77,8 +77,45 @@ def main():
         subprocess.run(["systemctl", "--user", "restart", "fcd.service"], check=False)
         subprocess.run(["nautilus", "-q"], check=False)
         print("File Converter Nautilus integration installed")
+        report_missing_engines()
     finally:
         shutil.rmtree(build_dir, ignore_errors=True)
+
+
+# Each PDF engine is optional: a missing binary disables only the operations
+# that use it. Nothing is installed automatically, because these are large
+# packages a user may not want.
+ENGINES = [
+    ("qpdf", ["qpdf"], "Repair, Linearize, Flatten",
+     "pacman -S qpdf / apt-get install qpdf"),
+    ("gs", ["ghostscript"], "Compress, Convert to grayscale",
+     "pacman -S ghostscript / apt-get install ghostscript"),
+    ("pdftotext", ["pdftotext"], "Extract text",
+     "pacman -S poppler / apt-get install poppler-utils"),
+    ("pdfimages", ["pdfimages"], "Extract images",
+     "pacman -S poppler / apt-get install poppler-utils"),
+    ("pdftocairo", ["pdftocairo"], "OCR (make searchable)",
+     "pacman -S poppler / apt-get install poppler-utils"),
+    ("tesseract", ["tesseract"], "OCR (make searchable)",
+     "pacman -S tesseract tesseract-data-eng / apt-get install tesseract-ocr"),
+]
+
+
+def report_missing_engines():
+    """Print one line per missing PDF engine, or a short all-present note."""
+    missing = [
+        (name, operations, install)
+        for name, binaries, operations, install in ENGINES
+        if not any(shutil.which(binary) for binary in binaries)
+    ]
+    if not missing:
+        print("All PDF engines are installed.")
+        return
+    print()
+    print("Optional PDF engines are missing; the menu hides the operations that need them:")
+    for name, operations, install in missing:
+        print(f"  {name}: {operations}")
+        print(f"    install with: {install}")
 
 
 if __name__ == "__main__":

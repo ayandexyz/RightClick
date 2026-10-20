@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -1034,4 +1035,55 @@ func pdfEngineForID(id string) string {
 		return ""
 	}
 	return op.EngineID()
+}
+
+// TestServerOperationsListsThePhase2Catalogue pins the operations a single PDF
+// selection is offered, so a catalogue change shows up as a diff here rather
+// than as a surprise in the file manager.
+func TestServerOperationsListsThePhase2Catalogue(t *testing.T) {
+	dir := t.TempDir()
+	conn, reader, cleanup := startOperationServerWithToolbox(t, pdfops.Toolbox{PDFCPU: &stubPDFBackend{pages: 4}})
+	defer cleanup()
+
+	response := exchange(t, conn, reader, protocol.Request{ID: 1, Method: "operations", Params: mustJSON(map[string]any{
+		"files": []string{pdfFixture(t, dir, "a.pdf")},
+	})})
+	byID := map[string]protocol.Operation{}
+	for _, op := range operationsFrom(t, response) {
+		byID[op.ID] = op
+	}
+	// Engines that are absent still appear, disabled with a reason, so a user
+	// can see the tool exists and why it is unavailable.
+	for _, want := range []string{
+		"pdf-repair", "pdf-linearize", "pdf-flatten",
+		"pdf-compress-light", "pdf-compress-balanced", "pdf-compress-strong", "pdf-grayscale",
+		"pdf-to-text", "pdf-extract-images", "pdf-ocr",
+	} {
+		op, ok := byID[want]
+		if !ok {
+			t.Errorf("operations missing %s; got %v", want, keysOf(byID))
+			continue
+		}
+		if op.Enabled {
+			t.Errorf("%s enabled with no external engine in the toolbox", want)
+		}
+		if op.Reason == "" {
+			t.Errorf("%s disabled with no reason", want)
+		}
+	}
+	// pdfcpu is linked in, so its operations are genuinely available.
+	for _, want := range []string{"pdf-rotate-cw", "pdf-rotate-180", "pdf-strip-metadata"} {
+		if op, ok := byID[want]; !ok || !op.Enabled {
+			t.Errorf("%s = %+v, want enabled", want, op)
+		}
+	}
+}
+
+func keysOf(m map[string]protocol.Operation) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
