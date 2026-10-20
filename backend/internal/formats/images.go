@@ -41,10 +41,18 @@ const (
 var ErrUnsupported = errors.New("unsupported image format")
 var ErrInvalidInput = errors.New("invalid input file")
 
-func ValidateInput(path string) error {
+func ValidatePath(path string) error {
 	if !filepath.IsAbs(path) || unsafeInputBase(filepath.Base(path)) {
 		return fmt.Errorf("%w: unsafe or non-absolute path", ErrInvalidInput)
 	}
+	return nil
+}
+
+func ValidateInput(path string) error {
+	if err := ValidatePath(path); err != nil {
+		return err
+	}
+
 	info, err := os.Stat(path)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalidInput, err)

@@ -4,9 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os/exec"
-	"path/filepath"
-	"strings"
 	"syscall"
 
 	"file-converter/backend/internal/formats"
@@ -37,45 +36,49 @@ func NewFFmpeg(runner Runner, probe Probe) *FFmpeg {
 func (e *FFmpeg) ID() string { return "ffmpeg" }
 
 func (e *FFmpeg) Available() (string, error) {
-	if e.executable != "" {
-		return e.executable, nil
-	}
 	lookup := e.lookup
 	if lookup == nil {
 		lookup = exec.LookPath
 	}
-	path, err := lookup("ffmpeg")
-	if err != nil {
-		return "", fmt.Errorf("ffmpeg not found: %w", err)
+	if e.executable == "" {
+		path, err := lookup("ffmpeg")
+		if err != nil {
+			return "", fmt.Errorf("ffmpeg not found: %w", err)
+		}
+		e.executable = path
 	}
-	e.executable = path
-	return path, nil
+	if e.ffprobe == "" {
+		path, err := lookup("ffprobe")
+		if err != nil {
+			return "", fmt.Errorf("ffprobe not found: %w", err)
+		}
+		e.ffprobe = path
+	}
+	return e.executable, nil
 }
 
-func (e *FFmpeg) Probe(path string) (MediaKind, error) {
-	if unsafeMediaPath(path) {
-		return "", fmt.Errorf("unsafe media path")
+func (e *FFmpeg) Probe(ctx context.Context, path string) (MediaKind, error) {
+	if err := formats.ValidatePath(path); err != nil {
+		return "", fmt.Errorf("unsafe media path: %w", err)
 	}
-	probePath := e.ffprobe
-	if probePath == "" {
+	if e.ffprobe == "" {
 		lookup := e.lookup
 		if lookup == nil {
 			lookup = exec.LookPath
 		}
 		var err error
-		probePath, err = lookup("ffprobe")
+		e.ffprobe, err = lookup("ffprobe")
 		if err != nil {
 			return "", fmt.Errorf("ffprobe not found: %w", err)
 		}
-		e.ffprobe = probePath
 	}
 	args := []string{"-v", "error", "-show_entries", "stream=codec_type", "-of", "json", "--", path}
 	var output []byte
 	var err error
 	if e.probe != nil {
-		output, err = e.probe(context.Background(), probePath, args)
+		output, err = e.probe(ctx, e.ffprobe, args)
 	} else {
-		output, err = exec.Command(probePath, args...).Output()
+		output, err = runOutputCommand(ctx, e.ffprobe, args)
 	}
 	if err != nil {
 		return "", fmt.Errorf("ffprobe failed: %w", err)
@@ -117,8 +120,11 @@ func (e *FFmpeg) Convert(ctx context.Context, source string, sourceFormat format
 	if !e.Supports(sourceFormat, target) {
 		return fmt.Errorf("unsupported media conversion: %s to %s", sourceFormat, target)
 	}
-	if unsafeMediaPath(source) || unsafeMediaPath(destination) {
-		return fmt.Errorf("unsafe media path")
+	if err := formats.ValidatePath(source); err != nil {
+		return fmt.Errorf("unsafe media path: %w", err)
+	}
+	if err := formats.ValidatePath(destination); err != nil {
+		return fmt.Errorf("unsafe media path: %w", err)
 	}
 	executable, err := e.Available()
 	if err != nil {
@@ -134,6 +140,49 @@ func (e *FFmpeg) Convert(ctx context.Context, source string, sourceFormat format
 	if e.runner != nil {
 		return e.runner(ctx, executable, args)
 	}
+	return runCommand(ctx, executable, args)
+}
+
+func runOutputCommand(ctx context.Context, executable string, args []string) ([]byte, error) {
+	cmd := exec.Command(executable, args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	result := make(chan struct {
+		output []byte
+		err    error
+	}, 1)
+	go func() {
+		output, readErr := io.ReadAll(stdout)
+		waitErr := cmd.Wait()
+		if readErr != nil {
+			result <- struct {
+				output []byte
+				err    error
+			}{nil, readErr}
+			return
+		}
+		result <- struct {
+			output []byte
+			err    error
+		}{output, waitErr}
+	}()
+	select {
+	case result := <-result:
+		return result.output, result.err
+	case <-ctx.Done():
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		<-result
+		return nil, ctx.Err()
+	}
+}
+
+func runCommand(ctx context.Context, executable string, args []string) error {
 	cmd := exec.Command(executable, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
@@ -160,9 +209,4 @@ func targetDefaults(target formats.Format) []string {
 	default:
 		return nil
 	}
-}
-
-func unsafeMediaPath(path string) bool {
-	base := filepath.Base(path)
-	return !filepath.IsAbs(path) || strings.ContainsAny(base, "[]:") || strings.HasPrefix(base, "@")
 }

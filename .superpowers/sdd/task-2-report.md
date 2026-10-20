@@ -71,3 +71,13 @@ ok for all backend packages
 - Registry target discovery, media input detection in jobs, output planning, server media behavior, CLI media presets, and end-to-end FFmpeg conversion remain later staged work.
 - The daemon now exposes FFmpeg in its runtime registry, but media routes will become fully usable only after those later integration tasks are completed.
 - Fixed codec defaults are included only for video containers and WebM. Detailed codec/bitrate/progress options remain out of scope.
+
+## Review Fix Report
+
+Addressed the Task 2 review findings as follows:
+
+1. **Context-bound, cancellable probing.** `Probe` now accepts the caller's `context.Context`; injected probes receive that exact context instead of `context.Background()`. Real ffprobe execution uses the same process-group cancellation model as ffmpeg, including `Setpgid` and group termination when the context is canceled.
+2. **Canonical path validation.** Added `formats.ValidatePath`, which reuses the existing absolute-path and unsafe-basename rules without requiring the path to exist. FFmpeg probing and conversion now call this shared helper rather than maintaining a divergent unsafe-path implementation.
+3. **Usable availability.** `FFmpeg.Available` now requires both `ffmpeg` and `ffprobe`, so registry status and resolution do not advertise an engine that cannot probe media. Tests cover missing ffprobe after a successful ffmpeg lookup. Existing daemon registration remains because it is required for runtime reachability, and the daemon test still verifies registration.
+4. **Expanded conversion coverage.** Tests now cover every video and audio target route, all media/image rejection combinations, exact argument ordering, `--` placement, fixed video defaults, `-vn` for audio targets, and the absence of video defaults during audio extraction.
+5. **Verification.** `go test ./internal/engine ./cmd/fcd`, `go test ./internal/engine -run FFmpeg -v`, and the full backend `go test ./...` suite all pass. `git diff --check` also passes.
