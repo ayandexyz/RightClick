@@ -18,6 +18,16 @@ func TestIsClosedRecognizesListenerCloseErrors(t *testing.T) {
 	}
 }
 
+func TestEngineRegistryIncludesSVG(t *testing.T) {
+	engines := newEngineRegistry()
+	for _, registered := range engines.Engines() {
+		if registered.ID() == "svg" {
+			return
+		}
+	}
+	t.Fatal("daemon engine registry does not include svg")
+}
+
 func TestEngineRegistryIncludesFFmpeg(t *testing.T) {
 	engines := newEngineRegistry()
 	var found bool

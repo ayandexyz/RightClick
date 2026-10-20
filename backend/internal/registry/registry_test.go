@@ -122,6 +122,50 @@ func TestTargetsForMixedFilesOnlyIncludeAudioTargets(t *testing.T) {
 	assertPresets(t, got, []string{"audio-to-wav", "audio-to-flac", "audio-to-aac", "audio-to-m4a", "audio-to-ogg", "audio-to-opus", "audio-to-aiff", "audio-to-alac", "audio-to-ac3", "audio-to-amr", "audio-to-wma"})
 }
 
+func TestTargetsForSVGFilesExposeOnlySVGPresets(t *testing.T) {
+	dir := t.TempDir()
+	first := filepath.Join(dir, "first.svg")
+	second := filepath.Join(dir, "second.svg")
+	for _, path := range []string{first, second} {
+		if err := os.WriteFile(path, []byte(`<svg xmlns="http://www.w3.org/2000/svg"/>`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	r := New()
+	r.Register(svgTestEngine{})
+	got, err := r.TargetsForFiles([]string{first, second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPresets(t, got, []string{"svg-to-png", "svg-to-jpeg", "svg-to-webp"})
+}
+
+func TestTargetsForFilesDoesNotExposeSVGPresetsForMixedInputs(t *testing.T) {
+	dir := t.TempDir()
+	svg := filepath.Join(dir, "input.svg")
+	png := filepath.Join(dir, "input.png")
+	if err := os.WriteFile(svg, []byte(`<svg xmlns="http://www.w3.org/2000/svg"/>`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(png, []byte("\x89PNG\r\n\x1a\nfixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	r := New()
+	r.Register(svgTestEngine{})
+	r.Register(allImageEngine{})
+	got, err := r.TargetsForFiles([]string{svg, png})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range got {
+		if strings.HasPrefix(target.Preset, "svg-to-") {
+			t.Fatalf("mixed inputs exposed SVG preset %q", target.Preset)
+		}
+	}
+}
+
 func TestTargetsForFilesUnavailableMediaEngineDoesNotHideImageTargets(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "photo.png")
 	if err := os.WriteFile(path, []byte("\x89PNG\r\n\x1a\nfixture"), 0o600); err != nil {
@@ -269,6 +313,17 @@ func (imageAndMediaEngine) Supports(source, target formats.Format) bool {
 	return source != target
 }
 func (imageAndMediaEngine) Convert(context.Context, string, formats.Format, string, formats.Format, protocol.ImageOptions) error {
+	return nil
+}
+
+type svgTestEngine struct{}
+
+func (svgTestEngine) ID() string                 { return "svg" }
+func (svgTestEngine) Available() (string, error) { return "rsvg-convert", nil }
+func (svgTestEngine) Supports(source, target formats.Format) bool {
+	return formats.IsSVGFormat(source) && (target == formats.PNG || target == formats.JPEG || target == formats.WebP)
+}
+func (svgTestEngine) Convert(context.Context, string, formats.Format, string, formats.Format, protocol.ImageOptions) error {
 	return nil
 }
 

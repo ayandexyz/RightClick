@@ -67,6 +67,8 @@ func (r *Registry) TargetsForFiles(paths []string) ([]protocol.Target, error) {
 	var common map[formats.Format]bool
 	var hasVideoSource bool
 	var hasImageSource bool
+	var hasSVGSource bool
+	var hasNonSVGSource bool
 	for _, path := range paths {
 		source, err := formats.Detect(path)
 		if err != nil {
@@ -80,6 +82,11 @@ func (r *Registry) TargetsForFiles(paths []string) ([]protocol.Target, error) {
 		}
 		if formats.IsImageFormat(source) {
 			hasImageSource = true
+		}
+		if formats.IsSVGFormat(source) {
+			hasSVGSource = true
+		} else {
+			hasNonSVGSource = true
 		}
 		available := make(map[formats.Format]bool)
 		for _, target := range allSupportedFormats() {
@@ -102,7 +109,10 @@ func (r *Registry) TargetsForFiles(paths []string) ([]protocol.Target, error) {
 	}
 	out := make([]protocol.Target, 0, len(common))
 	for _, target := range protocol.SupportedPresets() {
-		if strings.HasPrefix(target.Preset, "svg-to-") && !hasSVGSource(paths) {
+		if strings.HasPrefix(target.Preset, "svg-to-") && (!hasSVGSource || hasNonSVGSource) {
+			continue
+		}
+		if !strings.HasPrefix(target.Preset, "svg-to-") && hasSVGSource && !hasNonSVGSource {
 			continue
 		}
 		format, ok := formats.PresetFormat(target.Preset)
@@ -152,15 +162,6 @@ func (r *Registry) mediaSource(ctx context.Context, path string) (formats.Format
 		}
 	}
 	return "", formats.ErrUnsupported
-}
-
-func hasSVGSource(paths []string) bool {
-	for _, path := range paths {
-		if format, err := formats.Detect(path); err == nil && formats.IsSVGFormat(format) {
-			return true
-		}
-	}
-	return false
 }
 
 func allSupportedFormats() []formats.Format {

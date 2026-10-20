@@ -56,6 +56,9 @@ func setupEngines() (*registry.Registry, string) {
 	_ = imageEngine.ProbeCapabilities()
 	enginePath, _ := imageEngine.Available()
 
+	svgEngine := engine.NewSVG(nil)
+	_, _ = svgEngine.Available()
+
 	ffmpegEngine := engine.NewFFmpeg(nil, nil)
 	// Probe independently. An unavailable media tool must not prevent image
 	// conversions or daemon startup; the registry reports its status later.
@@ -63,6 +66,7 @@ func setupEngines() (*registry.Registry, string) {
 
 	engines := registry.New()
 	engines.Register(imageEngine)
+	engines.Register(svgEngine)
 	engines.Register(ffmpegEngine)
 	return engines, enginePath
 }

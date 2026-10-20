@@ -20,6 +20,24 @@ type fakeConverter struct {
 	block bool
 }
 
+type fakeSVGConverter struct {
+	calls  int
+	source formats.Format
+	target formats.Format
+}
+
+func (f *fakeSVGConverter) ID() string                 { return "svg" }
+func (f *fakeSVGConverter) Available() (string, error) { return "rsvg-convert", nil }
+func (f *fakeSVGConverter) Supports(source, target formats.Format) bool {
+	return formats.IsSVGFormat(source) && target == formats.PNG
+}
+func (f *fakeSVGConverter) Convert(_ context.Context, _ string, source formats.Format, destination string, target formats.Format, _ protocol.ImageOptions) error {
+	f.calls++
+	f.source = source
+	f.target = target
+	return os.WriteFile(destination, []byte("converted"), 0o600)
+}
+
 type fakeMediaEngine struct {
 	mu             sync.Mutex
 	calls          int
@@ -181,6 +199,30 @@ func TestManagerRoutesVideoSourceToAudioOutputThroughAtomicLifecycle(t *testing.
 	media.mu.Unlock()
 	if calls != 1 || target != formats.MP3 {
 		t.Fatalf("media engine calls = %d target = %s", calls, target)
+	}
+}
+
+func TestManagerRunsSVGConversionThroughRegistryRoute(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "input.svg")
+	if err := os.WriteFile(source, []byte(`<svg xmlns="http://www.w3.org/2000/svg"/>`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	converter := &fakeSVGConverter{}
+	r := registry.New()
+	r.Register(converter)
+	m := NewManagerWithRegistry(r)
+	defer m.Close()
+	events := make(chan protocol.Event, 16)
+	id, err := m.Submit(SubmitRequest{Files: []string{source}, Preset: "svg-to-png", OutputDir: t.TempDir(), Conflict: protocol.ConflictRename, Events: func(e protocol.Event) { events <- e }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := waitJob(t, events)
+	if job.ID != id || job.State != "completed" || job.Files[0].State != "done" {
+		t.Fatalf("unexpected job: %+v", job)
+	}
+	if converter.calls != 1 || converter.source != formats.SVG || converter.target != formats.PNG {
+		t.Fatalf("SVG route calls = %d, %s to %s", converter.calls, converter.source, converter.target)
 	}
 }
 
