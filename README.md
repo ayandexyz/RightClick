@@ -9,9 +9,12 @@ Beyond rasterizing pages, the backend offers structural PDF tools. The Nautilus 
 
 | ID | Engine | Mode | Notes |
 | --- | --- | --- | --- |
-| `pdf-merge` | pdfcpu | instant | 2 or more files; one `merged.pdf` |
+| `pdf-merge` | pdfcpu | instant | 2 or more files; one `merged.pdf`; `--pages-for 2=1-3` selects pages per file |
 | `pdf-extract` | pdfcpu | studio | needs `--pages` |
 | `pdf-delete` | pdfcpu | studio | needs `--pages` |
+| `pdf-edit` | pdfcpu | studio | `--edit '3,1r90,b,3,4'` |
+| `pdf-split-ranges` | pdfcpu | studio | `--ranges '1-3;4-6;7-'` |
+| `pdf-split-every` | pdfcpu | studio | `--every 5` |
 | `pdf-rotate` | pdfcpu | studio | needs `--angle` (90/180/270), optional `--pages` |
 | `pdf-rotate-cw` | pdfcpu | instant | 90° clockwise |
 | `pdf-rotate-ccw` | pdfcpu | instant | 90° counter-clockwise |

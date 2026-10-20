@@ -101,15 +101,18 @@ The selection must be uniformly one kind: all PDFs, or all images that pdfcpu ca
 An operation may be present but `enabled: false` with a `reason`: merge with one file reports `needs at least 2 files`, an image operation over an unsupported format reports `<format> is not supported for PDF import`, and an operation whose engine is not installed reports `<engine> is not installed`. A missing engine disables only its own operations.
 
 ### `run_operation`
-`params: {op, files, params?, output_dir?, on_conflict?}` → `{job: string}`. The job runs through the same lifecycle as conversions: `job.updated` events with progress, `job.finished` with the final state. `params` is `{pages?: string, angle?: int}`. `pages` follows the spec grammar below; `angle` must be 90, 180 or 270.
+`params: {op, files, params?, output_dir?, on_conflict?}` → `{job: string}`. The job runs through the same lifecycle as conversions: `job.updated` events with progress, `job.finished` with the final state. `params` may contain `{pages?: string, angle?: int, edit?: PageItem[], ranges?: string, every?: int, file_pages?: string[]}`. `pages` follows the spec grammar below; `angle` must be 90, 180 or 270. `edit` is the ordered page list for `pdf-edit` (`src: 0` is blank and `rotate` is 0/90/180/270). `ranges` is semicolon-separated page specs for splitting. `every` is the positive page group size. `file_pages` is aligned with merge `files`; an empty entry means all pages.
 
 Operations:
 
 | ID | Engine | Mode | Inputs | Output |
 | --- | --- | --- | --- | --- |
-| `pdf-merge` | pdfcpu | instant | 2 or more PDFs | `merged.pdf` next to first input or in `output_dir` |
+| `pdf-merge` | pdfcpu | instant | 2 or more PDFs | `merged.pdf` next to first input or in `output_dir`; optional `file_pages` selects pages per input |
 | `pdf-extract` | pdfcpu | studio | 1 or more PDFs | `<stem>-extracted.pdf` |
 | `pdf-delete` | pdfcpu | studio | 1 or more PDFs | `<stem>-edited.pdf` |
+| `pdf-edit` | pdfcpu | studio | exactly 1 PDF | `<stem>-edited.pdf`; requires `edit` |
+| `pdf-split-ranges` | pdfcpu | studio | exactly 1 PDF | `<stem>-part-1.pdf`, ...; requires `ranges` |
+| `pdf-split-every` | pdfcpu | studio | exactly 1 PDF | `<stem>-part-1.pdf`, ...; requires `every` |
 | `pdf-rotate` | pdfcpu | studio | 1 or more PDFs | `<stem>-rotated.pdf`; `pages` (optional) |
 | `pdf-rotate-cw` | pdfcpu | instant | 1 or more PDFs | `<stem>-rotated.pdf` (90°) |
 | `pdf-rotate-ccw` | pdfcpu | instant | 1 or more PDFs | `<stem>-rotated.pdf` (-90°) |
@@ -131,7 +134,7 @@ Operations:
 
 Studio operations require either `pages` (page spec, see below) or `angle` (90, 180, 270) in `params`. Instant operations reject those params. Image-only operations (`pdf-from-images`) work on a selection of all-images; the daemon reports the operation disabled with `<format> is not supported for PDF import` for selections containing any unsupported format.
 
-Compress emits `skipped` with notice `already as small as it can get` when Ghostscript produces output that is not smaller than its input, rather than failing. Extract-images reports `skipped` with notice `no embedded images` for PDFs that contain no images.
+Compress emits `skipped` with notice `already as small as it can get` when Ghostscript produces output that is not smaller than its input, rather than failing. Extract-images reports `skipped` with notice `no embedded images` for PDFs that contain no images. Split operations reject empty groups, invalid/out-of-range specs, a single-file split, and more than 200 parts before writing any output. Range groups are independent and may overlap; `every` produces a final remainder part when needed.
 
 The page spec is comma-separated items; each is `N`, `N-M`, `N-` (to the last page), `-M` (from page 1), or `z` (the last page). 1-based, whitespace ignored. Duplicates and overlaps are allowed. Out-of-range pages, reversed ranges (`5-3`), garbage, and an empty spec are errors. A selection expanding to more than the daemon's per-document page ceiling (1000) is also rejected. Examples: `1-3,7,10-`, `z`, `-2`.
 

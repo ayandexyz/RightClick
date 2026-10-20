@@ -1443,3 +1443,66 @@ func TestServerThumbnailsReportDamagedPDFsWithTheRealBackend(t *testing.T) {
 		t.Fatalf("pdf_thumbnails = %#v, want code invalid_pdf", resp)
 	}
 }
+
+// TestPhase3PDFProtocolSurface exercises the actual NDJSON socket rather than
+// calling validation or job methods directly. Each new request must be accepted
+// by the daemon and return a job id; clients can then follow job.updated events.
+func TestPhase3PDFProtocolSurface(t *testing.T) {
+	dir := t.TempDir()
+	files := []string{filepath.Join(dir, "one.pdf"), filepath.Join(dir, "two.pdf")}
+	for _, file := range files {
+		if err := os.WriteFile(file, []byte("%PDF-1.7\nstub\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	conn, reader, cleanup := startOperationServer(t, &stubPDFBackend{pages: 4})
+	defer cleanup()
+
+	tests := []struct {
+		name   string
+		params map[string]any
+	}{
+		{"edit", map[string]any{"op": "pdf-edit", "files": []string{files[0]}, "params": map[string]any{
+			"edit": []map[string]any{{"src": 3}, {"src": 0}, {"src": 1, "rotate": 90}},
+		}}},
+		{"split ranges", map[string]any{"op": "pdf-split-ranges", "files": []string{files[0]}, "params": map[string]any{"ranges": "1-2;3-"}}},
+		{"split every", map[string]any{"op": "pdf-split-every", "files": []string{files[0]}, "params": map[string]any{"every": 2}}},
+		{"merge file pages", map[string]any{"op": "pdf-merge", "files": files, "params": map[string]any{"file_pages": []string{"1-2", ""}}}},
+	}
+	for id, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			response := exchangeUntilID(t, conn, reader, protocol.Request{ID: id + 1, Method: "run_operation", Params: mustJSON(tc.params)})
+			if response["error"] != nil {
+				t.Fatalf("%s rejected: %#v", tc.name, response["error"])
+			}
+			result, ok := response["result"].(map[string]any)
+			if !ok || result["job"] == "" {
+				t.Fatalf("%s response lacks a job id: %#v", tc.name, response)
+			}
+		})
+	}
+}
+
+func exchangeUntilID(t *testing.T, conn net.Conn, reader *bufio.Reader, req protocol.Request) map[string]any {
+	t.Helper()
+	data, err := protocol.EncodeMessage(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		line, err := reader.ReadBytes('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+		var response map[string]any
+		if err := json.Unmarshal(line, &response); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := response["result"]; ok || response["error"] != nil {
+			return response
+		}
+	}
+}
