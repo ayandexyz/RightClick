@@ -227,3 +227,101 @@ func TestCommandConstruction(t *testing.T) {
 		t.Fatalf("%s %v", gotExe, gotArgs)
 	}
 }
+
+func TestPlanNamedOutputUsesTheGivenName(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "report.pdf")
+	if err := os.WriteFile(source, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := PlanNamedOutputExcluding(dir, source, "report-extracted", "pdf", "rename", nil)
+	if err != nil {
+		t.Fatalf("PlanNamedOutputExcluding: %v", err)
+	}
+	defer plan.RemoveTemp()
+	want := filepath.Join(dir, "report-extracted.pdf")
+	if plan.Destination != want {
+		t.Fatalf("Destination = %q, want %q", plan.Destination, want)
+	}
+}
+
+func TestPlanNamedOutputRejectsSourceOverwrite(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "report.pdf")
+	if err := os.WriteFile(source, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Naming the output exactly as the source must not be allowed, even
+	// though the source has a different extension from the requested one.
+	plan, err := PlanNamedOutputExcluding(dir, source, "report.pdf", "pdf", "rename", nil)
+	if err == nil {
+		plan.RemoveTemp()
+	}
+	if filepath.Clean(plan.Destination) == filepath.Clean(source) && err == nil {
+		t.Fatalf("planning %q over its own source should fail", source)
+	}
+}
+
+// An output whose name matches the source stem but not its path must still be
+// allowed, because it lands in a different directory.
+func TestPlanNamedOutputAllowsTheSameNameInAnotherDirectory(t *testing.T) {
+	dir := t.TempDir()
+	outDir := t.TempDir()
+	source := filepath.Join(dir, "report.pdf")
+	if err := os.WriteFile(source, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := PlanNamedOutputExcluding(outDir, source, "report", "pdf", "rename", nil)
+	if err != nil {
+		t.Fatalf("PlanNamedOutputExcluding: %v", err)
+	}
+	defer plan.RemoveTemp()
+	if plan.Destination != filepath.Join(outDir, "report.pdf") {
+		t.Fatalf("Destination = %q", plan.Destination)
+	}
+}
+
+func TestPlanNamedOutputHonoursConflictAndTaken(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "report.pdf")
+	if err := os.WriteFile(source, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(dir, "report-extracted.pdf")
+	if err := os.WriteFile(dest, []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	skip, err := PlanNamedOutputExcluding(dir, source, "report-extracted", "pdf", "skip", nil)
+	if err != nil || !skip.Skipped() {
+		t.Fatalf("skip: %+v %v", skip, err)
+	}
+	rename, err := PlanNamedOutputExcluding(dir, source, "report-extracted", "pdf", "rename", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rename.RemoveTemp()
+	if filepath.Base(rename.Destination) != "report-extracted (1).pdf" {
+		t.Fatalf("Destination = %q", rename.Destination)
+	}
+	// An in-flight destination counts as taken even with nothing on disk.
+	taken := func(path string) bool { return path == filepath.Join(dir, "other.pdf") }
+	takenPlan, err := PlanNamedOutputExcluding(dir, source, "other", "pdf", "rename", taken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer takenPlan.RemoveTemp()
+	if takenPlan.Destination == filepath.Join(dir, "other.pdf") {
+		t.Fatalf("a taken destination must not be reused, got %q", takenPlan.Destination)
+	}
+}
+
+func TestPlanNamedOutputRejectsUnsupportedExtension(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "report.pdf")
+	if err := os.WriteFile(source, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PlanNamedOutputExcluding(dir, source, "report-out", "exe", "rename", nil); err == nil {
+		t.Fatal("an unsupported output extension should be rejected")
+	}
+}

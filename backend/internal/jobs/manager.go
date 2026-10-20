@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"file-converter/backend/internal/batch"
 	"file-converter/backend/internal/engine"
 	"file-converter/backend/internal/formats"
+	"file-converter/backend/internal/pdfops"
 	"file-converter/backend/internal/protocol"
 	"file-converter/backend/internal/registry"
 )
@@ -70,6 +72,8 @@ func DefaultWorkers() int {
 
 type Manager struct {
 	router      Router
+	pdf         pdfops.Backend // set by SetPDFBackend; nil until then
+	pdfMu       sync.Mutex
 	mu          sync.Mutex
 	outputMu    sync.Mutex
 	reserved    map[string]struct{} // destinations planned but not yet written; guarded by outputMu
@@ -93,6 +97,8 @@ type job struct {
 	items  []batch.Item
 	// preSkip holds a reason for folder entries that can never be converted.
 	preSkip map[int]string
+	// op is set for PDF operation jobs; run dispatches to runOperation then.
+	op *OperationRequest
 
 	publicationMu sync.Mutex
 	published     bool
@@ -380,6 +386,22 @@ func (m *Manager) run(j *job) {
 	}
 
 	results := make(chan fileResult, len(files))
+	if j.op != nil {
+		// A PDF operation supplies its own workers but shares everything after
+		// them: publication, rollback and the finished event.
+		op, _ := pdfops.Lookup(j.op.Op)
+		for i := range files {
+			files[i].State = "running"
+		}
+		opFiles := m.runOperation(j, op)
+		copy(files, opFiles)
+		emitter.files = files
+		if j.ctx.Err() == nil {
+			emitter.emit("job.updated", true)
+		}
+		m.finishJob(j, emitter, files)
+		return
+	}
 	var wg sync.WaitGroup
 	for _, l := range m.planLanes(j, target) {
 		indices := make(chan int)
@@ -415,6 +437,13 @@ func (m *Manager) run(j *job) {
 			emitter.emit("job.updated", false)
 		}
 	}
+	m.finishJob(j, emitter, files)
+}
+
+// finishJob commits (or rolls back) the job's pending plans, decides its final
+// state from the per-file results, emits job.finished and removes it from the
+// manager. Both the conversion path and the PDF operation path end here.
+func (m *Manager) finishJob(j *job, emitter *eventEmitter, files []protocol.FileJob) {
 	beforePublish()
 	j.publicationMu.Lock()
 	if j.ctx.Err() != nil {
@@ -653,19 +682,10 @@ func (m *Manager) convertFile(j *job, index int, source string, target formats.F
 	// Only planning is serialized: the destination stays reserved in memory
 	// until this file is committed, so other workers cannot pick the same
 	// name while the conversion itself runs unlocked.
-	m.outputMu.Lock()
-	plan, err := engine.PlanOutputExcluding(outputDir, source, ext, j.req.Conflict, m.isReserved)
-	if err == nil && !plan.Skipped() {
-		m.reserved[plan.Destination] = struct{}{}
-	}
-	m.outputMu.Unlock()
-	if err == nil && !plan.Skipped() {
-		defer func() {
-			m.outputMu.Lock()
-			delete(m.reserved, plan.Destination)
-			m.outputMu.Unlock()
-		}()
-	}
+	plan, release, err := m.reserveOutput(func(taken func(string) bool) (engine.OutputPlan, error) {
+		return engine.PlanOutputExcluding(outputDir, source, ext, j.req.Conflict, taken)
+	})
+	defer release()
 	if err != nil {
 		file.State = "failed"
 		file.Error = &protocol.FileError{Code: "internal", Message: err.Error()}
@@ -678,34 +698,82 @@ func (m *Manager) convertFile(j *job, index int, source string, target formats.F
 	err = route.Convert(j.ctx, source, sourceFormat, plan.Temp, target, j.req.Options)
 	if err != nil {
 		plan.Rollback()
-		if j.ctx.Err() != nil {
-			file.State = "cancelled"
-		} else {
-			file.State = "failed"
-			file.Error = &protocol.FileError{Code: "internal", Message: err.Error()}
-		}
+		file = failOperationFile(j, file, err)
 		return fileResult{index: index, file: file}
+	}
+	output, file := m.publishPlan(j, plan, file)
+	if file.State != "done" {
+		return fileResult{index: index, file: file}
+	}
+	file.Progress, file.Outputs = 1, []string{output}
+	return fileResult{index: index, file: file}
+}
+
+// reserveOutput plans one destination while holding the reservation lock, and
+// returns the plan plus a function that releases the reservation. Conversions
+// and PDF operations share this so a destination is never picked twice.
+func (m *Manager) reserveOutput(plan func(taken func(string) bool) (engine.OutputPlan, error)) (engine.OutputPlan, func(), error) {
+	var out engine.OutputPlan
+	m.outputMu.Lock()
+	p, err := plan(m.isReserved)
+	out = p
+	if err == nil && !p.Skipped() {
+		m.reserved[p.Destination] = struct{}{}
+	}
+	m.outputMu.Unlock()
+	release := func() {
+		m.outputMu.Lock()
+		delete(m.reserved, out.Destination)
+		m.outputMu.Unlock()
+	}
+	return out, release, err
+}
+
+// publishPlan commits a finished plan and records it on the job so a later
+// cancel can roll it back. It returns the published path and the file entry
+// updated to done or to the reason it could not be published. A skipped plan
+// leaves the file skipped.
+func (m *Manager) publishPlan(j *job, plan engine.OutputPlan, file protocol.FileJob) (string, protocol.FileJob) {
+	if plan.Skipped() {
+		file.State = "skipped"
+		return "", file
 	}
 	if j.ctx.Err() != nil {
 		plan.Rollback()
 		file.State = "cancelled"
-		return fileResult{index: index, file: file}
+		return "", file
 	}
 	j.publicationMu.Lock()
 	defer j.publicationMu.Unlock()
-	output, err := plan.Commit()
-	if err != nil {
+	if err := commitOutput(j.ctx, plan); err != nil {
 		plan.Rollback()
 		file.State = "failed"
 		file.Error = &protocol.FileError{Code: "internal", Message: err.Error()}
-		return fileResult{index: index, file: file}
+		return "", file
 	}
+	output := plan.Destination
 	if j.ctx.Err() != nil {
 		plan.Rollback()
 		file.State = "cancelled"
-		return fileResult{index: index, file: file}
+		return "", file
 	}
 	j.pending = append(j.pending, plan)
-	file.State, file.Progress, file.Outputs = "done", 1, []string{output}
-	return fileResult{index: index, file: file}
+	file.State = "done"
+	return output, file
+}
+
+// failOperationFile turns a backend error into a file error, honouring
+// cancellation and the encrypted-PDF sentinel.
+func failOperationFile(j *job, file protocol.FileJob, err error) protocol.FileJob {
+	if j.ctx.Err() != nil {
+		file.State = "cancelled"
+		return file
+	}
+	code := "internal"
+	if errors.Is(err, pdfops.ErrPasswordRequired) {
+		code = "password_required"
+	}
+	file.State = "failed"
+	file.Error = &protocol.FileError{Code: code, Message: err.Error()}
+	return file
 }

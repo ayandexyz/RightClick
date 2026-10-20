@@ -204,14 +204,28 @@ type OutputPlan struct {
 }
 
 func PlanOutput(dir, source string, targetExt string, conflict protocol.ConflictPolicy) (OutputPlan, error) {
-	return planOutput(dir, source, targetExt, "", conflict, nil)
+	return planOutput(dir, source, targetExt, "", "", conflict, nil)
 }
 
 // PlanOutputExcluding is PlanOutput for callers that run conversions
 // concurrently: taken reports destinations reserved by conversions that have
 // not yet written their file, which must be treated as already existing.
 func PlanOutputExcluding(dir, source string, targetExt string, conflict protocol.ConflictPolicy, taken func(string) bool) (OutputPlan, error) {
-	return planOutput(dir, source, targetExt, "", conflict, taken)
+	return planOutput(dir, source, targetExt, "", "", conflict, taken)
+}
+
+// PlanNamedOutputExcluding plans a destination from an explicit file name
+// rather than deriving it from the source. PDF operations use it to build
+// names like "<stem>-extracted.pdf". The rule that the output must not collide
+// with the source still applies.
+func PlanNamedOutputExcluding(dir, source, name, targetExt string, conflict protocol.ConflictPolicy, taken func(string) bool) (OutputPlan, error) {
+	if name == "" {
+		return OutputPlan{}, fmt.Errorf("output name is required")
+	}
+	if unsafeBase(name) {
+		return OutputPlan{}, fmt.Errorf("unsafe output name")
+	}
+	return planOutput(dir, source, targetExt, "", name, conflict, taken)
 }
 
 func PlanOutputPath(dir, source string, targetExt string, page int, conflict protocol.ConflictPolicy) (OutputPlan, error) {
@@ -222,10 +236,13 @@ func PlanOutputPathExcluding(dir, source string, targetExt string, page int, con
 	if page < 1 {
 		return OutputPlan{}, fmt.Errorf("page number must be positive")
 	}
-	return planOutput(dir, source, targetExt, "-"+strconv.Itoa(page), conflict, taken)
+	return planOutput(dir, source, targetExt, "-"+strconv.Itoa(page), "", conflict, taken)
 }
 
-func planOutput(dir, source string, targetExt, suffix string, conflict protocol.ConflictPolicy, taken func(string) bool) (OutputPlan, error) {
+// planOutput builds a plan for one destination. Exactly one of suffix and name
+// shapes the output: suffix is appended to the source stem (conversions), while
+// name is used verbatim (PDF operations).
+func planOutput(dir, source string, targetExt, suffix, name string, conflict protocol.ConflictPolicy, taken func(string) bool) (OutputPlan, error) {
 	if taken == nil {
 		taken = func(string) bool { return false }
 	}
@@ -248,6 +265,9 @@ func planOutput(dir, source string, targetExt, suffix string, conflict protocol.
 		return OutputPlan{}, err
 	}
 	base := strings.TrimSuffix(filepath.Base(source), filepath.Ext(source)) + suffix + "." + targetExt
+	if name != "" {
+		base = name + "." + targetExt
+	}
 	destination := filepath.Join(dir, base)
 	if filepath.Clean(destination) == filepath.Clean(source) {
 		return OutputPlan{}, fmt.Errorf("output would overwrite source")
@@ -352,7 +372,7 @@ func supportedOutputExtension(ext string) bool {
 	switch ext {
 	case "png", "jpg", "webp", "jxl", "avif", "gif", "bmp", "tiff", "ico", "heic",
 		"mp4", "mov", "webm", "mkv", "avi", "mp3", "wav", "flac", "aac", "m4a", "ogg", "opus",
-		"aiff", "alac", "ac3", "amr", "wma":
+		"aiff", "alac", "ac3", "amr", "wma", "pdf":
 		return true
 	default:
 		return false
