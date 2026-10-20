@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net"
@@ -157,8 +158,11 @@ func TestServerHelloTargetsAndRejectsAudioToVideo(t *testing.T) {
 		t.Fatalf("hello response: %#v", hello)
 	}
 	engines, ok := result["engines"].([]any)
-	if !ok || len(engines) != 2 {
+	if !ok {
 		t.Fatalf("hello engines: %#v", result["engines"])
+	}
+	if got := countRegistryEngines(engines); got != 2 {
+		t.Fatalf("hello engines = %#v, want two conversion engines", engines)
 	}
 
 	input := filepath.Join(t.TempDir(), "clip.mp3")
@@ -411,10 +415,10 @@ func TestServerEnginesReportsStatusWithReason(t *testing.T) {
 		t.Fatalf("engines response: %#v", resp)
 	}
 	engines, ok := result["engines"].([]any)
-	if !ok || len(engines) != 1 {
+	if !ok {
 		t.Fatalf("engines: %#v", result["engines"])
 	}
-	entry := engines[0].(map[string]any)
+	entry := onlyRegistryEngine(t, engines)
 	if _, ok := entry["id"].(string); !ok {
 		t.Fatalf("entry missing id: %#v", entry)
 	}
@@ -604,15 +608,24 @@ func pdfFixture(t *testing.T, dir, name string) string {
 // a connection plus a reader that lives for the connection's lifetime.
 func startOperationServer(t *testing.T, backend pdfops.Backend) (net.Conn, *bufio.Reader, func()) {
 	t.Helper()
+	tb := pdfops.Toolbox{}
+	if backend != nil {
+		tb.PDFCPU = backend
+	}
+	return startOperationServerWithToolbox(t, tb)
+}
+
+// startOperationServerWithToolbox starts a daemon with a full toolbox, for the
+// cases that need image support or a deliberately absent engine.
+func startOperationServerWithToolbox(t *testing.T, tb pdfops.Toolbox) (net.Conn, *bufio.Reader, func()) {
+	t.Helper()
 	listener, err := net.Listen("unix", filepath.Join(t.TempDir(), "fcd.sock"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	manager := jobs.NewManagerWithRegistry(registry.New())
-	if backend != nil {
-		manager.SetPDFBackend(backend)
-	}
-	srv := New(Dependencies{Jobs: manager, Registry: registry.New(), Version: "test", PDFBackend: backend})
+	manager.SetPDFToolbox(tb)
+	srv := New(Dependencies{Jobs: manager, Registry: registry.New(), Version: "test", PDFToolbox: tb})
 	done := make(chan struct{})
 	go func() {
 		_ = srv.Serve(listener)
@@ -673,6 +686,7 @@ func operationsFrom(t *testing.T, response map[string]any) []protocol.Operation 
 		op.Label, _ = entry["label"].(string)
 		op.Group, _ = entry["group"].(string)
 		op.Mode, _ = entry["mode"].(string)
+		op.Engine, _ = entry["engine"].(string)
 		op.Enabled, _ = entry["enabled"].(bool)
 		op.Reason, _ = entry["reason"].(string)
 		out = append(out, op)
@@ -687,8 +701,13 @@ func TestServerOperationsForOnePDF(t *testing.T) {
 
 	response := exchange(t, conn, reader, protocol.Request{ID: 1, Method: "operations", Params: json.RawMessage(`{"files":["` + pdfFixture(t, dir, "one.pdf") + `"]}`)})
 	ops := operationsFrom(t, response)
-	if len(ops) != 5 {
-		t.Fatalf("operations = %+v, want the five catalogue entries", ops)
+	if len(ops) != 8 {
+		t.Fatalf("operations = %+v, want the eight catalogue entries for one PDF", ops)
+	}
+	for _, op := range ops {
+		if op.Engine != "pdfcpu" {
+			t.Fatalf("%s engine = %q, want pdfcpu", op.ID, op.Engine)
+		}
 	}
 	byID := map[string]protocol.Operation{}
 	for _, op := range ops {
@@ -847,4 +866,158 @@ func TestServerRunOperationSurfacesPasswordRequired(t *testing.T) {
 		return
 	}
 	t.Fatal("timed out waiting for job.finished")
+}
+
+// pdfEngineIDs are the engines the daemon reports alongside the conversion
+// registry. They are always listed, installed or not, so a client can tell a
+// missing binary apart from an older daemon.
+var pdfEngineIDs = []string{"pdfcpu", "qpdf", "ghostscript", "poppler", "tesseract"}
+
+// registryEngineIDs are the conversion engines, which are what the conversion
+// tests are actually about.
+var registryEngineIDs = map[string]bool{"test": true, "ffmpeg": true}
+
+func countRegistryEngines(engines []any) int {
+	count := 0
+	for _, raw := range engines {
+		if row, ok := raw.(map[string]any); ok {
+			if id, _ := row["id"].(string); registryEngineIDs[id] {
+				count++
+			}
+		}
+	}
+	return count
+}
+
+func onlyRegistryEngine(t *testing.T, engines []any) map[string]any {
+	t.Helper()
+	var found map[string]any
+	for _, raw := range engines {
+		row, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if id, _ := row["id"].(string); registryEngineIDs[id] {
+			if found != nil {
+				t.Fatalf("more than one registry engine: %#v", engines)
+			}
+			found = row
+		}
+	}
+	if found == nil {
+		t.Fatalf("no registry engine in %#v", engines)
+	}
+	return found
+}
+
+func TestServerOperationsForImagesListsOnlyImageOperations(t *testing.T) {
+	dir := t.TempDir()
+	conn, reader, cleanup := startOperationServerWithToolbox(t, pdfops.Toolbox{PDFCPU: &stubPDFBackend{pages: 4}})
+	defer cleanup()
+
+	response := exchange(t, conn, reader, protocol.Request{ID: 1, Method: "operations", Params: mustJSON(map[string]any{
+		"files": []string{pngFixture(t, dir, "a.png"), pngFixture(t, dir, "b.png")},
+	})})
+	ops := operationsFrom(t, response)
+	for _, op := range ops {
+		if op.ID == "pdf-merge" || op.ID == "pdf-reverse" {
+			t.Fatalf("PDF operation %s offered for an image selection", op.ID)
+		}
+	}
+}
+
+func TestServerOperationsIsEmptyForMixedSelection(t *testing.T) {
+	dir := t.TempDir()
+	conn, reader, cleanup := startOperationServer(t, &stubPDFBackend{pages: 4})
+	defer cleanup()
+
+	response := exchange(t, conn, reader, protocol.Request{ID: 1, Method: "operations", Params: mustJSON(map[string]any{
+		"files": []string{pdfFixture(t, dir, "a.pdf"), pngFixture(t, dir, "b.png")},
+	})})
+	if ops := operationsFrom(t, response); len(ops) != 0 {
+		t.Fatalf("operations = %+v, want none for a mixed selection", ops)
+	}
+}
+
+func TestServerOperationsIsEmptyForUnrecognisedSelection(t *testing.T) {
+	dir := t.TempDir()
+	other := filepath.Join(dir, "notes.txt")
+	if err := os.WriteFile(other, []byte("hello"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	conn, reader, cleanup := startOperationServer(t, &stubPDFBackend{pages: 4})
+	defer cleanup()
+
+	response := exchange(t, conn, reader, protocol.Request{ID: 1, Method: "operations", Params: mustJSON(map[string]any{
+		"files": []string{other},
+	})})
+	if ops := operationsFrom(t, response); len(ops) != 0 {
+		t.Fatalf("operations = %+v, want none for an unrecognised selection", ops)
+	}
+}
+
+func TestServerOperationsReportsMissingEngine(t *testing.T) {
+	dir := t.TempDir()
+	// No PDF engine at all: every operation is disabled with a reason rather
+	// than the request failing.
+	conn, reader, cleanup := startOperationServerWithToolbox(t, pdfops.Toolbox{})
+	defer cleanup()
+
+	response := exchange(t, conn, reader, protocol.Request{ID: 1, Method: "operations", Params: mustJSON(map[string]any{
+		"files": []string{pdfFixture(t, dir, "a.pdf")},
+	})})
+	ops := operationsFrom(t, response)
+	if len(ops) == 0 {
+		t.Fatal("operations should still list the catalogue when the engine is missing")
+	}
+	for _, op := range ops {
+		if op.Enabled {
+			t.Fatalf("%s enabled without a PDF engine", op.ID)
+		}
+		if op.Reason == "" {
+			t.Fatalf("%s disabled with no reason", op.ID)
+		}
+	}
+}
+
+func TestServerEnginesListsEveryPDFEngine(t *testing.T) {
+	conn, reader, cleanup := startOperationServer(t, &stubPDFBackend{pages: 4})
+	defer cleanup()
+
+	response := exchange(t, conn, reader, protocol.Request{ID: 1, Method: "engines", Params: json.RawMessage(`{}`)})
+	result, ok := response["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("engines response: %#v", response)
+	}
+	raw, _ := result["engines"].([]any)
+	seen := map[string]bool{}
+	for _, item := range raw {
+		if row, ok := item.(map[string]any); ok {
+			if id, _ := row["id"].(string); registryEngineIDs[id] {
+				continue
+			} else {
+				seen[id] = true
+			}
+		}
+	}
+	for _, id := range pdfEngineIDs {
+		if !seen[id] {
+			t.Fatalf("engines = %#v, missing %s", raw, id)
+		}
+	}
+}
+
+// pngFixture writes a real one-pixel PNG, which is what formats.Detect needs to
+// classify the selection as images.
+func pngFixture(t *testing.T, dir, name string) string {
+	t.Helper()
+	data, err := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }

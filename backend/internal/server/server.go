@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"os"
@@ -26,7 +25,7 @@ type Dependencies struct {
 	Registry   *registry.Registry
 	Engine     string
 	Version    string
-	PDFBackend pdfops.Backend
+	PDFToolbox pdfops.Toolbox
 	// MenuPath overrides the menu policy file; empty uses menu.Path().
 	MenuPath string
 }
@@ -285,8 +284,9 @@ func (s *Server) handle(conn net.Conn) {
 }
 
 // handleOperations lists the PDF tools that apply to a selection. A selection
-// that is not all PDFs yields an empty list rather than an error, so a
-// right-click menu can call it unconditionally.
+// must be uniformly PDFs or uniformly images; a mixed or unrecognised selection
+// yields an empty list rather than an error, so a right-click menu can call it
+// unconditionally.
 func (s *Server) handleOperations(params json.RawMessage) map[string]any {
 	var p struct {
 		Files []string `json:"files"`
@@ -295,38 +295,60 @@ func (s *Server) handleOperations(params json.RawMessage) map[string]any {
 	if json.Unmarshal(params, &p) != nil {
 		return map[string]any{"operations": operations}
 	}
-	for _, file := range p.Files {
-		if !isPDFFile(file) {
-			return map[string]any{"operations": operations}
-		}
-	}
 	if len(p.Files) == 0 {
 		return map[string]any{"operations": operations}
 	}
-	backendReason := ""
-	if s.deps.PDFBackend == nil {
-		backendReason = "no PDF backend is available"
-	} else if err := s.deps.PDFBackend.Available(); err != nil {
-		backendReason = err.Error()
+	kind, ok := selectionInputKind(p.Files)
+	if !ok {
+		return map[string]any{"operations": operations}
 	}
 	for _, op := range pdfops.Catalogue() {
-		entry := protocol.Operation{ID: op.ID, Label: op.Label, Group: op.Group, Mode: op.Mode}
-		switch {
-		case backendReason != "":
-			entry.Reason = backendReason
-		case len(p.Files) < op.MinInputs:
-			entry.Reason = fmt.Sprintf("needs at least %d file", op.MinInputs)
-			if op.MinInputs > 1 {
-				entry.Reason = fmt.Sprintf("needs at least %d files", op.MinInputs)
-			}
-		case op.MaxInputs > 0 && len(p.Files) > op.MaxInputs:
-			entry.Reason = fmt.Sprintf("accepts at most %d files", op.MaxInputs)
+		if op.InputKind() != kind {
+			continue
+		}
+		entry := protocol.Operation{
+			ID:      op.ID,
+			Label:   op.Label,
+			Group:   op.Group,
+			Mode:    op.Mode,
+			Engine:  op.EngineID(),
+			Enabled: true,
+		}
+		switch reason := op.UnavailableReason(s.deps.PDFToolbox, p.Files); reason {
+		case "":
 		default:
-			entry.Enabled = true
+			entry.Enabled, entry.Reason = false, reason
 		}
 		operations = append(operations, entry)
 	}
 	return map[string]any{"operations": operations}
+}
+
+// selectionInputKind reports the common input kind of a selection. It fails when
+// the files are not all the same recognised kind.
+func selectionInputKind(files []string) (pdfops.InputKind, bool) {
+	kind := pdfops.InputKind("")
+	for _, file := range files {
+		var this pdfops.InputKind
+		switch {
+		case isPDFFile(file):
+			this = pdfops.InputPDF
+		default:
+			format, err := formats.Detect(file)
+			if err != nil || !formats.IsImageFormat(format) {
+				return "", false
+			}
+			this = pdfops.InputImage
+		}
+		if kind == "" {
+			kind = this
+			continue
+		}
+		if kind != this {
+			return "", false
+		}
+	}
+	return kind, kind != ""
 }
 
 // isPDFFile reports whether a path is an existing regular file with a PDF
@@ -375,14 +397,14 @@ func (s *Server) EngineStatus() []protocol.EngineStatus {
 	} else {
 		status = []protocol.EngineStatus{{ID: "imagemagick", Available: s.deps.Engine != ""}}
 	}
-	// pdfcpu is linked in rather than a conversion engine, so it is not in the
-	// registry; report it alongside the others so clients can see it is present.
-	if s.deps.PDFBackend != nil {
-		pdf := protocol.EngineStatus{ID: s.deps.PDFBackend.ID(), Available: true}
-		if err := s.deps.PDFBackend.Available(); err != nil {
-			pdf.Available, pdf.Reason = false, err.Error()
+	// The PDF engines are separate from the conversion registry, so they are
+	// reported alongside it: clients need to know which PDF tools are usable.
+	for _, id := range pdfops.EngineIDs() {
+		entry := protocol.EngineStatus{ID: id, Available: true}
+		if err := s.deps.PDFToolbox.Available(id); err != nil {
+			entry.Available, entry.Reason = false, err.Error()
 		}
-		status = append(status, pdf)
+		status = append(status, entry)
 	}
 	return status
 }

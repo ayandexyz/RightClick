@@ -28,6 +28,8 @@ Paths are absolute, UTF-8, native to the backend's OS.
 Read-only engine diagnostics. Missing optional engines are reported here, never as startup failures.
 `params: {}` → `{engines: [{id, available, reason}]}`; `reason` is empty when available, otherwise why the engine cannot run (e.g. `ffmpeg not found`). `hello` returns the same entries.
 
+The PDF engines `pdfcpu`, `qpdf`, `ghostscript`, `poppler`, and `tesseract` are reported alongside the conversion engines. They are always listed, installed or not, so a client can tell a missing binary apart from an older daemon that has never heard of them. A missing PDF engine disables only the operations that use it.
+
 `fcctl engines [--json]` prints one line per engine.
 
 ### `menu`
@@ -90,26 +92,46 @@ Media presets are exactly five video outputs (`video-to-mp4`, `video-to-mov`, `v
 `params: {job}` → `{}`
 
 ### `operations`
-`params: {files: string[]}` → `{operations: Operation[]}` where each entry has `id, label, group, mode, enabled, reason?`. Lists the structural PDF tools (merge, extract, delete, rotate, reverse) applicable to a selection. A non-PDF selection returns an empty list rather than an error. An operation may be present but `enabled: false` with a `reason`, e.g. merge with one file reports `needs at least 2 files`, or all operations report `no PDF backend is available` if the daemon has none.
+`params: {files: string[]}` → `{operations: Operation[]}` where each entry has `id, label, group, mode, engine, enabled, reason?`. Lists the PDF tools applicable to a selection.
+
+The selection must be uniformly one kind: all PDFs, or all images that pdfcpu can import (JPEG, PNG, TIFF; SVG is not an importable image). A mixed or unrecognised selection returns an empty list rather than an error, so a right-click menu can call it unconditionally.
+
+`mode` is `instant` for operations that need no further input and `studio` for ones that need a page selection or an angle. `engine` names the external tool that performs the operation (`pdfcpu`, `qpdf`, `ghostscript`, `poppler`, `tesseract`), so a client can tell which binary an operation needs.
+
+An operation may be present but `enabled: false` with a `reason`: merge with one file reports `needs at least 2 files`, an image operation over an unsupported format reports `<format> is not supported for PDF import`, and an operation whose engine is not installed reports `<engine> is not installed`. A missing engine disables only its own operations.
 
 ### `run_operation`
-`params: {op, files, params?, output_dir?, on_conflict?}` → `{job: string}`. The job runs through the same lifecycle as conversions: `job.updated` events with progress, `job.finished` with the final state. `op` is one of `pdf-merge`, `pdf-extract`, `pdf-delete`, `pdf-rotate`, `pdf-reverse`. `params` is `{pages?: string, angle?: int}`. `pages` follows the spec grammar below; `angle` must be 90, 180 or 270.
+`params: {op, files, params?, output_dir?, on_conflict?}` → `{job: string}`. The job runs through the same lifecycle as conversions: `job.updated` events with progress, `job.finished` with the final state. `params` is `{pages?: string, angle?: int}`. `pages` follows the spec grammar below; `angle` must be 90, 180 or 270.
 
 Operations:
 
-| ID | Inputs | Params | Output name |
-| --- | --- | --- | --- |
-| `pdf-merge` | 2 or more | none | `merged.pdf` next to the first input or in `output_dir` |
-| `pdf-extract` | 1 or more | `pages` (required) | `<stem>-extracted.pdf` |
-| `pdf-delete` | 1 or more | `pages` (required) | `<stem>-edited.pdf` |
-| `pdf-rotate` | 1 or more | `angle` (90/180/270, required), `pages` (optional, all pages if omitted) | `<stem>-rotated.pdf` |
-| `pdf-reverse` | 1 or more | none | `<stem>-reversed.pdf` |
+| ID | Engine | Inputs | Params | Output name |
+| --- | --- | --- | --- | --- |
+| `pdf-merge` | pdfcpu | 2 or more PDFs | none | `merged.pdf` next to the first input or in `output_dir` |
+| `pdf-extract` | pdfcpu | 1 or more PDFs | `pages` (required) | `<stem>-extracted.pdf` |
+| `pdf-delete` | pdfcpu | 1 or more PDFs | `pages` (required) | `<stem>-edited.pdf` |
+| `pdf-rotate` | pdfcpu | 1 or more PDFs | `angle` (90/180/270, required), `pages` (optional, all pages if omitted) | `<stem>-rotated.pdf` |
+| `pdf-rotate-cw` | pdfcpu | 1 or more PDFs | none | `<stem>-rotated.pdf` |
+| `pdf-rotate-ccw` | pdfcpu | 1 or more PDFs | none | `<stem>-rotated.pdf` |
+| `pdf-rotate-180` | pdfcpu | 1 or more PDFs | none | `<stem>-rotated.pdf` |
+| `pdf-reverse` | pdfcpu | 1 or more PDFs | none | `<stem>-reversed.pdf` |
+
+The `pdf-rotate-*` variants rotate every page by a fixed angle and are `instant`, so they need no parameters and reject an explicit `angle`. `pdf-rotate` is `studio` because it needs the caller to choose the angle.
 
 Merge yields one output for N inputs in the order given; the output path is reported on the first file entry, the remaining entries are `done` with no `outputs`. Every other operation produces one output per input file. Conflicts follow the same rules as `convert`: rename, skip, or overwrite, with `rename` as the default.
 
 The page spec is comma-separated items; each is `N`, `N-M`, `N-` (to the last page), `-M` (from page 1), or `z` (the last page). 1-based, whitespace ignored. Duplicates and overlaps are allowed. Out-of-range pages, reversed ranges (`5-3`), garbage, and an empty spec are errors. A selection expanding to more than the daemon's per-document page ceiling (1000) is also rejected. Examples: `1-3,7,10-`, `z`, `-2`.
 
-A `password_required` error code on a file job entry signals an encrypted PDF; passwords are not accepted in phase 1.
+Error codes on a file job entry:
+
+| Code | Meaning |
+| --- | --- |
+| `password_required` | the PDF is encrypted; passwords are not accepted in this phase |
+| `invalid_pdf` | the file cannot be read as a PDF, or is damaged |
+
+A failure is reported as `invalid_pdf` only when the input itself cannot be opened; a failure on a readable file is the operation's own and stays `internal`.
+
+Merge attributes an unreadable input to that file alone: the unreadable file is `failed` with its own code, and every other input is `skipped` with the notice `not merged: <basename> could not be read`. The job state becomes `failed`.
 
 ### `jobs`
 `params: {}` → `{jobs: [Job]}` (running and recent, for a tray or history view)

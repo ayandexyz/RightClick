@@ -63,8 +63,8 @@ func TestNewEngineRegistryReportsPDFCPU(t *testing.T) {
 	backend := pdfops.NewPDFCPUBackend()
 	manager := jobs.NewManagerWithRegistry(newEngineRegistry())
 	defer manager.Close()
-	manager.SetPDFBackend(backend)
-	deps := server.Dependencies{Jobs: manager, Registry: newEngineRegistry(), PDFBackend: backend}
+	manager.SetPDFToolbox(pdfops.Toolbox{PDFCPU: backend})
+	deps := server.Dependencies{Jobs: manager, Registry: newEngineRegistry(), PDFToolbox: pdfops.Toolbox{PDFCPU: backend}}
 	srv := server.New(deps)
 	status := srv.EngineStatus()
 	found := false

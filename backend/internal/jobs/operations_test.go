@@ -100,7 +100,7 @@ func writePDFSource(t *testing.T, dir, name string) string {
 func newOperationManager(t *testing.T, backend pdfops.Backend) *Manager {
 	t.Helper()
 	m := NewManagerWithRegistry(registry.New())
-	m.SetPDFBackend(backend)
+	m.SetPDFToolbox(pdfops.Toolbox{PDFCPU: backend})
 	t.Cleanup(m.Close)
 	return m
 }

@@ -72,7 +72,7 @@ func DefaultWorkers() int {
 
 type Manager struct {
 	router      Router
-	pdf         pdfops.Backend // set by SetPDFBackend; nil until then
+	pdf         pdfops.Toolbox // set by SetPDFToolbox; zero until then
 	pdfMu       sync.Mutex
 	mu          sync.Mutex
 	outputMu    sync.Mutex
@@ -787,11 +787,10 @@ func (m *Manager) inputUnreadable(j *job, source string) bool {
 	if j.ctx.Err() != nil {
 		return false
 	}
-	backend := m.pdfBackend()
-	if backend == nil {
+	if m.pdfToolbox().PDFCPU == nil {
 		return false
 	}
-	_, err := backend.PageCount(j.ctx, source)
+	_, err := m.pdfToolbox().PDFCPU.PageCount(j.ctx, source)
 	if err == nil {
 		return false
 	}

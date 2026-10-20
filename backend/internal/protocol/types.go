@@ -70,6 +70,7 @@ type Operation struct {
 	Label   string `json:"label"`
 	Group   string `json:"group"`
 	Mode    string `json:"mode"`
+	Engine  string `json:"engine,omitempty"`
 	Enabled bool   `json:"enabled"`
 	Reason  string `json:"reason,omitempty"`
 }

@@ -7,8 +7,11 @@ import (
 	"testing"
 )
 
-func TestCatalogueHasTheFiveOperations(t *testing.T) {
-	want := []string{"pdf-merge", "pdf-extract", "pdf-delete", "pdf-rotate", "pdf-reverse"}
+func TestCatalogueHasTheStructuralOperations(t *testing.T) {
+	want := []string{
+		"pdf-merge", "pdf-extract", "pdf-delete", "pdf-rotate",
+		"pdf-rotate-cw", "pdf-rotate-ccw", "pdf-rotate-180", "pdf-reverse",
+	}
 	got := make([]string, 0, len(want))
 	for _, op := range Catalogue() {
 		got = append(got, op.ID)
@@ -123,7 +126,7 @@ func TestValidateRequiredParams(t *testing.T) {
 func TestRunReverse(t *testing.T) {
 	op, _ := Lookup("pdf-reverse")
 	fake := newFakeBackend(4)
-	if err := op.Run(context.Background(), fake, []string{"/tmp/a.pdf"}, "/tmp/a-reversed.pdf", Params{}); err != nil {
+	if err := op.Run(context.Background(), Toolbox{PDFCPU: fake}, []string{"/tmp/a.pdf"}, "/tmp/a-reversed.pdf", Params{}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if len(fake.collected) != 1 {
@@ -144,7 +147,7 @@ func TestRunReverse(t *testing.T) {
 func TestRunDelete(t *testing.T) {
 	op, _ := Lookup("pdf-delete")
 	fake := newFakeBackend(4)
-	if err := op.Run(context.Background(), fake, []string{"/tmp/a.pdf"}, "/tmp/a-edited.pdf", Params{Pages: "2"}); err != nil {
+	if err := op.Run(context.Background(), Toolbox{PDFCPU: fake}, []string{"/tmp/a.pdf"}, "/tmp/a-edited.pdf", Params{Pages: "2"}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	want := []int{1, 3, 4}
@@ -162,7 +165,7 @@ func TestRunDelete(t *testing.T) {
 func TestRunDeleteAllPagesIsRejected(t *testing.T) {
 	op, _ := Lookup("pdf-delete")
 	fake := newFakeBackend(3)
-	err := op.Run(context.Background(), fake, []string{"/tmp/a.pdf"}, "/tmp/a-edited.pdf", Params{Pages: "1-3"})
+	err := op.Run(context.Background(), Toolbox{PDFCPU: fake}, []string{"/tmp/a.pdf"}, "/tmp/a-edited.pdf", Params{Pages: "1-3"})
 	if err == nil {
 		t.Fatal("deleting every page should fail")
 	}
@@ -174,7 +177,7 @@ func TestRunDeleteAllPagesIsRejected(t *testing.T) {
 func TestRunExtractKeepsOrder(t *testing.T) {
 	op, _ := Lookup("pdf-extract")
 	fake := newFakeBackend(6)
-	if err := op.Run(context.Background(), fake, []string{"/tmp/a.pdf"}, "/tmp/a-extracted.pdf", Params{Pages: "5,1-3"}); err != nil {
+	if err := op.Run(context.Background(), Toolbox{PDFCPU: fake}, []string{"/tmp/a.pdf"}, "/tmp/a-extracted.pdf", Params{Pages: "5,1-3"}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	want := []int{5, 1, 2, 3}
@@ -192,7 +195,7 @@ func TestRunExtractKeepsOrder(t *testing.T) {
 func TestRunRotate(t *testing.T) {
 	op, _ := Lookup("pdf-rotate")
 	fake := newFakeBackend(5)
-	if err := op.Run(context.Background(), fake, []string{"/tmp/a.pdf"}, "/tmp/a-rotated.pdf", Params{Angle: 90}); err != nil {
+	if err := op.Run(context.Background(), Toolbox{PDFCPU: fake}, []string{"/tmp/a.pdf"}, "/tmp/a-rotated.pdf", Params{Angle: 90}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if len(fake.rotated) != 1 {
@@ -206,7 +209,7 @@ func TestRunRotate(t *testing.T) {
 	}
 
 	fake = newFakeBackend(5)
-	if err := op.Run(context.Background(), fake, []string{"/tmp/a.pdf"}, "/tmp/a-rotated.pdf", Params{Angle: 180, Pages: "1-2"}); err != nil {
+	if err := op.Run(context.Background(), Toolbox{PDFCPU: fake}, []string{"/tmp/a.pdf"}, "/tmp/a-rotated.pdf", Params{Angle: 180, Pages: "1-2"}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if got := fake.rotated[0].pages; len(got) != 2 || got[0] != 1 || got[1] != 2 {
@@ -218,7 +221,7 @@ func TestRunMerge(t *testing.T) {
 	op, _ := Lookup("pdf-merge")
 	fake := newFakeBackend(2)
 	inputs := []string{"/tmp/a.pdf", "/tmp/b.pdf", "/tmp/c.pdf"}
-	if err := op.Run(context.Background(), fake, inputs, "/tmp/merged.pdf", Params{}); err != nil {
+	if err := op.Run(context.Background(), Toolbox{PDFCPU: fake}, inputs, "/tmp/merged.pdf", Params{}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if len(fake.merged) != 1 {
@@ -238,7 +241,7 @@ func TestRunMerge(t *testing.T) {
 func TestRunRejectsBadPageSpec(t *testing.T) {
 	op, _ := Lookup("pdf-extract")
 	fake := newFakeBackend(3)
-	err := op.Run(context.Background(), fake, []string{"/tmp/a.pdf"}, "/tmp/a-extracted.pdf", Params{Pages: "9"})
+	err := op.Run(context.Background(), Toolbox{PDFCPU: fake}, []string{"/tmp/a.pdf"}, "/tmp/a-extracted.pdf", Params{Pages: "9"})
 	if err == nil {
 		t.Fatal("a page past the end should fail")
 	}
@@ -252,7 +255,7 @@ func TestRunPropagatesBackendError(t *testing.T) {
 	sentinel := errors.New("backend broke")
 	fake := newFakeBackend(3)
 	fake.err = sentinel
-	if err := op.Run(context.Background(), fake, []string{"/tmp/a.pdf"}, "/tmp/out.pdf", Params{}); !errors.Is(err, sentinel) {
+	if err := op.Run(context.Background(), Toolbox{PDFCPU: fake}, []string{"/tmp/a.pdf"}, "/tmp/out.pdf", Params{}); !errors.Is(err, sentinel) {
 		t.Fatalf("Run error = %v, want %v", err, sentinel)
 	}
 }
@@ -263,7 +266,7 @@ func TestRunMergeUsesEveryInputRegardlessOfCount(t *testing.T) {
 	op, _ := Lookup("pdf-merge")
 	fake := newFakeBackend(1)
 	inputs := []string{"/tmp/a.pdf"}
-	if err := op.Run(context.Background(), fake, inputs, "/tmp/merged.pdf", Params{}); err != nil {
+	if err := op.Run(context.Background(), Toolbox{PDFCPU: fake}, inputs, "/tmp/merged.pdf", Params{}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if len(fake.merged) != 1 || len(fake.merged[0]) != 1 {

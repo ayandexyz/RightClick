@@ -27,18 +27,24 @@ type OperationRequest struct {
 	Events    func(protocol.Event)
 }
 
-// SetPDFBackend installs the backend that performs PDF operations. Without one,
-// every operation request is rejected.
-func (m *Manager) SetPDFBackend(b pdfops.Backend) {
+// SetPDFToolbox installs the engines that perform PDF operations. Without a
+// PDF engine every operation request is rejected.
+func (m *Manager) SetPDFToolbox(tb pdfops.Toolbox) {
 	m.pdfMu.Lock()
-	m.pdf = b
+	m.pdf = tb
 	m.pdfMu.Unlock()
 }
 
-func (m *Manager) pdfBackend() pdfops.Backend {
+func (m *Manager) pdfToolbox() pdfops.Toolbox {
 	m.pdfMu.Lock()
 	defer m.pdfMu.Unlock()
 	return m.pdf
+}
+
+// pdfBackend returns the structural engine, which is the one that can read a
+// PDF and is therefore the one used to probe inputs.
+func (m *Manager) pdfBackend() pdfops.Backend {
+	return m.pdfToolbox().PDFCPU
 }
 
 // pdfValidateInput accepts only absolute regular files carrying a %PDF- header.
@@ -69,7 +75,7 @@ func (m *Manager) SubmitOperation(req OperationRequest) (string, error) {
 	if len(req.Files) == 0 {
 		return "", fmt.Errorf("%w: no files", formats.ErrInvalidInput)
 	}
-	if m.pdfBackend() == nil {
+	if m.pdfToolbox().PDFCPU == nil {
 		return "", fmt.Errorf("%w: no PDF backend is available", formats.ErrInvalidInput)
 	}
 	op, ok := pdfops.Lookup(req.Op)
@@ -212,7 +218,7 @@ func (m *Manager) mergeOperation(j *job, op pdfops.Operation) []protocol.FileJob
 		}
 		return files
 	}
-	if err := op.Run(j.ctx, m.pdfBackend(), j.op.Files, plan.Temp, j.op.Params); err != nil {
+	if err := op.Run(j.ctx, m.pdfToolbox(), j.op.Files, plan.Temp, j.op.Params); err != nil {
 		plan.Rollback()
 		return failed(err)
 	}
@@ -295,7 +301,7 @@ func (m *Manager) runOneOperation(j *job, op pdfops.Operation, index int, source
 		file.State = "skipped"
 		return fileResult{index: index, file: file}
 	}
-	if err := op.Run(j.ctx, m.pdfBackend(), []string{source}, plan.Temp, j.op.Params); err != nil {
+	if err := op.Run(j.ctx, m.pdfToolbox(), []string{source}, plan.Temp, j.op.Params); err != nil {
 		plan.Rollback()
 		return fileResult{index: index, file: m.failOperationFile(j, file, err)}
 	}

@@ -27,11 +27,39 @@ type Backend interface {
 	Rotate(ctx context.Context, input, output string, pages []int, angle int) error
 }
 
+// Engine IDs name the external tool that performs an operation. They appear in
+// the protocol so a client can tell which operation needs which binary.
+const (
+	EnginePDFCPU      = "pdfcpu"
+	EngineQPDF        = "qpdf"
+	EngineGhostscript = "ghostscript"
+	EnginePoppler     = "poppler"
+	EngineTesseract   = "tesseract"
+)
+
+// InputKind is what an operation accepts.
+type InputKind string
+
+const (
+	InputPDF   InputKind = "pdf"
+	InputImage InputKind = "image"
+)
+
+// errEngineMissing is the reason reported for an engine that is not installed.
+func errEngineMissing(id string) error {
+	return fmt.Errorf("%s is not installed", id)
+}
+
 // Operation describes one PDF tool: what it needs, what it produces, and how
 // to run it. Adding an operation is a one-file change in catalogue.go.
 type Operation struct {
 	ID, Label, Group string
 	Mode             string // "instant" or "studio"
+	Engine           string // which external tool runs it; empty means pdfcpu
+	Inputs           InputKind
+	OutputExt        string // extension of the output; empty means pdf
+	Numbered         bool   // one input produces N numbered outputs
+	FixedAngle       int    // rotate variants: used when Params.Angle is 0
 	MinInputs        int
 	MaxInputs        int // 0 means unlimited
 	NeedsPages       bool
@@ -39,6 +67,33 @@ type Operation struct {
 	NeedsAngle       bool
 	Suffix           string // appended to the source name to form the output name; unused by merge
 	Merges           bool   // all inputs produce one output
+}
+
+// InputKind reports what the operation accepts, defaulting to PDF so entries that
+// predate image support need no annotation.
+func (o Operation) InputKind() InputKind {
+	if o.Inputs == "" {
+		return InputPDF
+	}
+	return o.Inputs
+}
+
+// OutputExtension reports the extension of the operation's output, defaulting to
+// pdf. It is separate from the OutputExt field so the field keeps its plain name.
+func (o Operation) OutputExtension() string {
+	if o.OutputExt == "" {
+		return "pdf"
+	}
+	return o.OutputExt
+}
+
+// EngineID reports which external tool runs the operation, defaulting to the
+// linked-in pdfcpu.
+func (o Operation) EngineID() string {
+	if o.Engine == "" {
+		return EnginePDFCPU
+	}
+	return o.Engine
 }
 
 // Catalogue returns every known operation in display order.
@@ -76,7 +131,7 @@ func (o Operation) Validate(files []string, p Params) error {
 	if o.NeedsPages && p.Pages == "" {
 		return fmt.Errorf("%s needs a page selection", o.ID)
 	}
-	if o.NeedsAngle {
+	if o.NeedsAngle && o.FixedAngle == 0 {
 		switch p.Angle {
 		case 90, 180, 270:
 		default:
@@ -86,6 +141,8 @@ func (o Operation) Validate(files []string, p Params) error {
 	if !o.NeedsPages && !o.OptionalPages && p.Pages != "" {
 		return fmt.Errorf("%s does not take a page selection", o.ID)
 	}
+	// A fixed-angle variant supplies its own angle, so passing one is a mistake
+	// rather than something to ignore.
 	if !o.NeedsAngle && p.Angle != 0 {
 		return fmt.Errorf("%s does not take an angle", o.ID)
 	}
@@ -96,7 +153,14 @@ func (o Operation) Validate(files []string, p Params) error {
 // operation onto backend calls. Merge combines all inputs into one output;
 // every other operation works on a single input, which the job layer loops
 // over itself.
-func (o Operation) Run(ctx context.Context, b Backend, inputs []string, output string, p Params) error {
+func (o Operation) Run(ctx context.Context, tb Toolbox, inputs []string, output string, p Params) error {
+	if err := tb.Available(o.EngineID()); err != nil {
+		return err
+	}
+	if o.EngineID() != EnginePDFCPU {
+		return o.runExternal(ctx, tb, inputs, output, p)
+	}
+	b := tb.PDFCPU
 	if o.Merges {
 		return b.Merge(ctx, inputs, output)
 	}
@@ -108,8 +172,8 @@ func (o Operation) Run(ctx context.Context, b Backend, inputs []string, output s
 		if o.ID == "pdf-reverse" {
 			return o.reverse(ctx, b, input, output)
 		}
-		if o.ID == "pdf-rotate" {
-			return b.Rotate(ctx, input, output, nil, p.Angle)
+		if o.ID == "pdf-rotate" || o.FixedAngle != 0 {
+			return b.Rotate(ctx, input, output, nil, o.angle(p))
 		}
 		return fmt.Errorf("%s has no implementation", o.ID)
 	}
@@ -142,12 +206,21 @@ func (o Operation) Run(ctx context.Context, b Backend, inputs []string, output s
 				return err
 			}
 		}
-		return b.Rotate(ctx, input, output, pages, p.Angle)
+		return b.Rotate(ctx, input, output, pages, o.angle(p))
 	case "pdf-reverse":
 		return o.reverse(ctx, b, input, output)
 	default:
 		return fmt.Errorf("%s has no implementation", o.ID)
 	}
+}
+
+// angle resolves the angle to rotate by: the caller's, or the variant's fixed
+// one when the caller supplied nothing.
+func (o Operation) angle(p Params) int {
+	if p.Angle != 0 {
+		return p.Angle
+	}
+	return o.FixedAngle
 }
 
 // reverse collects the pages back to front.
