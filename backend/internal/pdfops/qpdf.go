@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // QPDF shells out to qpdf for the three structural rewrites pdfcpu cannot do:
@@ -31,23 +32,23 @@ func (q *QPDF) Available() error {
 	return availableBinary("qpdf")
 }
 
-// Repair rewrites a damaged PDF so the rest of the toolchain can open it.
-// qpdf's exit code 3 is "warnings written but output produced"; any other
+// Repair rewrites a damaged PDF so the rest of the toolchain can open it; qpdf
+// reconstructs a broken cross-reference table as part of any rewrite. qpdf's exit code 3 is "warnings written but output produced"; any other
 // non-zero exit is a real error worth reporting.
 func (q *QPDF) Repair(ctx context.Context, input, output string) error {
-	return q.runQPDF(ctx, []string{"--replace-input", "--quiet", input, output})
+	return q.runQPDF(ctx, []string{input, output})
 }
 
 // Linearize writes a web-optimized copy, where the catalog data is rearranged
 // so the first byte already serves the first page's contents.
 func (q *QPDF) Linearize(ctx context.Context, input, output string) error {
-	return q.runQPDF(ctx, []string{"--linearize", "--quiet", input, output})
+	return q.runQPDF(ctx, []string{"--linearize", input, output})
 }
 
 // Flatten pushes form annotations and appearances into the page content so
 // the document is no longer dependent on a LiveCycle / AcroForm interpreter.
 func (q *QPDF) Flatten(ctx context.Context, input, output string) error {
-	return q.runQPDF(ctx, []string{"--flatten-annotations", "--generate-appearances", "--quiet", input, output})
+	return q.runQPDF(ctx, []string{"--flatten-annotations=all", "--generate-appearances", input, output})
 }
 
 // runQPDF dispatches the configured runner and decodes the exit code. qpdf
@@ -62,5 +63,17 @@ func (q *QPDF) runQPDF(ctx context.Context, args []string) error {
 	if errors.As(err, &exitErr) && exitErr.code == 3 {
 		return nil
 	}
-	return fmt.Errorf("qpdf %s: %w", args[0], err)
+	if strings.Contains(err.Error(), "invalid password") {
+		return ErrPasswordRequired
+	}
+	return fmt.Errorf("qpdf %s: %w", operationName(args), err)
+}
+
+// operationName names the qpdf call for error messages: its leading option, or
+// "rewrite" for the plain repair call that has none.
+func operationName(args []string) string {
+	if len(args) > 0 && strings.HasPrefix(args[0], "--") {
+		return args[0]
+	}
+	return "rewrite"
 }
