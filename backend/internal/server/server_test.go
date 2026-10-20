@@ -396,3 +396,30 @@ func TestServerConvertReturnsJobAndFinishedEvent(t *testing.T) {
 		t.Fatal("missing job id")
 	}
 }
+
+func TestServerEnginesReportsStatusWithReason(t *testing.T) {
+	reg := registry.New()
+	reg.Register(&testEngine{})
+	conn, cleanup := startTestServerWithRegistry(t, reg)
+	defer cleanup()
+
+	resp := sendRequest(t, conn, protocol.Request{ID: 1, Method: "engines", Params: json.RawMessage(`{}`)})
+	result, ok := resp["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("engines response: %#v", resp)
+	}
+	engines, ok := result["engines"].([]any)
+	if !ok || len(engines) != 1 {
+		t.Fatalf("engines: %#v", result["engines"])
+	}
+	entry := engines[0].(map[string]any)
+	if _, ok := entry["id"].(string); !ok {
+		t.Fatalf("entry missing id: %#v", entry)
+	}
+	if _, ok := entry["available"].(bool); !ok {
+		t.Fatalf("entry missing available: %#v", entry)
+	}
+	if reason, ok := entry["reason"].(string); !ok || reason != "" {
+		t.Fatalf("available engine should report empty reason: %#v", entry)
+	}
+}

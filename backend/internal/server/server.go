@@ -108,11 +108,11 @@ func (s *Server) handle(conn net.Conn) {
 		}
 		switch req.Method {
 		case "hello":
-			engines := []map[string]any{{"id": "imagemagick", "available": s.deps.Engine != ""}}
-			if s.deps.Registry != nil {
-				engines = s.deps.Registry.Status()
+			if write(protocol.Response{ID: req.ID, Result: map[string]any{"server": "fcd", "version": s.deps.Version, "protocol": 1, "engines": s.engineStatus()}}) != nil {
+				return
 			}
-			if write(protocol.Response{ID: req.ID, Result: map[string]any{"server": "fcd", "version": s.deps.Version, "protocol": 1, "engines": engines}}) != nil {
+		case "engines":
+			if write(protocol.Response{ID: req.ID, Result: map[string]any{"engines": s.engineStatus()}}) != nil {
 				return
 			}
 		case "targets":
@@ -222,4 +222,11 @@ func writeError(write func(any) error, id int, code, msg string) error {
 }
 func writeEvent(write func(any) error) func(protocol.Event) {
 	return func(event protocol.Event) { _ = write(event) }
+}
+
+func (s *Server) engineStatus() []protocol.EngineStatus {
+	if s.deps.Registry != nil {
+		return s.deps.Registry.Status()
+	}
+	return []protocol.EngineStatus{{ID: "imagemagick", Available: s.deps.Engine != ""}}
 }

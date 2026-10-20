@@ -379,3 +379,11 @@ func absolutePath(path string) string {
 	}
 	return path
 }
+
+func TestValidateEnginesAcceptsEmptyAndNullParams(t *testing.T) {
+	for _, params := range []string{``, `null`, `{}`} {
+		if err := ValidateRequest(Request{ID: 1, Method: "engines", Params: json.RawMessage(params)}); err != nil {
+			t.Fatalf("params %q rejected: %+v", params, err)
+		}
+	}
+}

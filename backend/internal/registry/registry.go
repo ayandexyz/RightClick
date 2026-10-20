@@ -37,11 +37,14 @@ func (r *Registry) Engines() []Engine {
 	return append([]Engine(nil), r.engines...)
 }
 
-func (r *Registry) Status() []map[string]any {
-	out := make([]map[string]any, 0, len(r.engines))
+func (r *Registry) Status() []protocol.EngineStatus {
+	out := make([]protocol.EngineStatus, 0, len(r.engines))
 	for _, engine := range r.engines {
-		_, err := engine.Available()
-		out = append(out, map[string]any{"id": engine.ID(), "available": err == nil})
+		status := protocol.EngineStatus{ID: engine.ID(), Available: true}
+		if _, err := engine.Available(); err != nil {
+			status.Available, status.Reason = false, err.Error()
+		}
+		out = append(out, status)
 	}
 	return out
 }

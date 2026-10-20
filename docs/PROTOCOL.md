@@ -22,7 +22,13 @@ Error codes: `bad_request`, `not_found`, `no_route`, `unsupported`, `busy`, `can
 Paths are absolute, UTF-8, native to the backend's OS.
 
 ### `hello`
-`params: {client: string, protocol: 1}` → `{server: "fcd", version, protocol: 1, engines: [{id, available}]}`
+`params: {client: string, protocol: 1}` → `{server: "fcd", version, protocol: 1, engines: [{id, available, reason}]}`
+
+### `engines`
+Read-only engine diagnostics. Missing optional engines are reported here, never as startup failures.
+`params: {}` → `{engines: [{id, available, reason}]}`; `reason` is empty when available, otherwise why the engine cannot run (e.g. `ffmpeg not found`). `hello` returns the same entries.
+
+`fcctl engines [--json]` prints one line per engine.
 
 ### `targets`
 What can these files become? This drives the donut / menu.

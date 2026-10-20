@@ -66,3 +66,32 @@ func TestParseImageOptionsRejectBadValuesAndNonConvert(t *testing.T) {
 		}
 	}
 }
+
+func TestParseEnginesCommand(t *testing.T) {
+	cmd, err := parseArgs([]string{"engines", "--json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd.name != "engines" || !cmd.jsonOutput {
+		t.Fatalf("unexpected command: %+v", cmd)
+	}
+	if req := commandRequest(cmd); req.Method != "engines" {
+		t.Fatalf("method = %q", req.Method)
+	}
+	if _, err := parseArgs([]string{"engines", "file.png"}); err == nil {
+		t.Fatal("engines must not accept files")
+	}
+}
+
+func TestFormatEnginesHumanReadable(t *testing.T) {
+	value := map[string]any{"result": map[string]any{"engines": []any{
+		map[string]any{"id": "magick", "available": true, "reason": ""},
+		map[string]any{"id": "ffmpeg", "available": false, "reason": "ffmpeg not found"},
+	}}}
+	got := formatHuman(value)
+	for _, want := range []string{"magick", "available", "ffmpeg", "unavailable: ffmpeg not found"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("output %q missing %q", got, want)
+		}
+	}
+}

@@ -8,6 +8,13 @@ type ImageOptions struct {
 	Background string
 }
 
+// EngineStatus reports whether a registered engine can run and, if not, why.
+type EngineStatus struct {
+	ID        string `json:"id"`
+	Available bool   `json:"available"`
+	Reason    string `json:"reason"`
+}
+
 type ConflictPolicy string
 
 const (

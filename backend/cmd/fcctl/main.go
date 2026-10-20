@@ -180,7 +180,7 @@ func parseArgs(args []string) (command, error) {
 			}
 		}
 	}
-	if cmd.name != "hello" && cmd.name != "targets" && cmd.name != "convert" && cmd.name != "cancel" {
+	if cmd.name != "hello" && cmd.name != "engines" && cmd.name != "targets" && cmd.name != "convert" && cmd.name != "cancel" {
 		return command{}, fmt.Errorf("unknown command: %s", cmd.name)
 	}
 	if cmd.name == "targets" || cmd.name == "convert" {
@@ -190,6 +190,9 @@ func parseArgs(args []string) (command, error) {
 	}
 	if cmd.name == "convert" && cmd.preset == "" {
 		return command{}, fmt.Errorf("--to or --preset is required")
+	}
+	if (cmd.name == "hello" || cmd.name == "engines") && len(cmd.files) > 0 {
+		return command{}, fmt.Errorf("%s does not accept files", cmd.name)
 	}
 	if cmd.name == "cancel" && cmd.job == "" {
 		return command{}, fmt.Errorf("job id is required")
@@ -238,6 +241,8 @@ func commandRequest(cmd command) protocol.Request {
 	switch cmd.name {
 	case "hello":
 		return protocol.Request{ID: 1, Method: "hello", Params: raw(map[string]any{"client": "fcctl", "protocol": 1})}
+	case "engines":
+		return protocol.Request{ID: 1, Method: "engines", Params: raw(map[string]any{})}
 	case "targets":
 		return protocol.Request{ID: 1, Method: "targets", Params: raw(map[string]any{"files": cmd.files})}
 	case "cancel":
@@ -280,9 +285,28 @@ func formatHuman(value map[string]any) string {
 		if job, ok := result["job"].(string); ok {
 			return "job " + job + " submitted"
 		}
+		if engines, ok := result["engines"].([]any); ok && result["server"] == nil {
+			return formatEngines(engines)
+		}
 		return fmt.Sprintf("result: %v", result)
 	}
 	return fmt.Sprintf("%v", value)
+}
+
+func formatEngines(engines []any) string {
+	lines := make([]string, 0, len(engines))
+	for _, item := range engines {
+		engine, _ := item.(map[string]any)
+		line := fmt.Sprintf("%v: available", engine["id"])
+		if available, _ := engine["available"].(bool); !available {
+			line = fmt.Sprintf("%v: unavailable", engine["id"])
+			if reason, _ := engine["reason"].(string); reason != "" {
+				line += ": " + reason
+			}
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func formatHumanEvent(message wireEvent) string {
@@ -303,6 +327,6 @@ func formatHumanEvent(message wireEvent) string {
 
 func raw(value any) json.RawMessage { data, _ := json.Marshal(value); return data }
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: fcctl hello | targets FILE... [--json] | convert FILE... (--to png|jpeg|webp|jxl|avif|gif|bmp|tiff|ico|heic | --preset PRESET) [--quality 1-100] [--max-size PX] [--background COLOR] [--output-dir DIR] [--on-conflict POLICY] [--json] | cancel JOB [--json]")
+	fmt.Fprintln(os.Stderr, "usage: fcctl hello | engines [--json] | targets FILE... [--json] | convert FILE... (--to png|jpeg|webp|jxl|avif|gif|bmp|tiff|ico|heic | --preset PRESET) [--quality 1-100] [--max-size PX] [--background COLOR] [--output-dir DIR] [--on-conflict POLICY] [--json] | cancel JOB [--json]")
 }
 func fatal(err error) { fmt.Fprintln(os.Stderr, err); os.Exit(1) }

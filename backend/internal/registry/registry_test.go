@@ -524,3 +524,22 @@ func TestResolveReportsUnavailableEngine(t *testing.T) {
 		t.Fatalf("error = %v, want imagemagick not found", err)
 	}
 }
+
+type unavailableEngine struct{ fakeEngine }
+
+func (unavailableEngine) Available() (string, error) { return "", errors.New("ffmpeg not found") }
+
+func TestStatusReportsAvailabilityAndReasonPerEngine(t *testing.T) {
+	r := New()
+	r.Register(fakeEngine{id: "magick"})
+	r.Register(unavailableEngine{fakeEngine{id: "ffmpeg"}})
+
+	got := r.Status()
+	want := []protocol.EngineStatus{
+		{ID: "magick", Available: true, Reason: ""},
+		{ID: "ffmpeg", Available: false, Reason: "ffmpeg not found"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Status() = %#v, want %#v", got, want)
+	}
+}

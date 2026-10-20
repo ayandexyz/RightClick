@@ -76,7 +76,7 @@ func ValidateRequest(req Request) *Error {
 		code, msg = validateConvert(req.Params)
 	case "cancel":
 		code, msg = validateCancel(req.Params)
-	case "subscribe":
+	case "engines", "subscribe":
 		code, msg = validateEmptyParams(req.Params)
 	default:
 		code = "bad_request"
