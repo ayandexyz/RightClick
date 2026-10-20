@@ -264,6 +264,31 @@ func TestValidateRequest(t *testing.T) {
 	}
 }
 
+func TestSupportedMediaPresets(t *testing.T) {
+	wantCategories := map[string]string{
+		"video-to-mp4": "video", "video-to-mov": "video", "video-to-webm": "video",
+		"video-to-mkv": "video", "video-to-avi": "video", "audio-to-mp3": "audio",
+		"audio-to-wav": "audio", "audio-to-flac": "audio", "audio-to-aac": "audio",
+		"audio-to-m4a": "audio", "audio-to-ogg": "audio", "audio-to-opus": "audio",
+	}
+	for _, target := range SupportedPresets() {
+		want, ok := wantCategories[target.Preset]
+		if !ok {
+			continue
+		}
+		if target.Format == "" || target.Category == "" || !target.Enabled {
+			t.Errorf("media preset %q has incomplete target: %+v", target.Preset, target)
+		}
+		if target.Category != want {
+			t.Errorf("media preset %q category = %q, want %q", target.Preset, target.Category, want)
+		}
+		delete(wantCategories, target.Preset)
+	}
+	for preset := range wantCategories {
+		t.Errorf("SupportedPresets() missing media preset %q", preset)
+	}
+}
+
 func TestSupportedPresets(t *testing.T) {
 	presets := SupportedPresets()
 	if len(presets) == 0 {

@@ -23,6 +23,18 @@ var supportedPresets = []Target{
 	{Preset: "image-to-tiff", Label: "TIFF Image", Format: "tiff", Category: "image", Enabled: true},
 	{Preset: "image-to-ico", Label: "ICO Image", Format: "ico", Category: "image", Enabled: true},
 	{Preset: "image-to-heic", Label: "HEIC Image", Format: "heic", Category: "image", Enabled: true},
+	{Preset: "video-to-mp4", Label: "MP4 Video", Format: "mp4", Category: "video", Enabled: true},
+	{Preset: "video-to-mov", Label: "MOV Video", Format: "mov", Category: "video", Enabled: true},
+	{Preset: "video-to-webm", Label: "WebM Video", Format: "webm", Category: "video", Enabled: true},
+	{Preset: "video-to-mkv", Label: "MKV Video", Format: "mkv", Category: "video", Enabled: true},
+	{Preset: "video-to-avi", Label: "AVI Video", Format: "avi", Category: "video", Enabled: true},
+	{Preset: "audio-to-mp3", Label: "MP3 Audio", Format: "mp3", Category: "audio", Enabled: true},
+	{Preset: "audio-to-wav", Label: "WAV Audio", Format: "wav", Category: "audio", Enabled: true},
+	{Preset: "audio-to-flac", Label: "FLAC Audio", Format: "flac", Category: "audio", Enabled: true},
+	{Preset: "audio-to-aac", Label: "AAC Audio", Format: "aac", Category: "audio", Enabled: true},
+	{Preset: "audio-to-m4a", Label: "M4A Audio", Format: "m4a", Category: "audio", Enabled: true},
+	{Preset: "audio-to-ogg", Label: "OGG Audio", Format: "ogg", Category: "audio", Enabled: true},
+	{Preset: "audio-to-opus", Label: "Opus Audio", Format: "opus", Category: "audio", Enabled: true},
 }
 
 // SupportedPresets returns the image conversion targets supported by this slice.

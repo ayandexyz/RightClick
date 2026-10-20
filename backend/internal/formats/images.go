@@ -24,6 +24,18 @@ const (
 	TIFF Format = "tiff"
 	ICO  Format = "ico"
 	HEIC Format = "heic"
+	MP4  Format = "mp4"
+	MOV  Format = "mov"
+	WebM Format = "webm"
+	MKV  Format = "mkv"
+	AVI  Format = "avi"
+	MP3  Format = "mp3"
+	WAV  Format = "wav"
+	FLAC Format = "flac"
+	AAC  Format = "aac"
+	M4A  Format = "m4a"
+	OGG  Format = "ogg"
+	Opus Format = "opus"
 )
 
 var ErrUnsupported = errors.New("unsupported image format")
@@ -174,6 +186,33 @@ func brandInFTYP(path string, size uint32) Format {
 	return ""
 }
 
+func IsVideoFormat(format Format) bool {
+	switch format {
+	case MP4, MOV, WebM, MKV, AVI:
+		return true
+	default:
+		return false
+	}
+}
+
+func IsAudioFormat(format Format) bool {
+	switch format {
+	case MP3, WAV, FLAC, AAC, M4A, OGG, Opus:
+		return true
+	default:
+		return false
+	}
+}
+
+func IsImageFormat(format Format) bool {
+	switch format {
+	case PNG, JPEG, WebP, JXL, AVIF, GIF, BMP, TIFF, ICO, HEIC:
+		return true
+	default:
+		return false
+	}
+}
+
 func PresetFormat(preset string) (Format, bool) {
 	switch preset {
 	case "image-to-png":
@@ -196,6 +235,30 @@ func PresetFormat(preset string) (Format, bool) {
 		return ICO, true
 	case "image-to-heic":
 		return HEIC, true
+	case "video-to-mp4":
+		return MP4, true
+	case "video-to-mov":
+		return MOV, true
+	case "video-to-webm":
+		return WebM, true
+	case "video-to-mkv":
+		return MKV, true
+	case "video-to-avi":
+		return AVI, true
+	case "audio-to-mp3":
+		return MP3, true
+	case "audio-to-wav":
+		return WAV, true
+	case "audio-to-flac":
+		return FLAC, true
+	case "audio-to-aac":
+		return AAC, true
+	case "audio-to-m4a":
+		return M4A, true
+	case "audio-to-ogg":
+		return OGG, true
+	case "audio-to-opus":
+		return Opus, true
 	default:
 		return "", false
 	}
