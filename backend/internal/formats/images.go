@@ -157,6 +157,7 @@ func Detect(path string) (Format, error) {
 
 func detectSVG(prefix []byte) (Format, bool) {
 	prefix = bytes.TrimPrefix(prefix, []byte{0xef, 0xbb, 0xbf})
+	prefix = bytes.TrimSpace(prefix)
 	decoder := xml.NewDecoder(bytes.NewReader(prefix))
 	depth := 0
 	for {

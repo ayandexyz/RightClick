@@ -85,6 +85,7 @@ func TestDetectRecognizesSVGContentIndependentOfExtension(t *testing.T) {
 		{"plain root", `<svg xmlns="http://www.w3.org/2000/svg"/>`},
 		{"bom declaration comment", "\ufeff<?xml version=\"1.0\"?>\n<!-- comment -->\n<svg/>"},
 		{"extension mismatch", `<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>`},
+		{"trailing whitespace", "<svg xmlns=\"http://www.w3.org/2000/svg\"></svg> \n\t"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
