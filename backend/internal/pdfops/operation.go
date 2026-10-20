@@ -82,15 +82,18 @@ type Operation struct {
 	Inputs           InputKind
 	OutputExt        string // extension of the output; empty means pdf
 	Numbered         bool   // one input produces N numbered outputs
-	FixedAngle       int    // rotate variants: used when Params.Angle is 0
-	MinInputs        int
-	MaxInputs        int // 0 means unlimited
-	NeedsPages       bool
-	OptionalPages    bool // accepts a page selection but defaults to all pages
-	NeedsAngle       bool
-	Suffix           string // appended to the source name to form the output name; unused by merge
-	Merges           bool   // all inputs produce one output
-	Preset           string // Ghostscript compress preset: "light", "balanced", "strong"
+	// OutputExtension chooses the staged files consumed by numbered operations.
+	// EmptyNotice is reported as a skipped notice when none were produced.
+	EmptyNotice   string
+	FixedAngle    int // rotate variants: used when Params.Angle is 0
+	MinInputs     int
+	MaxInputs     int // 0 means unlimited
+	NeedsPages    bool
+	OptionalPages bool // accepts a page selection but defaults to all pages
+	NeedsAngle    bool
+	Suffix        string // appended to the source name to form the output name; unused by merge
+	Merges        bool   // all inputs produce one output
+	Preset        string // Ghostscript compress preset: "light", "balanced", "strong"
 	// Unimplemented marks an operation whose engine exists but whose behaviour
 	// is not built yet. It is reported as disabled with its reason rather than
 	// offered, so a menu never shows something that cannot run.

@@ -837,7 +837,7 @@ func (m *Manager) runNumberedOperation(j *job, op pdfops.Operation, source strin
 		return m.failOperationFile(j, file, err)
 	}
 	ext := op.OutputExtension()
-	produced, err := filepath.Glob(filepath.Join(stage, "*.png"))
+	produced, err := filepath.Glob(filepath.Join(stage, "*."+ext))
 	if err != nil {
 		file.State = "failed"
 		file.Error = &protocol.FileError{Code: "internal", Message: err.Error()}
@@ -883,7 +883,7 @@ func (m *Manager) runNumberedOperation(j *job, op pdfops.Operation, source strin
 	}
 	if len(plans) == 0 {
 		file.State = "skipped"
-		file.Notice = "no embedded images"
+		file.Notice = op.EmptyNotice
 		return file
 	}
 	outputs := make([]string, 0, len(plans))

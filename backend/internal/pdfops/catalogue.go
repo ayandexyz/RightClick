@@ -20,7 +20,7 @@ var catalogue = []Operation{
 	{ID: "pdf-rotate-180", Label: "Rotate 180°", Group: "organise", Mode: "instant", MinInputs: 1, FixedAngle: 180, Suffix: "-rotated"},
 	{ID: "pdf-reverse", Label: "Reverse pages", Group: "organise", Mode: "instant", MinInputs: 1, Suffix: "-reversed"},
 	{ID: "pdf-to-text", Label: "Extract text", Group: "extract", Mode: "instant", Engine: EnginePoppler, MinInputs: 1, OutputExt: "txt", Suffix: "-text"},
-	{ID: "pdf-extract-images", Label: "Extract images", Group: "extract", Mode: "instant", Engine: EnginePoppler, MinInputs: 1, OutputExt: "png", Numbered: true, Suffix: "-image"},
+	{ID: "pdf-extract-images", Label: "Extract images", Group: "extract", Mode: "instant", Engine: EnginePoppler, MinInputs: 1, OutputExt: "png", Numbered: true, Suffix: "-image", EmptyNotice: "no embedded images"},
 	{ID: "pdf-ocr", Label: "OCR (make searchable)", Group: "import", Mode: "studio", Engine: EngineTesseract, MinInputs: 1, OptionalPages: true, Suffix: "-ocr", Unimplemented: ErrOCRUnsupported.Error()},
 	{ID: "pdf-from-images", Label: "Images to PDF", Group: "import", Mode: "instant", Engine: EnginePDFCPU, MinInputs: 1, Inputs: InputImage, Suffix: "", Merges: true},
 }
