@@ -94,9 +94,11 @@ ENGINES = [
      "pacman -S poppler / apt-get install poppler-utils"),
     ("pdfimages", ["pdfimages"], "Extract images",
      "pacman -S poppler / apt-get install poppler-utils"),
-    ("pdftocairo", ["pdftocairo"], "OCR (make searchable)",
+    # pdftocairo and tesseract are checked so they are in place when OCR lands;
+    # the operation itself is disabled until then, so do not advertise it.
+    ("pdftocairo", ["pdftocairo"], "OCR (not yet enabled)",
      "pacman -S poppler / apt-get install poppler-utils"),
-    ("tesseract", ["tesseract"], "OCR (make searchable)",
+    ("tesseract", ["tesseract"], "OCR (not yet enabled)",
      "pacman -S tesseract tesseract-data-eng / apt-get install tesseract-ocr"),
 ]
 

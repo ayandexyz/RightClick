@@ -70,6 +70,10 @@ type Operation struct {
 	Suffix           string // appended to the source name to form the output name; unused by merge
 	Merges           bool   // all inputs produce one output
 	Preset           string // Ghostscript compress preset: "light", "balanced", "strong"
+	// Unimplemented marks an operation whose engine exists but whose behaviour
+	// is not built yet. It is reported as disabled with its reason rather than
+	// offered, so a menu never shows something that cannot run.
+	Unimplemented string
 }
 
 // InputKind reports what the operation accepts, defaulting to PDF so entries that

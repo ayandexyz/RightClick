@@ -125,8 +125,10 @@ Operations:
 | `pdf-to-text` | poppler | instant | 1 or more PDFs | `<stem>-text.txt` |
 | `pdf-extract-images` | poppler | instant | 1 or more PDFs | `<stem>-image-1.png`, `<stem>-image-2.png`, ... |
 | `pdf-strip-metadata` | pdfcpu | instant | 1 or more PDFs | `<stem>-clean.pdf` |
-| `pdf-ocr` | tesseract | studio | 1 or more PDFs | `<stem>-ocr.pdf` |
+| `pdf-ocr` | tesseract | studio | 1 or more PDFs | not implemented; always `enabled: false` |
 | `pdf-from-images` | pdfcpu | instant | 1 or more JPEG / PNG / TIFF | `images.pdf` in `output_dir` |
+
+`pdf-ocr` is not implemented in this phase: producing a searchable PDF requires drawing an invisible text layer positioned over each page image, which no tool in this toolbox does. It is always returned with `enabled: false` and the reason `making a searchable PDF is not supported by this build`, and `run_operation` returns the same error rather than writing a PDF without a text layer.
 
 Studio operations require either `pages` (page spec, see below) or `angle` (90, 180, 270) in `params`. Instant operations reject those params. Image-only operations (`pdf-from-images`) work on a selection of all-images; the daemon reports the operation disabled with `<format> is not supported for PDF import` for selections containing any unsupported format.
 

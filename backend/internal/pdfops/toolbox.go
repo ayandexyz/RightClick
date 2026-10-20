@@ -67,6 +67,9 @@ func EngineIDs() []string {
 // and selection, or returns "" when it can. An operation whose engine is missing
 // is disabled by that alone, so a missing tool never takes other tools with it.
 func (o Operation) UnavailableReason(tb Toolbox, files []string) string {
+	if o.Unimplemented != "" {
+		return o.Unimplemented
+	}
 	if err := tb.Available(o.EngineID()); err != nil {
 		return err.Error()
 	}

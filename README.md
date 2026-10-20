@@ -28,7 +28,9 @@ Beyond rasterizing pages, the backend offers structural PDF tools. The Nautilus 
 | `pdf-extract-images` | poppler | instant | numbered PNGs `<stem>-image-N.png` |
 | `pdf-strip-metadata` | pdfcpu | instant | remove Info dictionary entries |
 | `pdf-from-images` | pdfcpu | instant | JPEG / PNG / TIFF to a single PDF |
-| `pdf-ocr` | tesseract | studio | rasterise via pdftocairo, OCR with tesseract |
+| `pdf-ocr` | tesseract | studio | not implemented yet; listed but always disabled — see below |
+
+`pdf-ocr` is currently **not available**: producing a searchable PDF needs an invisible text layer positioned over each page image, and no tool in this toolbox assembles that. Rather than emit a PDF that looks processed but cannot be searched, the operation is listed with a reason and disabled. `pdftocairo` and `tesseract` are still installed and checked, so the operation starts working as soon as the text-layer step lands.
 
 PDF tools, like conversions, report per-file state (`done`, `failed`, `skipped`) and per-file error codes: `password_required` for encrypted PDFs, `invalid_pdf` for files that cannot be opened as a PDF (which includes bad headers and corrupted structures).
 
