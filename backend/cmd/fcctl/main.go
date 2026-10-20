@@ -31,6 +31,12 @@ type command struct {
 	recursive  bool
 	menuAction string
 	menuArgs   []string
+	// op carries a PDF operation ID for the run_operation method, or the
+	// literal "pdf-list" when the user asked for a list.
+	op       string
+	pdfPages string
+	pdfAngle *int
+	pdfList  bool
 }
 
 type wireEvent struct {
@@ -104,7 +110,10 @@ func main() {
 		if _, hasError := value["error"]; hasError {
 			os.Exit(1)
 		}
-		if cmd.name != "convert" {
+		// convert and pdf run a job, so wait for job.finished; everything else
+		// answers with a single result and is done.
+		waitsForJob := cmd.name == "convert" || (cmd.name == "pdf" && !cmd.pdfList)
+		if !waitsForJob {
 			if _, hasResult := value["result"]; hasResult {
 				return
 			}
@@ -123,6 +132,13 @@ func parseArgs(args []string) (command, error) {
 	if len(args) == 0 {
 		return command{}, errors.New("command is required")
 	}
+	if args[0] == "pdf" {
+		return parsePDFArgs(args)
+	}
+	return parseCommonArgs(args)
+}
+
+func parseCommonArgs(args []string) (command, error) {
 	cmd := command{name: args[0], conflict: "rename"}
 	for i := 1; i < len(args); i++ {
 		switch args[i] {
@@ -250,6 +266,100 @@ func validateMenuArgs(cmd command) error {
 	return nil
 }
 
+// parsePDFArgs handles `fcctl pdf <op> file.pdf ...`. Mapping of the subcommand
+// name to a protocol operation ID happens here; everything else is identical to
+// the convert flow.
+func parsePDFArgs(args []string) (command, error) {
+	if len(args) < 2 {
+		return command{}, fmt.Errorf("pdf <command> --help")
+	}
+	cmd := command{name: "pdf", conflict: "rename"}
+	sub := args[1]
+	known := map[string]string{
+		"merge":   "pdf-merge",
+		"extract": "pdf-extract",
+		"delete":  "pdf-delete",
+		"rotate":  "pdf-rotate",
+		"reverse": "pdf-reverse",
+		"list":    "pdf-list",
+	}
+	op, ok := known[sub]
+	if !ok {
+		return command{}, fmt.Errorf("unknown pdf command: %s", sub)
+	}
+	cmd.op = op
+	if op == "pdf-list" {
+		cmd.pdfList = true
+	}
+	rest := args[2:]
+	for i := 0; i < len(rest); i++ {
+		switch rest[i] {
+		case "--json":
+			cmd.jsonOutput = true
+		case "--output-dir", "--out-dir":
+			value, next, err := optionValue(rest, i)
+			if err != nil {
+				return command{}, err
+			}
+			cmd.outputDir, i = value, next
+		case "--on-conflict":
+			value, next, err := optionValue(rest, i)
+			if err != nil {
+				return command{}, err
+			}
+			cmd.conflict, i = value, next
+		case "--pages":
+			value, next, err := optionValue(rest, i)
+			if err != nil {
+				return command{}, err
+			}
+			cmd.pdfPages, i = value, next
+		case "--angle":
+			value, next, err := optionValue(rest, i)
+			if err != nil {
+				return command{}, err
+			}
+			n, err := strconv.Atoi(value)
+			if err != nil || (n != 90 && n != 180 && n != 270) {
+				return command{}, fmt.Errorf("--angle must be 90, 180 or 270")
+			}
+			cmd.pdfAngle = &n
+			i = next
+		default:
+			if strings.HasPrefix(rest[i], "-") {
+				return command{}, fmt.Errorf("unknown option: %s", rest[i])
+			}
+			cmd.files = append(cmd.files, rest[i])
+		}
+	}
+	switch op {
+	case "pdf-list":
+		if len(cmd.files) != 1 {
+			return command{}, fmt.Errorf("pdf list takes exactly one file")
+		}
+	default:
+		if op == "pdf-merge" && len(cmd.files) < 2 {
+			return command{}, fmt.Errorf("pdf merge needs at least 2 files")
+		}
+		if len(cmd.files) == 0 {
+			return command{}, fmt.Errorf("at least one file is required")
+		}
+	}
+	if (op == "pdf-extract" || op == "pdf-delete") && cmd.pdfPages == "" {
+		return command{}, fmt.Errorf("pdf %s requires --pages", sub)
+	}
+	if op == "pdf-rotate" && cmd.pdfAngle == nil {
+		return command{}, fmt.Errorf("pdf rotate requires --angle")
+	}
+	if op != "pdf-rotate" && cmd.pdfAngle != nil {
+		return command{}, fmt.Errorf("--angle is only valid for pdf rotate")
+	}
+	if op != "pdf-extract" && op != "pdf-delete" && op != "pdf-rotate" && cmd.pdfPages != "" {
+		return command{}, fmt.Errorf("--pages is only valid for pdf extract, delete or rotate")
+	}
+	return cmd, nil
+}
+
 func optionValue(args []string, index int) (string, int, error) {
 	if index+1 >= len(args) || strings.HasPrefix(args[index+1], "-") {
 		return "", index, fmt.Errorf("%s requires a value", args[index])
@@ -310,6 +420,28 @@ func commandRequest(cmd command) protocol.Request {
 		return protocol.Request{ID: 1, Method: "menu", Params: raw(params)}
 	case "cancel":
 		return protocol.Request{ID: 1, Method: "cancel", Params: raw(map[string]any{"job": cmd.job})}
+	case "pdf":
+		files := absolutePaths(cmd.files)
+		if cmd.pdfList {
+			return protocol.Request{ID: 1, Method: "operations", Params: raw(map[string]any{"files": files})}
+		}
+		params := map[string]any{
+			"op":          cmd.op,
+			"files":       files,
+			"output_dir":  absolutePath(cmd.outputDir),
+			"on_conflict": cmd.conflict,
+		}
+		if cmd.pdfPages != "" || cmd.pdfAngle != nil {
+			operation := map[string]any{}
+			if cmd.pdfPages != "" {
+				operation["pages"] = cmd.pdfPages
+			}
+			if cmd.pdfAngle != nil {
+				operation["angle"] = *cmd.pdfAngle
+			}
+			params["params"] = operation
+		}
+		return protocol.Request{ID: 1, Method: "run_operation", Params: raw(params)}
 	default:
 		params := map[string]any{"files": absolutePaths(cmd.files), "preset": cmd.preset, "output_dir": absolutePath(cmd.outputDir), "on_conflict": cmd.conflict}
 		if cmd.recursive {
@@ -357,6 +489,9 @@ func formatHuman(value map[string]any) string {
 		if engines, ok := result["engines"].([]any); ok && result["server"] == nil {
 			return formatEngines(engines)
 		}
+		if operations, ok := result["operations"].([]any); ok {
+			return formatOperations(operations)
+		}
 		return fmt.Sprintf("result: %v", result)
 	}
 	return fmt.Sprintf("%v", value)
@@ -387,6 +522,25 @@ func formatMenu(result, menuValue map[string]any) string {
 		line := fmt.Sprintf("%s: %s", name, strings.Join(items, ", "))
 		if custom[name] {
 			line += " (custom)"
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func formatOperations(operations []any) string {
+	if len(operations) == 0 {
+		return "no PDF operations apply to this selection"
+	}
+	lines := make([]string, 0, len(operations))
+	for _, item := range operations {
+		entry, _ := item.(map[string]any)
+		line := fmt.Sprintf("%v: %v", entry["id"], entry["label"])
+		if available, _ := entry["enabled"].(bool); !available {
+			line += " (unavailable)"
+			if reason, _ := entry["reason"].(string); reason != "" {
+				line += ": " + reason
+			}
 		}
 		lines = append(lines, line)
 	}
@@ -449,6 +603,6 @@ func absolutePaths(paths []string) []string {
 
 func raw(value any) json.RawMessage { data, _ := json.Marshal(value); return data }
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: fcctl hello | engines [--json] | targets FILE... [--menu] [--json] | menu show | menu set CATEGORY FORMAT... | menu reset [CATEGORY] | convert FILE... (--to png|jpeg|webp|jxl|avif|gif|bmp|tiff|ico|heic | --preset PRESET) [--quality 1-100] [--max-size PX] [--background COLOR] [--out-dir DIR] [--recursive] [--on-conflict POLICY] [--json] | cancel JOB [--json]")
+	fmt.Fprintln(os.Stderr, "usage: fcctl hello | engines [--json] | targets FILE... [--menu] [--json] | menu show | menu set CATEGORY FORMAT... | menu reset [CATEGORY] | convert FILE... (--to png|jpeg|webp|jxl|avif|gif|bmp|tiff|ico|heic | --preset PRESET) [--quality 1-100] [--max-size PX] [--background COLOR] [--out-dir DIR] [--recursive] [--on-conflict POLICY] [--json] | cancel JOB [--json] | pdf (merge FILE FILE... | extract FILE... --pages SPEC | delete FILE... --pages SPEC | rotate FILE... --angle 90|180|270 [--pages SPEC] | reverse FILE... | list FILE) [--out-dir DIR] [--on-conflict POLICY] [--json]")
 }
 func fatal(err error) { fmt.Fprintln(os.Stderr, err); os.Exit(1) }

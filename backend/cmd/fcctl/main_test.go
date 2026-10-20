@@ -200,3 +200,93 @@ func TestParseConvertMakesRelativeInputsAbsolute(t *testing.T) {
 		t.Fatalf("params = %+v", params)
 	}
 }
+
+func TestParsePDFSubcommand(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		wantCmd string
+		wantErr string
+	}{
+		{name: "merge two files", args: []string{"pdf", "merge", "a.pdf", "b.pdf"}, wantCmd: "pdf-merge"},
+		{name: "extract pages", args: []string{"pdf", "extract", "a.pdf", "--pages", "1-3"}, wantCmd: "pdf-extract"},
+		{name: "delete pages", args: []string{"pdf", "delete", "a.pdf", "--pages", "2,4"}, wantCmd: "pdf-delete"},
+		{name: "rotate all", args: []string{"pdf", "rotate", "a.pdf", "--angle", "90"}, wantCmd: "pdf-rotate"},
+		{name: "rotate pages", args: []string{"pdf", "rotate", "a.pdf", "--angle", "270", "--pages", "1-3"}, wantCmd: "pdf-rotate"},
+		{name: "reverse", args: []string{"pdf", "reverse", "a.pdf"}, wantCmd: "pdf-reverse"},
+		{name: "list", args: []string{"pdf", "list", "a.pdf"}, wantCmd: "pdf-list"},
+		{name: "unknown op", args: []string{"pdf", "stamp", "a.pdf"}, wantErr: "unknown pdf command"},
+		{name: "extract without pages", args: []string{"pdf", "extract", "a.pdf"}, wantErr: "--pages"},
+		{name: "rotate without angle", args: []string{"pdf", "rotate", "a.pdf"}, wantErr: "--angle"},
+		{name: "bad angle", args: []string{"pdf", "rotate", "a.pdf", "--angle", "45"}, wantErr: "--angle"},
+		{name: "merge one file", args: []string{"pdf", "merge", "a.pdf"}, wantErr: "at least 2"},
+		{name: "no files", args: []string{"pdf", "reverse"}, wantErr: "file is required"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd, err := parseArgs(tc.args)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("parseArgs: %v", err)
+				}
+				if cmd.op != tc.wantCmd {
+					t.Fatalf("op = %q, want %q", cmd.op, tc.wantCmd)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("error %q should contain %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestPDFRequestBodyForRunOperation(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "doc.pdf")
+	cmd, err := parseArgs([]string{"pdf", "extract", source, "--pages", "1-3,7", "--output-dir", dir, "--on-conflict", "overwrite"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var params map[string]any
+	_ = json.Unmarshal(commandRequest(cmd).Params, &params)
+	if params["op"] != "pdf-extract" {
+		t.Fatalf("op = %v", params["op"])
+	}
+	files, _ := params["files"].([]any)
+	if len(files) != 1 || files[0] != source {
+		t.Fatalf("files = %v", params["files"])
+	}
+	nested, _ := params["params"].(map[string]any)
+	if nested["pages"] != "1-3,7" {
+		t.Fatalf("pages = %v", nested["pages"])
+	}
+	if params["output_dir"] != dir {
+		t.Fatalf("output_dir = %v", params["output_dir"])
+	}
+	if params["on_conflict"] != "overwrite" {
+		t.Fatalf("on_conflict = %v", params["on_conflict"])
+	}
+}
+
+func TestPDFRequestBodyForList(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "doc.pdf")
+	cmd, err := parseArgs([]string{"pdf", "list", source})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := commandRequest(cmd)
+	if req.Method != "operations" {
+		t.Fatalf("method = %q, want operations", req.Method)
+	}
+	var params map[string]any
+	_ = json.Unmarshal(req.Params, &params)
+	files, _ := params["files"].([]any)
+	if len(files) != 1 || files[0] != source {
+		t.Fatalf("files = %v", params["files"])
+	}
+}
