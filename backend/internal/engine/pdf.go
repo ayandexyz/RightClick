@@ -18,9 +18,7 @@ import (
 const maxPDFPages = 1000
 
 type PDF struct {
-	executable  string
-	runner      Runner
-	imageMagick *ImageMagick
+	runner Runner
 }
 
 func NewPDF(runner Runner) *PDF { return &PDF{runner: runner} }
@@ -28,14 +26,10 @@ func NewPDF(runner Runner) *PDF { return &PDF{runner: runner} }
 func (e *PDF) ID() string { return "pdf" }
 
 func (e *PDF) Available() (string, error) {
-	if e.executable != "" {
-		return e.executable, nil
-	}
 	path, err := exec.LookPath("pdftocairo")
 	if err != nil {
 		return "", fmt.Errorf("pdftocairo not found: %w", err)
 	}
-	e.executable = path
 	return path, nil
 }
 
@@ -66,14 +60,12 @@ func (e *PDF) ConvertMany(ctx context.Context, source string, sourceFormat forma
 		return nil, err
 	}
 
-	executable := e.executable
+	executable := "pdftocairo"
 	if e.runner == nil {
 		executable, err = e.Available()
 		if err != nil {
 			return nil, err
 		}
-	} else if executable == "" {
-		executable = "pdftocairo"
 	}
 
 	renderTarget := target
@@ -113,16 +105,14 @@ func (e *PDF) ConvertMany(ctx context.Context, source string, sourceFormat forma
 	}
 
 	defer removePDFOutputs(tempDir, ".png")
-	if e.imageMagick == nil {
-		e.imageMagick = NewImageMagick(e.runner)
-		if e.runner != nil {
-			e.imageMagick.executable = "magick"
-		}
+	imageMagick := NewImageMagick(e.runner)
+	if e.runner != nil {
+		imageMagick.executable = "magick"
 	}
 	outputs = make([]string, 0, len(pages))
 	for _, page := range pages {
 		destination := strings.TrimSuffix(page, ".png") + ".webp"
-		if err = e.imageMagick.Convert(ctx, page, formats.PNG, destination, formats.WebP, options); err != nil {
+		if err = imageMagick.Convert(ctx, page, formats.PNG, destination, formats.WebP, options); err != nil {
 			return nil, fmt.Errorf("convert rendered PNG to WebP: %w", err)
 		}
 		outputs = append(outputs, destination)
@@ -153,12 +143,25 @@ func validatePDFTempDir(path string) error {
 	if err := formats.ValidatePath(path); err != nil {
 		return fmt.Errorf("unsafe PDF temporary directory: %w", err)
 	}
-	info, err := os.Stat(path)
+	if !strings.HasPrefix(filepath.Base(path), ".file-converter-render-") {
+		return fmt.Errorf("uncontrolled PDF temporary directory")
+	}
+	info, err := os.Lstat(path)
 	if err != nil {
 		return fmt.Errorf("inspect PDF temporary directory: %w", err)
 	}
-	if !info.IsDir() {
-		return fmt.Errorf("PDF temporary path is not a directory")
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fmt.Errorf("PDF temporary path is not a real directory")
+	}
+	if info.Mode().Perm() != 0o700 {
+		return fmt.Errorf("PDF temporary directory is not private")
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return fmt.Errorf("read PDF temporary directory: %w", err)
+	}
+	if len(entries) != 0 {
+		return fmt.Errorf("PDF temporary directory is not empty")
 	}
 	return nil
 }

@@ -3,9 +3,12 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
+	"sync"
 	"testing"
 
 	"file-converter/backend/internal/formats"
@@ -70,7 +73,7 @@ func TestPDFConvertManyUsesExactArgumentsAndOrdersPages(t *testing.T) {
 	if err := os.WriteFile(source, []byte("%PDF-1.7\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	tempDir := filepath.Join(root, "render output; safe")
+	tempDir := filepath.Join(root, ".file-converter-render-output; safe")
 	if err := os.Mkdir(tempDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -171,16 +174,13 @@ func TestPDFConvertManyRendersPNGThenConvertsOrderedWebPPages(t *testing.T) {
 
 func TestPDFConvertManyRejectsEmptyOutputAndCleansRendererFilesOnError(t *testing.T) {
 	dir, source := pdfTestInput(t)
-	e := NewPDF(func(_ context.Context, _ string, args []string) error {
-		return os.WriteFile(args[len(args)-1]+"-1.png", []byte("partial"), 0o600)
-	})
 	// A runner error after creating a partial output must remove that output.
-	e.runner = func(_ context.Context, _ string, args []string) error {
+	e := NewPDF(func(_ context.Context, _ string, args []string) error {
 		if err := os.WriteFile(args[len(args)-1]+"-1.png", []byte("partial"), 0o600); err != nil {
 			return err
 		}
 		return errors.New("renderer failed")
-	}
+	})
 	if _, err := e.ConvertMany(context.Background(), source, formats.PDF, dir, formats.PNG, protocol.ImageOptions{}); err == nil {
 		t.Fatal("ConvertMany succeeded after renderer failure")
 	}
@@ -191,6 +191,140 @@ func TestPDFConvertManyRejectsEmptyOutputAndCleansRendererFilesOnError(t *testin
 	e.runner = func(context.Context, string, []string) error { return nil }
 	if _, err := e.ConvertMany(context.Background(), source, formats.PDF, dir, formats.PNG, protocol.ImageOptions{}); err == nil {
 		t.Fatal("ConvertMany accepted empty renderer output")
+	}
+}
+
+func TestPDFConvertManyRejectsUncontrolledSymlinkAndNonEmptyTempDirs(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "document.pdf")
+	if err := os.WriteFile(source, []byte("%PDF-1.7\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	controlled := filepath.Join(root, ".file-converter-render-owned")
+	if err := os.Mkdir(controlled, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	preexisting := filepath.Join(controlled, "page-1.png")
+	if err := os.WriteFile(preexisting, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	uncontrolled := filepath.Join(root, "render-owned")
+	if err := os.Mkdir(uncontrolled, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	insecure := filepath.Join(root, ".file-converter-render-insecure")
+	if err := os.Mkdir(insecure, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	realDir := filepath.Join(root, ".file-converter-render-real")
+	if err := os.Mkdir(realDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	symlink := filepath.Join(root, ".file-converter-render-link")
+	if err := os.Symlink(realDir, symlink); err != nil {
+		t.Fatal(err)
+	}
+
+	called := false
+	e := NewPDF(func(context.Context, string, []string) error {
+		called = true
+		return nil
+	})
+	for _, dir := range []string{uncontrolled, insecure, symlink, controlled} {
+		if _, err := e.ConvertMany(context.Background(), source, formats.PDF, dir, formats.PNG, protocol.ImageOptions{}); err == nil {
+			t.Errorf("ConvertMany accepted temporary directory %q", dir)
+		}
+	}
+	if called {
+		t.Fatal("runner called for rejected temporary directory")
+	}
+	contents, err := os.ReadFile(preexisting)
+	if err != nil || string(contents) != "keep" {
+		t.Fatalf("pre-existing page changed: contents=%q, err=%v", contents, err)
+	}
+}
+
+func TestPDFConvertManyEnforcesPageLimitAndCleansOutputs(t *testing.T) {
+	dir, source := pdfTestInput(t)
+	e := NewPDF(func(_ context.Context, _ string, args []string) error {
+		prefix := args[len(args)-1]
+		for page := 1; page <= maxPDFPages+1; page++ {
+			if err := os.WriteFile(fmt.Sprintf("%s-%d.png", prefix, page), nil, 0o600); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if _, err := e.ConvertMany(context.Background(), source, formats.PDF, dir, formats.PNG, protocol.ImageOptions{}); err == nil {
+		t.Fatal("ConvertMany accepted more than the maximum page count")
+	}
+	if matches, err := filepath.Glob(filepath.Join(dir, "page-*.png")); err != nil || len(matches) != 0 {
+		t.Fatalf("renderer outputs after page limit failure = %v, err=%v", matches, err)
+	}
+}
+
+func TestPDFConvertManyCleansWebPOutputsAfterMidSequenceFailure(t *testing.T) {
+	dir, source := pdfTestInput(t)
+	e := NewPDF(func(_ context.Context, executable string, args []string) error {
+		if executable == "pdftocairo" {
+			prefix := args[len(args)-1]
+			if err := os.WriteFile(prefix+"-1.png", []byte("1"), 0o600); err != nil {
+				return err
+			}
+			return os.WriteFile(prefix+"-2.png", []byte("2"), 0o600)
+		}
+		if strings.HasSuffix(args[len(args)-1], "page-2.webp") {
+			return errors.New("webp conversion failed")
+		}
+		destination := strings.TrimPrefix(args[len(args)-1], "webp:")
+		return os.WriteFile(destination, []byte("webp"), 0o600)
+	})
+	if _, err := e.ConvertMany(context.Background(), source, formats.PDF, dir, formats.WebP, protocol.ImageOptions{}); err == nil {
+		t.Fatal("ConvertMany succeeded after a mid-sequence WebP failure")
+	}
+	for _, pattern := range []string{"page-*.png", "page-*.webp"} {
+		if matches, err := filepath.Glob(filepath.Join(dir, pattern)); err != nil || len(matches) != 0 {
+			t.Fatalf("outputs matching %q after failure = %v, err=%v", pattern, matches, err)
+		}
+	}
+}
+
+func TestPDFConvertManyConcurrentCallsDoNotMutateEngineState(t *testing.T) {
+	root := t.TempDir()
+	e := NewPDF(func(_ context.Context, executable string, args []string) error {
+		if executable == "pdftocairo" {
+			return os.WriteFile(args[len(args)-1]+"-1.png", []byte("png"), 0o600)
+		}
+		destination := strings.TrimPrefix(args[len(args)-1], "webp:")
+		return os.WriteFile(destination, []byte("webp"), 0o600)
+	})
+	const conversions = 12
+	var wg sync.WaitGroup
+	errs := make(chan error, conversions)
+	for i := 0; i < conversions; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			dir := filepath.Join(root, fmt.Sprintf(".file-converter-render-%d", i))
+			if err := os.Mkdir(dir, 0o700); err != nil {
+				errs <- err
+				return
+			}
+			source := filepath.Join(root, fmt.Sprintf("document-%d.pdf", i))
+			if err := os.WriteFile(source, []byte("%PDF-1.7\n"), 0o600); err != nil {
+				errs <- err
+				return
+			}
+			_, err := e.ConvertMany(context.Background(), source, formats.PDF, dir, formats.WebP, protocol.ImageOptions{})
+			errs <- err
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -205,8 +339,12 @@ func containsArgument(arguments []string, want string) bool {
 
 func pdfTestInput(t *testing.T) (string, string) {
 	t.Helper()
-	dir := t.TempDir()
-	source := filepath.Join(dir, "document.pdf")
+	root := t.TempDir()
+	dir := filepath.Join(root, ".file-converter-render-test")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(root, "document.pdf")
 	if err := os.WriteFile(source, []byte("%PDF-1.7\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
