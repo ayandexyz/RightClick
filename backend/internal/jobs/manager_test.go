@@ -269,6 +269,51 @@ func TestManagerUsesSourceDirectoryWhenOutputDirIsEmpty(t *testing.T) {
 	}
 }
 
+func TestManagerCancelsDuringCommitAndPublishesNoOutputs(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "document.pdf")
+	if err := os.WriteFile(source, []byte("%PDF-1.7"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output := t.TempDir()
+	original := commitOutput
+	defer func() { commitOutput = original }()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	commitOutput = func(_ context.Context, plan engine.OutputPlan) error {
+		select {
+		case <-started:
+		default:
+			close(started)
+		}
+		<-release
+		_, err := plan.Commit()
+		return err
+	}
+	r := registry.New()
+	r.Register(&fakeMultiConverter{pages: 2})
+	m := NewManagerWithRegistry(r)
+	defer m.Close()
+	events := make(chan protocol.Event, 8)
+	id, err := m.Submit(SubmitRequest{Files: []string{source}, Preset: "pdf-to-png", OutputDir: output, Conflict: protocol.ConflictRename, Events: func(e protocol.Event) { events <- e }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	if err := m.Cancel(id); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	job := waitJob(t, events)
+	if job.State != "cancelled" || job.Files[0].State != "cancelled" || len(job.Files[0].Outputs) != 0 {
+		t.Fatalf("job = %+v", job)
+	}
+	entries, _ := os.ReadDir(output)
+	if len(entries) != 0 {
+		t.Fatalf("published outputs = %v", entries)
+	}
+}
+
 func TestManagerDoesNotPublishMultiPageOutputsAfterCancellation(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "document.pdf")
@@ -309,8 +354,15 @@ func TestManagerRollsBackCommittedPagesWhenLaterCommitFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	output := t.TempDir()
-	if err := os.Mkdir(filepath.Join(output, "document-2.png"), 0o700); err != nil {
-		t.Fatal(err)
+	originalCommit := commitOutput
+	defer func() { commitOutput = originalCommit }()
+	calls := 0
+	commitOutput = func(ctx context.Context, plan engine.OutputPlan) error {
+		calls++
+		if calls == 2 {
+			return fmt.Errorf("commit failure")
+		}
+		return originalCommit(ctx, plan)
 	}
 	r := registry.New()
 	r.Register(&fakeMultiConverter{pages: 2})
@@ -326,6 +378,48 @@ func TestManagerRollsBackCommittedPagesWhenLaterCommitFails(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(output, "document-1.png")); !os.IsNotExist(err) {
 		t.Fatalf("rolled back output exists: %v", err)
+	}
+}
+
+func TestManagerRestoresOverwrittenPagesWhenLaterCommitFails(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "document.pdf")
+	if err := os.WriteFile(source, []byte("%PDF-1.7"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output := t.TempDir()
+	originalPath := filepath.Join(output, "document-1.png")
+	if err := os.WriteFile(originalPath, []byte("original"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	originalCommit := commitOutput
+	defer func() { commitOutput = originalCommit }()
+	calls := 0
+	commitOutput = func(ctx context.Context, plan engine.OutputPlan) error {
+		calls++
+		if calls == 2 {
+			return fmt.Errorf("commit failure")
+		}
+		return originalCommit(ctx, plan)
+	}
+	r := registry.New()
+	r.Register(&fakeMultiConverter{pages: 2})
+	m := NewManagerWithRegistry(r)
+	defer m.Close()
+	events := make(chan protocol.Event, 8)
+	if _, err := m.Submit(SubmitRequest{Files: []string{source}, Preset: "pdf-to-png", OutputDir: output, Conflict: protocol.ConflictOverwrite, Events: func(e protocol.Event) { events <- e }}); err != nil {
+		t.Fatal(err)
+	}
+	job := waitJob(t, events)
+	if job.Files[0].State != "failed" || len(job.Files[0].Outputs) != 0 {
+		t.Fatalf("job = %+v", job)
+	}
+	data, err := os.ReadFile(originalPath)
+	if err != nil || string(data) != "original" {
+		t.Fatalf("original output = %q, err = %v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(output, "document-2.png")); !os.IsNotExist(err) {
+		t.Fatalf("later output exists: %v", err)
 	}
 }
 

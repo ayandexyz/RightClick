@@ -44,5 +44,17 @@ Changed in this review-fix commit: `backend/internal/jobs/manager.go`, `backend/
 - `go vet ./...` passed with no diagnostics.
 - `git diff --check` passed with no whitespace errors.
 
+## Task 2 approval fixes
+- Added a deterministic commit seam and post-commit cancellation check. If cancellation occurs while `Commit` is publishing, every page is rolled back and the file reports `cancelled` with no outputs.
+- Added overwrite backups retained by each output plan until the whole batch succeeds. Any later commit failure or cancellation removes new files and restores the originals.
+- Added deterministic tests for cancellation during commit and preservation of pre-existing overwrite destinations after a later page commit failure.
+
+## Approval-fix verification
+- `go test ./internal/jobs ./internal/engine ./internal/registry` passed.
+- `go test ./...` passed.
+- `go vet ./...` passed with no diagnostics.
+- `gofmt -l internal/jobs/manager.go internal/jobs/manager_test.go internal/engine/imagemagick.go` produced no output; files are formatted.
+- `git diff --check` passed with no whitespace errors.
+
 ## Remaining concerns
 - The actual PDF engine implementation remains intentionally deferred to the renderer task; Task 2 only covers safe multi-page job planning, validation, and publication.

@@ -199,6 +199,7 @@ func (e *ImageMagick) Convert(ctx context.Context, source string, sourceFormat f
 
 type OutputPlan struct {
 	Temp, Destination string
+	backup            string
 	skip              bool
 }
 
@@ -237,7 +238,9 @@ func planOutput(dir, source string, targetExt, suffix string, conflict protocol.
 	if filepath.Clean(destination) == filepath.Clean(source) {
 		return OutputPlan{}, fmt.Errorf("output would overwrite source")
 	}
+	existing := false
 	if _, err := os.Stat(destination); err == nil {
+		existing = true
 		switch conflict {
 		case "skip":
 			return OutputPlan{Destination: destination, skip: true}, nil
@@ -262,7 +265,30 @@ func planOutput(dir, source string, targetExt, suffix string, conflict protocol.
 	if err := tempFile.Close(); err != nil {
 		return OutputPlan{}, err
 	}
-	return OutputPlan{Temp: temp, Destination: destination}, nil
+	plan := OutputPlan{Temp: temp, Destination: destination}
+	if existing && conflict == protocol.ConflictOverwrite {
+		backup, err := os.CreateTemp(dir, ".file-converter-backup-*")
+		if err != nil {
+			_ = os.Remove(temp)
+			return OutputPlan{}, err
+		}
+		backupPath := backup.Name()
+		if err := backup.Close(); err != nil {
+			_ = os.Remove(temp)
+			_ = os.Remove(backupPath)
+			return OutputPlan{}, err
+		}
+		if err := os.Remove(backupPath); err != nil {
+			_ = os.Remove(temp)
+			return OutputPlan{}, err
+		}
+		if err := os.Rename(destination, backupPath); err != nil {
+			_ = os.Remove(temp)
+			return OutputPlan{}, err
+		}
+		plan.backup = backupPath
+	}
+	return plan, nil
 }
 func (p OutputPlan) Commit() (string, error) {
 	if p.skip {
@@ -281,6 +307,20 @@ func (p OutputPlan) Commit() (string, error) {
 func (p OutputPlan) RemoveTemp() {
 	if p.Temp != "" {
 		_ = os.Remove(p.Temp)
+	}
+}
+func (p OutputPlan) Rollback() {
+	p.RemoveTemp()
+	if p.Destination != "" {
+		_ = os.Remove(p.Destination)
+	}
+	if p.backup != "" {
+		_ = os.Rename(p.backup, p.Destination)
+	}
+}
+func (p OutputPlan) Finalize() {
+	if p.backup != "" {
+		_ = os.Remove(p.backup)
 	}
 }
 func (p OutputPlan) Skipped() bool { return p.skip }

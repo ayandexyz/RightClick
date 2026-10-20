@@ -22,6 +22,13 @@ type Converter interface {
 }
 
 var planOutputPath = engine.PlanOutputPath
+var commitOutput = func(ctx context.Context, plan engine.OutputPlan) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	_, err := plan.Commit()
+	return err
+}
 
 type Router interface {
 	Resolve(source, target formats.Format) (registry.Engine, error)
@@ -367,7 +374,7 @@ func (m *Manager) convertMany(j *job, index int, file protocol.FileJob, route re
 	plans := make([]engine.OutputPlan, len(pages))
 	removePlans := func() {
 		for _, plan := range plans {
-			plan.RemoveTemp()
+			plan.Rollback()
 		}
 	}
 	for i, page := range pages {
@@ -412,31 +419,30 @@ func (m *Manager) convertMany(j *job, index int, file protocol.FileJob, route re
 		file.State = "cancelled"
 		return fileResult{index: index, file: file}
 	}
-	committed := make([]string, 0, len(plans))
 	for _, plan := range plans {
 		if !plan.Skipped() {
+			if err := commitOutput(j.ctx, plan); err != nil {
+				removePlans()
+				file.Outputs = nil
+				if j.ctx.Err() != nil {
+					file.State = "cancelled"
+				} else {
+					file.State = "failed"
+					file.Error = &protocol.FileError{Code: "internal", Message: err.Error()}
+				}
+				return fileResult{index: index, file: file}
+			}
+			file.Outputs = append(file.Outputs, plan.Destination)
 			if j.ctx.Err() != nil {
 				removePlans()
-				for _, destination := range committed {
-					_ = os.Remove(destination)
-				}
 				file.Outputs = nil
 				file.State = "cancelled"
 				return fileResult{index: index, file: file}
 			}
-			if _, err := plan.Commit(); err != nil {
-				removePlans()
-				for _, destination := range committed {
-					_ = os.Remove(destination)
-				}
-				file.Outputs = nil
-				file.State = "failed"
-				file.Error = &protocol.FileError{Code: "internal", Message: err.Error()}
-				return fileResult{index: index, file: file}
-			}
-			committed = append(committed, plan.Destination)
-			file.Outputs = append(file.Outputs, plan.Destination)
 		}
+	}
+	for _, plan := range plans {
+		plan.Finalize()
 	}
 	if len(file.Outputs) == 0 {
 		file.State = "skipped"
