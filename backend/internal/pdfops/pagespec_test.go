@@ -1,69 +1,60 @@
 package pdfops
 
 import (
+	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 )
 
-func TestParsePages(t *testing.T) {
-	tests := []struct {
-		name      string
-		spec      string
-		pageCount int
-		want      []int
-		wantErr   string
-	}{
-		{name: "single page", spec: "1", pageCount: 3, want: []int{1}},
-		{name: "closed range", spec: "1-3", pageCount: 5, want: []int{1, 2, 3}},
-		{name: "open end", spec: "2-", pageCount: 4, want: []int{2, 3, 4}},
-		{name: "open start", spec: "-2", pageCount: 4, want: []int{1, 2}},
-		{name: "open start to end", spec: "-", pageCount: 3, want: []int{1, 2, 3}},
-		{name: "last page", spec: "z", pageCount: 4, want: []int{4}},
-		{name: "z is one page", spec: "z", pageCount: 1, want: []int{1}},
-		{name: "mixed", spec: "1-3,7,10-", pageCount: 12, want: []int{1, 2, 3, 7, 10, 11, 12}},
-		{name: "uppercase z", spec: "Z", pageCount: 4, want: []int{4}},
-		{name: "whitespace ignored", spec: " 1 - 3 , 7 ", pageCount: 8, want: []int{1, 2, 3, 7}},
-		{name: "overlap preserved", spec: "1-3,2-4", pageCount: 6, want: []int{1, 2, 3, 2, 3, 4}},
-		{name: "duplicates preserved", spec: "2,2,2", pageCount: 4, want: []int{2, 2, 2}},
-		{name: "order preserved", spec: "5,1,3", pageCount: 6, want: []int{5, 1, 3}},
-		{name: "last page of range", spec: "2-z", pageCount: 5, want: []int{2, 3, 4, 5}},
+// specCase is one shared page-spec vector. The Python Studio has its own parser
+// for the same grammar and runs against the same file, so the two cannot drift.
+type specCase struct {
+	Name      string `json:"name"`
+	Spec      string `json:"spec"`
+	PageCount int    `json:"page_count"`
+	Want      []int  `json:"want"`
+	Error     string `json:"error"`
+}
 
-		{name: "zero", spec: "0", pageCount: 3, wantErr: "0"},
-		{name: "zero in range", spec: "0-2", pageCount: 3, wantErr: "0"},
-		{name: "reversed range", spec: "5-3", pageCount: 8, wantErr: "5-3"},
-		{name: "garbage", spec: "abc", pageCount: 3, wantErr: "abc"},
-		{name: "bare comma", spec: ",", pageCount: 3, wantErr: "empty"},
-		{name: "double comma", spec: "1,,2", pageCount: 3, wantErr: "empty"},
-		{name: "trailing comma", spec: "1,", pageCount: 3, wantErr: "empty"},
-		{name: "out of range", spec: "9", pageCount: 3, wantErr: "9"},
-		{name: "out of range in range", spec: "3-9", pageCount: 5, wantErr: "9"},
-		{name: "empty spec", spec: "", pageCount: 3, wantErr: "empty"},
-		{name: "whitespace only", spec: "   ", pageCount: 3, wantErr: "empty"},
-		{name: "multiple hyphens", spec: "1-2-3", pageCount: 5, wantErr: "1-2-3"},
-		{name: "trailing hyphen number", spec: "1-2x", pageCount: 5, wantErr: "1-2x"},
-		{name: "too many pages", spec: "1-2000", pageCount: 0, wantErr: "1000"},
+func loadSpecCases(t *testing.T) []specCase {
+	t.Helper()
+	data, err := os.ReadFile("testdata/pagespec_cases.json")
+	if err != nil {
+		t.Fatalf("read shared page-spec cases: %v", err)
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got, err := ParsePages(tc.spec, tc.pageCount)
-			if tc.wantErr != "" {
+	var cases []specCase
+	if err := json.Unmarshal(data, &cases); err != nil {
+		t.Fatalf("parse shared page-spec cases: %v", err)
+	}
+	if len(cases) == 0 {
+		t.Fatal("shared page-spec cases file is empty")
+	}
+	return cases
+}
+
+func TestParsePages(t *testing.T) {
+	for _, tc := range loadSpecCases(t) {
+		t.Run(tc.Name, func(t *testing.T) {
+			got, err := ParsePages(tc.Spec, tc.PageCount)
+			if tc.Error != "" {
 				if err == nil {
-					t.Fatalf("ParsePages(%q) = %v, want error containing %q", tc.spec, got, tc.wantErr)
+					t.Fatalf("ParsePages(%q) = %v, want error containing %q", tc.Spec, got, tc.Error)
 				}
-				if !strings.Contains(err.Error(), tc.wantErr) {
-					t.Fatalf("ParsePages(%q) error = %q, want it to contain %q", tc.spec, err, tc.wantErr)
+				if !strings.Contains(err.Error(), tc.Error) {
+					t.Fatalf("ParsePages(%q) error = %q, want it to contain %q", tc.Spec, err, tc.Error)
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("ParsePages(%q) unexpected error: %v", tc.spec, err)
+				t.Fatalf("ParsePages(%q) unexpected error: %v", tc.Spec, err)
 			}
-			if len(got) != len(tc.want) {
-				t.Fatalf("ParsePages(%q) = %v, want %v", tc.spec, got, tc.want)
+			if len(got) != len(tc.Want) {
+				t.Fatalf("ParsePages(%q) = %v, want %v", tc.Spec, got, tc.Want)
 			}
 			for i := range got {
-				if got[i] != tc.want[i] {
-					t.Fatalf("ParsePages(%q) = %v, want %v", tc.spec, got, tc.want)
+				if got[i] != tc.Want[i] {
+					t.Fatalf("ParsePages(%q) = %v, want %v", tc.Spec, got, tc.Want)
 				}
 			}
 		})
