@@ -48,7 +48,17 @@ PDF inputs are rasterized with Poppler's `pdftocairo` at 150 DPI, and every page
 
 `pdftocairo` is required for all PDF conversions. ImageMagick is used only for `pdf-to-webp`, where the rendered PNG pages are converted to WebP; PNG and JPEG outputs come straight from `pdftocairo`. Converting to PDF, video, audio, or SVG is unsupported.
 
-Structural PDF operations (merge, extract, delete, rotate, reverse) are linked in from [pdfcpu](https://github.com/pdfcpu/pdfcpu), pinned at **v0.12.0**, so they need no external binary.
+Structural PDF operations (merge, extract, delete, rotate, reverse) are linked in from [pdfcpu](https://github.com/pdfcpu/pdfcpu), pinned at **v0.12.0**, so they need no external binary. They are reachable through the daemon's `operations` and `run_operation` methods and through `fcctl pdf`:
+
+| ID | Inputs | Params | Output name |
+| --- | --- | --- | --- |
+| `pdf-merge` | 2 or more | none | `merged.pdf` next to the first input or in `--output-dir` |
+| `pdf-extract` | 1 or more | `--pages` (required) | `<stem>-extracted.pdf` |
+| `pdf-delete` | 1 or more | `--pages` (required) | `<stem>-edited.pdf` |
+| `pdf-rotate` | 1 or more | `--angle 90\|180\|270` (required), `--pages` (optional) | `<stem>-rotated.pdf` |
+| `pdf-reverse` | 1 or more | none | `<stem>-reversed.pdf` |
+
+Page specifications use comma-separated items: `N`, `N-M`, `N-` (to the last page), `-M` (from page 1), or `z` (the last page). 1-based, whitespace ignored. Duplicates and overlaps are allowed. Encrypted PDFs fail with the file-level `password_required` error code until phase 4.
 
 ### Video conversions
 

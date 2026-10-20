@@ -650,3 +650,213 @@ func mustRead(t *testing.T, path string) []byte {
 	}
 	return data
 }
+
+func TestDaemonEndToEndPDFOperations(t *testing.T) {
+	if _, err := exec.LookPath("pdfinfo"); err != nil {
+		t.Skip("pdfinfo is not installed")
+	}
+	daemon, socket, stop := startDaemonForE2E(t)
+	defer stop()
+	conn, err := net.DialTimeout("unix", socket, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	stream := newE2EStream(conn)
+
+	if hello := request(t, stream, map[string]any{
+		"id": 1, "method": "hello", "params": map[string]any{"client": "e2e", "protocol": 1},
+	}); hello["error"] != nil {
+		t.Fatalf("hello: %#v", hello)
+	}
+
+	outDir := t.TempDir()
+	source := filepath.Join(outDir, "source.pdf")
+	if err := os.WriteFile(source, minimalOnePagePDF(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Build a 4-page fixture by merging the source with three copies of itself.
+	runJob(t, stream, map[string]any{
+		"op": "pdf-merge", "files": []string{source, source, source, source}, "output_dir": outDir,
+	})
+	fixture := filepath.Join(outDir, "merged.pdf")
+	if _, err := os.Stat(fixture); err != nil {
+		t.Fatalf("merged fixture missing: %v", err)
+	}
+
+	pdfinfoPageCount := func(path string) int {
+		out, err := exec.Command("pdfinfo", path).Output()
+		if err != nil {
+			t.Fatalf("pdfinfo %s: %v", path, err)
+		}
+		for _, line := range strings.Split(string(out), "\n") {
+			if strings.HasPrefix(line, "Pages:") {
+				n, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(line, "Pages:")))
+				if err != nil {
+					t.Fatal(err)
+				}
+				return n
+			}
+		}
+		t.Fatalf("pdfinfo %s: no Pages line\n%s", path, out)
+		return 0
+	}
+
+	assertPageCount := func(name string, params map[string]any, want int) {
+		t.Run(name, func(t *testing.T) {
+			output := runJob(t, stream, params)
+			if got := pdfinfoPageCount(output); got != want {
+				t.Fatalf("pages = %d, want %d", got, want)
+			}
+		})
+	}
+
+	assertPageCount("extract keeps two pages", map[string]any{
+		"op": "pdf-extract", "files": []string{fixture}, "output_dir": outDir, "params": map[string]any{"pages": "1-2"},
+	}, 2)
+	assertPageCount("delete removes the second page", map[string]any{
+		"op": "pdf-delete", "files": []string{fixture}, "output_dir": outDir, "params": map[string]any{"pages": "2"},
+	}, 3)
+	assertPageCount("rotate all pages", map[string]any{
+		"op": "pdf-rotate", "files": []string{fixture}, "output_dir": outDir, "params": map[string]any{"angle": 90},
+	}, 4)
+	assertPageCount("reverse keeps all four pages", map[string]any{
+		"op": "pdf-reverse", "files": []string{fixture}, "output_dir": outDir,
+	}, 4)
+	assertPageCount("merge of two fixtures", map[string]any{
+		"op": "pdf-merge", "files": []string{source, source}, "output_dir": outDir,
+	}, 2)
+
+	// Use the dedicated nudge from the daemon merge to verify operations is
+	// populated and merge is enabled for two PDFs.
+	ops := request(t, stream, map[string]any{
+		"id": 200, "method": "operations", "params": map[string]any{"files": []string{source, source}},
+	})
+	if ops["error"] != nil {
+		t.Fatalf("operations: %#v", ops)
+	}
+	result := ops["result"].(map[string]any)
+	operations := result["operations"].([]any)
+	var mergeEnabled bool
+	for _, entry := range operations {
+		row := entry.(map[string]any)
+		if row["id"] == "pdf-merge" && row["enabled"] == true {
+			mergeEnabled = true
+		}
+	}
+	if !mergeEnabled {
+		t.Fatalf("expected pdf-merge to be enabled: %#v", operations)
+	}
+
+	// Confirm the daemon is wired with pdfcpu (not failing over to defaults).
+	engines := request(t, stream, map[string]any{"id": 201, "method": "engines"})
+	enginesResult := engines["result"].(map[string]any)
+	engineList := enginesResult["engines"].([]any)
+	hasPDFCPU := false
+	for _, entry := range engineList {
+		if row, ok := entry.(map[string]any); ok && row["id"] == "pdfcpu" {
+			hasPDFCPU = true
+			if row["available"] != true {
+				t.Fatalf("pdfcpu unavailable: %#v", entry)
+			}
+		}
+	}
+	if !hasPDFCPU {
+		t.Fatalf("engines = %#v, want pdfcpu", engineList)
+	}
+	_ = daemon
+}
+
+func runJob(t *testing.T, stream *e2eStream, params map[string]any) string {
+	t.Helper()
+	ack := request(t, stream, map[string]any{"id": 50, "method": "run_operation", "params": params})
+	if ack["error"] != nil {
+		t.Fatalf("run_operation rejected: %#v", ack)
+	}
+	id, _ := ack["result"].(map[string]any)["job"].(string)
+	if id == "" {
+		t.Fatalf("missing job id: %#v", ack)
+	}
+	return waitForJobOutput(t, stream, id)
+}
+
+func waitForJobOutput(t *testing.T, stream *e2eStream, id string) string {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		message, err := stream.read(5 * time.Second)
+		if err != nil {
+			t.Fatalf("waiting for job.finished: %v", err)
+		}
+		event, _ := message["event"].(string)
+		if event != "job.finished" {
+			continue
+		}
+		data, _ := message["data"].(map[string]any)
+		if data["id"] != id {
+			continue
+		}
+		files, _ := data["files"].([]any)
+		if len(files) == 0 {
+			t.Fatalf("job has no files: %#v", data)
+		}
+		first := files[0].(map[string]any)
+		outputs, _ := first["outputs"].([]any)
+		if len(outputs) == 0 {
+			t.Fatalf("first file had no outputs: %#v", first)
+		}
+		return outputs[0].(string)
+	}
+	t.Fatal("timed out waiting for job.finished")
+	return ""
+}
+
+// minimalOnePagePDF returns a valid single-page PDF so pdfcpu can read it.
+// The e2e suite duplicates it by merging to build a multi-page fixture.
+func minimalOnePagePDF() []byte {
+	content := "BT /F1 18 Tf 20 100 Td (page) Tj ET"
+	objects := []string{
+		"<< /Type /Catalog /Pages 2 0 R >>",
+		"<< /Type /Pages /Kids [4 0 R] /Count 1 >>",
+		"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>",
+		"<< /Length " + strconv.Itoa(len(content)) + " >>\nstream\n" + content + "\nendstream",
+	}
+	var body strings.Builder
+	body.WriteString("%PDF-1.7\n")
+	offsets := make([]int, 0, len(objects))
+	for i, object := range objects {
+		offsets = append(offsets, body.Len())
+		fmt.Fprintf(&body, "%d 0 obj\n%s\nendobj\n", i+1, object)
+	}
+	xref := body.Len()
+	fmt.Fprintf(&body, "xref\n0 %d\n0000000000 65535 f \n", len(objects)+1)
+	for _, offset := range offsets {
+		fmt.Fprintf(&body, "%010d 00000 n \n", offset)
+	}
+	fmt.Fprintf(&body, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(objects)+1, xref)
+	return []byte(body.String())
+}
+
+func startDaemonForE2E(t *testing.T) (*exec.Cmd, string, func()) {
+	t.Helper()
+	runtimeDir := t.TempDir()
+	socket := filepath.Join(runtimeDir, "file-converter", "fcd.sock")
+	binary := filepath.Join(t.TempDir(), "fcd")
+	build := exec.Command("go", "build", "-o", binary, "./cmd/fcd")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build fcd: %v\n%s", err, output)
+	}
+	daemon := exec.Command(binary, "serve", "--idle-exit", "0")
+	daemon.Env = append(os.Environ(), "XDG_RUNTIME_DIR="+runtimeDir)
+	if err := daemon.Start(); err != nil {
+		t.Fatal(err)
+	}
+	stop := func() {
+		_ = daemon.Process.Kill()
+		_, _ = daemon.Process.Wait()
+	}
+	waitForSocket(t, socket)
+	return daemon, socket, stop
+}

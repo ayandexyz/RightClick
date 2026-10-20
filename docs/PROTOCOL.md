@@ -81,13 +81,35 @@ Image presets include `image-to-png`, `image-to-jpeg`, `image-to-webp`, `image-t
 
 SVG inputs have three dedicated presets: `svg-to-png`, `svg-to-jpeg`, and `svg-to-webp`. They require `rsvg-convert`; JPEG and WebP additionally require ImageMagick for the final conversion. Raster-to-SVG conversion is unsupported. SVG validation rejects external file, HTTP/HTTPS, data, and traversal-like resource references, as well as scripts and DTD/entity declarations.
 
-PDF inputs have three dedicated presets: `pdf-to-png`, `pdf-to-jpeg`, and `pdf-to-webp`. All three require `pdftocairo`, which renders every page at 150 DPI and writes one numbered output per page (`name-1.png`, `name-2.png`, …). Only `pdf-to-webp` additionally requires ImageMagick, used to convert the rendered PNG pages to WebP. PDF output, PDF-to-video, PDF-to-audio, and PDF-to-SVG conversion are unsupported, and page or page-range selection is not supported.
+PDF inputs have three dedicated presets: `pdf-to-png`, `pdf-to-jpeg`, and `pdf-to-webp`. All three require `pdftocairo`, which renders every page at 150 DPI and writes one numbered output per page (`name-1.png`, `name-2.png`, …). Only `pdf-to-webp` additionally requires ImageMagick, used to convert the rendered PNG pages to WebP. PDF output, PDF-to-video, PDF-to-audio, and PDF-to-SVG conversion are unsupported. Rasterizing always produces every page; to choose pages use the `pdf-extract` and `pdf-delete` operations below.
 
 Media presets are exactly five video outputs (`video-to-mp4`, `video-to-mov`, `video-to-webm`, `video-to-mkv`, `video-to-avi`) and twelve audio outputs (`audio-to-mp3`, `audio-to-wav`, `audio-to-flac`, `audio-to-aac`, `audio-to-m4a`, `audio-to-ogg`, `audio-to-opus`, `audio-to-aiff`, `audio-to-alac`, `audio-to-ac3`, `audio-to-amr`, and `audio-to-wma`). They require both the `ffmpeg` and `ffprobe` executables. The registry uses `ffprobe` stream contents for source classification; a source containing video is classified as video even when it also contains audio. Video inputs may be converted to audio with FFmpeg's `-vn` extraction option. Audio sources never advertise video targets, and audio-to-video conversion is rejected. If either media executable is unavailable, ImageMagick image targets remain available independently; missing ImageMagick likewise does not hide available FFmpeg media targets.
 → `{job: string}` (returned immediately; progress arrives as events)
 
 ### `cancel`
 `params: {job}` → `{}`
+
+### `operations`
+`params: {files: string[]}` → `{operations: Operation[]}` where each entry has `id, label, group, mode, enabled, reason?`. Lists the structural PDF tools (merge, extract, delete, rotate, reverse) applicable to a selection. A non-PDF selection returns an empty list rather than an error. An operation may be present but `enabled: false` with a `reason`, e.g. merge with one file reports `needs at least 2 files`, or all operations report `no PDF backend is available` if the daemon has none.
+
+### `run_operation`
+`params: {op, files, params?, output_dir?, on_conflict?}` → `{job: string}`. The job runs through the same lifecycle as conversions: `job.updated` events with progress, `job.finished` with the final state. `op` is one of `pdf-merge`, `pdf-extract`, `pdf-delete`, `pdf-rotate`, `pdf-reverse`. `params` is `{pages?: string, angle?: int}`. `pages` follows the spec grammar below; `angle` must be 90, 180 or 270.
+
+Operations:
+
+| ID | Inputs | Params | Output name |
+| --- | --- | --- | --- |
+| `pdf-merge` | 2 or more | none | `merged.pdf` next to the first input or in `output_dir` |
+| `pdf-extract` | 1 or more | `pages` (required) | `<stem>-extracted.pdf` |
+| `pdf-delete` | 1 or more | `pages` (required) | `<stem>-edited.pdf` |
+| `pdf-rotate` | 1 or more | `angle` (90/180/270, required), `pages` (optional, all pages if omitted) | `<stem>-rotated.pdf` |
+| `pdf-reverse` | 1 or more | none | `<stem>-reversed.pdf` |
+
+Merge yields one output for N inputs in the order given; the output path is reported on the first file entry, the remaining entries are `done` with no `outputs`. Every other operation produces one output per input file. Conflicts follow the same rules as `convert`: rename, skip, or overwrite, with `rename` as the default.
+
+The page spec is comma-separated items; each is `N`, `N-M`, `N-` (to the last page), `-M` (from page 1), or `z` (the last page). 1-based, whitespace ignored. Duplicates and overlaps are allowed. Out-of-range pages, reversed ranges (`5-3`), garbage, and an empty spec are errors. A selection expanding to more than the daemon's per-document page ceiling (1000) is also rejected. Examples: `1-3,7,10-`, `z`, `-2`.
+
+A `password_required` error code on a file job entry signals an encrypted PDF; passwords are not accepted in phase 1.
 
 ### `jobs`
 `params: {}` → `{jobs: [Job]}` (running and recent, for a tray or history view)
