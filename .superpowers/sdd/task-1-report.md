@@ -1,83 +1,46 @@
-# Task 1 Implementation Report: Media Formats and Protocol Presets
+# Task 1 implementation report
 
 ## Scope
 
-Implemented Task 1 only: added media format constants, preset mappings, media classification helpers, and protocol target presets. No conversion engine or unrelated backend behavior was changed.
-
-## Requirements addressed
-
-- Added `formats.Format` constants for:
-  - Video: `MP4`, `MOV`, `WebM`, `MKV`, `AVI`
-  - Audio: `MP3`, `WAV`, `FLAC`, `AAC`, `M4A`, `OGG`, `Opus`
-- Extended `formats.PresetFormat` with all required `video-to-*` and `audio-to-*` presets.
-- Added `IsVideoFormat`, `IsAudioFormat`, and `IsImageFormat` helpers.
-- Extended `protocol.SupportedPresets()` with the twelve media targets after the existing image targets.
-- Preserved existing image preset strings and ordering.
-- Did not add audio-to-video presets.
-- Added tests for every media preset, category/enabled/format fields, classification helpers, and the updated target ordering.
-
-## TDD evidence
-
-1. Added format and protocol tests before production implementation.
-2. Ran the focused tests and observed the expected failure:
-   - Media constants were undefined.
-   - Media presets were missing from `SupportedPresets()`.
-3. Added the minimal constants, classification switches, preset switch cases, and protocol table entries.
-4. Updated the existing `Targets` ordering assertions to include the newly required media targets.
-5. Re-ran the focused tests successfully.
-
-## Verification
-
-Focused command:
-
-```text
-cd backend && go test ./internal/formats ./internal/protocol
-```
-
-Result:
-
-```text
-ok   file-converter/backend/internal/formats
-ok   file-converter/backend/internal/protocol
-```
-
-Full backend test suite:
-
-```text
-cd backend && go test ./...
-```
-
-Result:
-
-```text
-ok   file-converter/backend
-ok   file-converter/backend/cmd/fcctl
-ok   file-converter/backend/cmd/fcd
-ok   file-converter/backend/internal/engine
-ok   file-converter/backend/internal/formats
-ok   file-converter/backend/internal/jobs
-ok   file-converter/backend/internal/protocol
-ok   file-converter/backend/internal/registry
-ok   file-converter/backend/internal/server
-ok   file-converter/backend/internal/transport
-```
-
-`git diff --check` also completed without whitespace errors.
+Implemented only Task 1 from the approved PDF rasterization plan: PDF input detection, PDF format classification, protocol PDF rasterization presets, and target filtering so the new presets are advertised only for PDF inputs.
 
 ## Files changed
 
-- `.superpowers/sdd/task-1-report.md`
 - `backend/internal/formats/images.go`
+  - Added `formats.PDF`.
+  - Added `IsPDFFormat`.
+  - Detects a `%PDF-` prefix after regular-file validation.
+  - Added `.pdf` to `FormatFromExtension` as an extension hint only.
+  - Added `pdf-to-png`, `pdf-to-jpeg`, and `pdf-to-webp` mappings to `PresetFormat`.
+  - Filters `pdf-to-*` targets to PDF inputs in `Targets`.
 - `backend/internal/formats/images_test.go`
+  - Added PDF signature and arbitrary `.pdf` content fixtures/cases.
+  - Verifies extension mapping, PDF/image classification, and all three preset mappings.
 - `backend/internal/protocol/validate.go`
+  - Added the three PDF targets after the SVG targets with exact labels, formats, image category, and enabled state.
 - `backend/internal/protocol/validate_test.go`
+  - Added exact `SupportedPresets` assertions for all three PDF targets.
+- `backend/internal/registry/registry.go`
+  - Ensures registry target discovery does not advertise PDF presets for non-PDF inputs, preserving existing image/media target behavior.
 
-## Concerns / follow-up
+The requested `engine/imagemagick.go` and `jobs/manager_test.go` did not require changes for Task 1: PDF-derived output uses existing raster output extensions, and existing generic `png`, `jpeg`, and `webp` aliases remain mapped to the generic image presets.
 
-- Media detection and conversion engine support remain outside Task 1. The new constants and presets provide the protocol and registry-facing format vocabulary for later staged tasks.
-- Registry target enumeration now includes all registered image and media formats, and uses the shared classification helpers when building its candidate list. Actual media engine availability and probing remain part of later staged tasks.
-- The registry regression test uses a capability-complete fake engine to prove media targets are reachable through the registry-backed targets path without changing the existing engine contract.
+## Test-first evidence
 
-## Follow-up correction
+- Added the format tests before implementation.
+- Focused test run initially failed at compile time because `PDF` and `IsPDFFormat` were not yet defined.
+- After implementation, a focused run exposed existing target-order expectations that needed PDF target filtering; the filtering was added and the focused tests passed.
 
-A verifier identified that the initial implementation left the registry's candidate list image-only. This was corrected in the follow-up commit by replacing the hard-coded image list with an ordered all-format list filtered through `IsImageFormat`, `IsVideoFormat`, and `IsAudioFormat`, plus a regression test for registry-backed media target discovery.
+## Verification
+
+Commands run from `backend/`:
+
+- `go test ./internal/formats ./internal/protocol` -> PASS
+- `go test ./...` -> PASS
+- `go vet ./...` -> PASS
+- `git diff --check` -> PASS
+
+## Concerns
+
+- PDF conversion execution itself is intentionally not implemented in Task 1. The new presets are protocol/format metadata only; the later rasterization task must add the PDF-capable engine route.
+- `.pdf` extension handling remains only a media-probing hint; malformed or arbitrary `.pdf` content is rejected by content detection.

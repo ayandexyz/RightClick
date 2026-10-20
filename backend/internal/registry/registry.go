@@ -68,6 +68,7 @@ func (r *Registry) TargetsForFiles(paths []string) ([]protocol.Target, error) {
 	var hasVideoSource bool
 	var hasImageSource bool
 	var hasSVGSource bool
+	var hasPDFSource bool
 	var hasNonSVGSource bool
 	for _, path := range paths {
 		source, err := formats.Detect(path)
@@ -87,6 +88,9 @@ func (r *Registry) TargetsForFiles(paths []string) ([]protocol.Target, error) {
 			hasSVGSource = true
 		} else {
 			hasNonSVGSource = true
+		}
+		if formats.IsPDFFormat(source) {
+			hasPDFSource = true
 		}
 		available := make(map[formats.Format]bool)
 		for _, target := range allSupportedFormats() {
@@ -113,6 +117,9 @@ func (r *Registry) TargetsForFiles(paths []string) ([]protocol.Target, error) {
 			continue
 		}
 		if !strings.HasPrefix(target.Preset, "svg-to-") && hasSVGSource && !hasNonSVGSource {
+			continue
+		}
+		if strings.HasPrefix(target.Preset, "pdf-to-") && !hasPDFSource {
 			continue
 		}
 		format, ok := formats.PresetFormat(target.Preset)

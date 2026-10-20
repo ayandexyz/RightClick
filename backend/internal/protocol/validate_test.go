@@ -264,6 +264,25 @@ func TestValidateRequest(t *testing.T) {
 	}
 }
 
+func TestSupportedPDFPresets(t *testing.T) {
+	want := map[string]Target{
+		"pdf-to-png":  {Preset: "pdf-to-png", Label: "PDF to PNG", Format: "png", Category: "image", Enabled: true},
+		"pdf-to-jpeg": {Preset: "pdf-to-jpeg", Label: "PDF to JPEG", Format: "jpeg", Category: "image", Enabled: true},
+		"pdf-to-webp": {Preset: "pdf-to-webp", Label: "PDF to WebP", Format: "webp", Category: "image", Enabled: true},
+	}
+	for _, target := range SupportedPresets() {
+		if expected, ok := want[target.Preset]; ok {
+			if target != expected {
+				t.Errorf("preset %q = %+v, want %+v", target.Preset, target, expected)
+			}
+			delete(want, target.Preset)
+		}
+	}
+	for preset := range want {
+		t.Errorf("SupportedPresets() missing %q", preset)
+	}
+}
+
 func TestSupportedSVGPresets(t *testing.T) {
 	want := map[string]Target{
 		"svg-to-png":  {Preset: "svg-to-png", Label: "SVG to PNG", Format: "png", Category: "image", Enabled: true},
