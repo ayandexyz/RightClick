@@ -264,6 +264,25 @@ func TestValidateRequest(t *testing.T) {
 	}
 }
 
+func TestSupportedSVGPresets(t *testing.T) {
+	want := map[string]Target{
+		"svg-to-png":  {Preset: "svg-to-png", Label: "SVG to PNG", Format: "png", Category: "image", Enabled: true},
+		"svg-to-jpeg": {Preset: "svg-to-jpeg", Label: "SVG to JPEG", Format: "jpeg", Category: "image", Enabled: true},
+		"svg-to-webp": {Preset: "svg-to-webp", Label: "SVG to WebP", Format: "webp", Category: "image", Enabled: true},
+	}
+	for _, target := range SupportedPresets() {
+		if expected, ok := want[target.Preset]; ok {
+			if target != expected {
+				t.Errorf("preset %q = %+v, want %+v", target.Preset, target, expected)
+			}
+			delete(want, target.Preset)
+		}
+	}
+	for preset := range want {
+		t.Errorf("SupportedPresets() missing %q", preset)
+	}
+}
+
 func TestSupportedMediaPresets(t *testing.T) {
 	wantCategories := map[string]string{
 		"video-to-mp4": "video", "video-to-mov": "video", "video-to-webm": "video",

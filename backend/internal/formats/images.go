@@ -1,7 +1,9 @@
 package formats
 
 import (
+	"bytes"
 	"encoding/binary"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
@@ -42,10 +44,13 @@ const (
 	AC3  Format = "ac3"
 	AMR  Format = "amr"
 	WMA  Format = "wma"
+	SVG  Format = "svg"
 )
 
 var ErrUnsupported = errors.New("unsupported image format")
 var ErrInvalidInput = errors.New("invalid input file")
+
+const detectPrefixLimit = 64 * 1024
 
 func ValidatePath(path string) error {
 	if !filepath.IsAbs(path) || unsafeInputBase(filepath.Base(path)) {
@@ -100,11 +105,12 @@ func Detect(path string) (Format, error) {
 		return "", err
 	}
 	defer f.Close()
-	header := make([]byte, 16)
-	n, err := io.ReadFull(f, header)
-	if err != nil && n == 0 {
+	prefix, err := io.ReadAll(io.LimitReader(f, detectPrefixLimit))
+	if err != nil {
 		return "", err
 	}
+	header := prefix
+	n := len(header)
 	if n >= 8 && string(header[:8]) == "\x89PNG\r\n\x1a\n" {
 		return PNG, nil
 	}
@@ -138,12 +144,42 @@ func Detect(path string) (Format, error) {
 			return ICO, nil
 		}
 	}
+	if format, ok := detectSVG(prefix); ok {
+		return format, nil
+	}
 	if n >= 12 && string(header[4:8]) == "ftyp" {
 		if format := brandInFTYP(path, binary.BigEndian.Uint32(header[:4])); format != "" {
 			return format, nil
 		}
 	}
 	return "", ErrUnsupported
+}
+
+func detectSVG(prefix []byte) (Format, bool) {
+	prefix = bytes.TrimPrefix(prefix, []byte{0xef, 0xbb, 0xbf})
+	decoder := xml.NewDecoder(bytes.NewReader(prefix))
+	depth := 0
+	for {
+		token, err := decoder.Token()
+		if err != nil {
+			return "", false
+		}
+		switch element := token.(type) {
+		case xml.StartElement:
+			if depth == 0 && element.Name.Local != "svg" {
+				return "", false
+			}
+			depth++
+		case xml.EndElement:
+			depth--
+			if depth == 0 {
+				if _, err := decoder.Token(); err == io.EOF {
+					return SVG, true
+				}
+				return "", false
+			}
+		}
+	}
 }
 
 func icoEntriesValid(f *os.File, count int, fileSize int64) bool {
@@ -236,6 +272,8 @@ func FormatFromExtension(path string) (Format, bool) {
 		return AMR, true
 	case ".wma":
 		return WMA, true
+	case ".svg":
+		return SVG, true
 	default:
 		return "", false
 	}
@@ -259,6 +297,10 @@ func IsAudioFormat(format Format) bool {
 	}
 }
 
+func IsSVGFormat(format Format) bool {
+	return format == SVG
+}
+
 func IsImageFormat(format Format) bool {
 	switch format {
 	case PNG, JPEG, WebP, JXL, AVIF, GIF, BMP, TIFF, ICO, HEIC:
@@ -270,11 +312,11 @@ func IsImageFormat(format Format) bool {
 
 func PresetFormat(preset string) (Format, bool) {
 	switch preset {
-	case "image-to-png":
+	case "image-to-png", "svg-to-png":
 		return PNG, true
-	case "image-to-jpeg":
+	case "image-to-jpeg", "svg-to-jpeg":
 		return JPEG, true
-	case "image-to-webp":
+	case "image-to-webp", "svg-to-webp":
 		return WebP, true
 	case "image-to-jxl":
 		return JXL, true
@@ -345,6 +387,9 @@ func Targets(paths []string) ([]protocol.Target, error) {
 	}
 	out := make([]protocol.Target, 0, len(protocol.SupportedPresets()))
 	for _, target := range protocol.SupportedPresets() {
+		if strings.HasPrefix(target.Preset, "svg-to-") && !inputFormats[SVG] {
+			continue
+		}
 		format, ok := PresetFormat(target.Preset)
 		if ok && !inputFormats[format] {
 			out = append(out, target)

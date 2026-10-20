@@ -184,6 +184,40 @@ func TestManagerRoutesVideoSourceToAudioOutputThroughAtomicLifecycle(t *testing.
 	}
 }
 
+func TestManagerAcceptsExplicitSVGPresets(t *testing.T) {
+	m := NewManager(&fakeConverter{})
+	defer m.Close()
+	_, err := m.Submit(SubmitRequest{Files: []string{imageFixture(t)}, Preset: "svg-to-png", OutputDir: t.TempDir(), Conflict: protocol.ConflictRename})
+	if err != nil {
+		t.Fatalf("explicit SVG preset rejected: %v", err)
+	}
+}
+
+func TestManagerRasterAliasesRemainRasterPresets(t *testing.T) {
+	for _, tc := range []struct {
+		alias string
+		want  string
+	}{
+		{"png", "image-to-png"},
+		{"jpeg", "image-to-jpeg"},
+		{"webp", "image-to-webp"},
+	} {
+		t.Run(tc.alias, func(t *testing.T) {
+			m := NewManager(&fakeConverter{})
+			defer m.Close()
+			events := make(chan protocol.Event, 16)
+			_, err := m.Submit(SubmitRequest{Files: []string{imageFixture(t)}, Preset: tc.alias, OutputDir: t.TempDir(), Conflict: protocol.ConflictRename, Events: func(e protocol.Event) { events <- e }})
+			if err != nil {
+				t.Fatal(err)
+			}
+			job := waitJob(t, events)
+			if job.Preset != tc.want {
+				t.Fatalf("job preset = %q, want %q", job.Preset, tc.want)
+			}
+		})
+	}
+}
+
 func TestManagerMediaAliasesUseCanonicalPresets(t *testing.T) {
 	cases := []struct {
 		alias string

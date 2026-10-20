@@ -3,6 +3,7 @@ package registry
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"file-converter/backend/internal/engine"
 	"file-converter/backend/internal/formats"
@@ -101,6 +102,9 @@ func (r *Registry) TargetsForFiles(paths []string) ([]protocol.Target, error) {
 	}
 	out := make([]protocol.Target, 0, len(common))
 	for _, target := range protocol.SupportedPresets() {
+		if strings.HasPrefix(target.Preset, "svg-to-") && !hasSVGSource(paths) {
+			continue
+		}
 		format, ok := formats.PresetFormat(target.Preset)
 		if target.Preset == "video-to-gif" && (!hasVideoSource || hasImageSource) {
 			continue
@@ -148,6 +152,15 @@ func (r *Registry) mediaSource(ctx context.Context, path string) (formats.Format
 		}
 	}
 	return "", formats.ErrUnsupported
+}
+
+func hasSVGSource(paths []string) bool {
+	for _, path := range paths {
+		if format, err := formats.Detect(path); err == nil && formats.IsSVGFormat(format) {
+			return true
+		}
+	}
+	return false
 }
 
 func allSupportedFormats() []formats.Format {

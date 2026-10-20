@@ -77,6 +77,60 @@ func TestDetectISOBrands(t *testing.T) {
 	}
 }
 
+func TestDetectRecognizesSVGContentIndependentOfExtension(t *testing.T) {
+	cases := []struct {
+		name string
+		data string
+	}{
+		{"plain root", `<svg xmlns="http://www.w3.org/2000/svg"/>`},
+		{"bom declaration comment", "\ufeff<?xml version=\"1.0\"?>\n<!-- comment -->\n<svg/>"},
+		{"extension mismatch", `<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "input.bin")
+			if err := os.WriteFile(path, []byte(tc.data), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			got, err := Detect(path)
+			if err != nil || got != SVG {
+				t.Fatalf("Detect() = %q, %v, want SVG", got, err)
+			}
+		})
+	}
+}
+
+func TestDetectRejectsMalformedSVG(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "input.svg")
+	if err := os.WriteFile(path, []byte(`<svg><rect></svg>`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Detect(path); err != ErrUnsupported {
+		t.Fatalf("Detect() error = %v, want ErrUnsupported", err)
+	}
+}
+
+func TestSVGFormatAndPresets(t *testing.T) {
+	if !IsSVGFormat(SVG) || IsImageFormat(SVG) {
+		t.Fatalf("SVG classification is incorrect")
+	}
+	for _, target := range []struct {
+		preset string
+		format Format
+	}{
+		{"svg-to-png", PNG},
+		{"svg-to-jpeg", JPEG},
+		{"svg-to-webp", WebP},
+	} {
+		if got, ok := PresetFormat(target.preset); !ok || got != target.format {
+			t.Errorf("PresetFormat(%q) = %q, %v; want %q, true", target.preset, got, ok, target.format)
+		}
+	}
+	if got, ok := FormatFromExtension("drawing.SVG"); !ok || got != SVG {
+		t.Fatalf("FormatFromExtension(svg) = %q, %v", got, ok)
+	}
+}
+
 func TestDetectRejectsUnsupportedAndRelative(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "file.png")
 	if err := os.WriteFile(path, []byte("not an image"), 0o600); err != nil {
