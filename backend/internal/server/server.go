@@ -170,6 +170,32 @@ func (s *Server) handle(conn net.Conn) {
 			if write(protocol.Response{ID: req.ID, Result: map[string]string{"job": id}}) != nil {
 				return
 			}
+		case "subscribe":
+			// Never let a slow subscriber stall a job: queue events and drop them when it falls behind.
+			queue := make(chan protocol.Event, 256)
+			stop := make(chan struct{})
+			go func() {
+				for {
+					select {
+					case event := <-queue:
+						if write(event) != nil {
+							return
+						}
+					case <-stop:
+						return
+					}
+				}
+			}()
+			unsubscribe := s.deps.Jobs.Subscribe(func(event protocol.Event) {
+				select {
+				case queue <- event:
+				default:
+				}
+			})
+			defer func() { unsubscribe(); close(stop) }()
+			if write(protocol.Response{ID: req.ID, Result: map[string]any{"subscribed": true}}) != nil {
+				return
+			}
 		case "cancel":
 			var p struct {
 				Job string `json:"job"`

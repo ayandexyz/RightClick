@@ -1,7 +1,6 @@
 import logging
 import os
 import sys
-import threading
 
 _here = os.path.dirname(__file__)
 if _here not in sys.path:
@@ -18,12 +17,14 @@ if os.environ.get("FC_DEBUG") == "1":
 SUPPORTED_MIME_TYPES = {"image/png", "image/jpeg", "image/webp"}
 
 try:
+    if __name__ == "__main__":
+        raise ImportError  # helper process: no Nautilus bindings needed
     import gi
     gi.require_version("GObject", "2.0")
     gi.require_version("Nautilus", "4.1")
     from gi.repository import GObject, Nautilus
 except ImportError:
-    GObject = object
+    GObject = None
     Nautilus = None
 
 
@@ -35,7 +36,7 @@ def _path(file_info):
     return path if path and os.path.isabs(path) else None
 
 
-class FileConverterMenuProvider(GObject.GObject, Nautilus.MenuProvider if Nautilus else object):
+class FileConverterMenuProvider(*((GObject.GObject, Nautilus.MenuProvider) if Nautilus else (object,))):
     def get_background_items(self, files):
         return []
 
@@ -53,7 +54,7 @@ class FileConverterMenuProvider(GObject.GObject, Nautilus.MenuProvider if Nautil
             targets = [target for target in FcClient(_socket_path()).targets(paths) if target.enabled]
         except DaemonUnavailable as exc:
             log.debug("fcd unavailable while building menu: %s", exc)
-            threading.Thread(target=_warm_daemon, daemon=True).start()
+            _spawn_helper("--warm")
             return []
         except FcError:
             log.exception("failed to build file converter menu")
@@ -71,7 +72,7 @@ class FileConverterMenuProvider(GObject.GObject, Nautilus.MenuProvider if Nautil
         return [top]
 
     def _activate(self, _item, paths, preset):
-        threading.Thread(target=self._convert, args=(paths, preset), daemon=True).start()
+        _spawn_helper("--convert", preset, *paths)
 
     @staticmethod
     def _convert(paths, preset):
@@ -86,6 +87,19 @@ class FileConverterMenuProvider(GObject.GObject, Nautilus.MenuProvider if Nautil
                 send("File Converter is not running", "Start it with: systemctl --user start fcd")
             else:
                 send("Conversion failed", str(exc))
+
+
+def _spawn_helper(*args):
+    # Python threads inside Nautilus only run while its main loop is busy (they stalled until F5),
+    # so the blocking work runs in a separate process. sys.executable is nautilus itself here.
+    from gi.repository import Gio, GLib
+    try:
+        Gio.Subprocess.new(
+            ["/usr/bin/env", "python3", os.path.abspath(__file__), *args],
+            Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_SILENCE,
+        )
+    except GLib.Error:
+        log.exception("unable to start file converter helper")
 
 
 def _socket_path():
@@ -121,3 +135,10 @@ def _notify_job(job):
     else:
         message = failed[0].get("error", {}).get("message", "Conversion failed") if failed else "Conversion failed"
         send("Conversion failed", message)
+
+
+if __name__ == "__main__":
+    if sys.argv[1:2] == ["--warm"]:
+        _warm_daemon()
+    elif sys.argv[1:2] == ["--convert"] and len(sys.argv) > 3:
+        FileConverterMenuProvider._convert(sys.argv[3:], sys.argv[2])

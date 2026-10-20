@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.ayan.file-converter",
+  "name": "File Converter Progress",
+  "version": "0.1.0",
+  "author": "Ayan De",
+  "license": "MIT",
+  "description": "Shows active file conversion progress in the Omarchy bar.",
+  "kinds": ["service", "bar-widget"],
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "File Converter Progress",
+    "category": "Utilities",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

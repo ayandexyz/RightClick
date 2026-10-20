@@ -40,6 +40,8 @@ func ValidateRequest(req Request) *Error {
 		code, msg = validateConvert(req.Params)
 	case "cancel":
 		code, msg = validateCancel(req.Params)
+	case "subscribe":
+		code, msg = validateEmptyParams(req.Params)
 	default:
 		code = "bad_request"
 		msg = fmt.Sprintf("unknown method: %s", req.Method)
@@ -123,6 +125,17 @@ func validateConvert(params json.RawMessage) (string, string) {
 		if p.OnConflict != "rename" && p.OnConflict != "skip" && p.OnConflict != "overwrite" {
 			return "bad_request", fmt.Sprintf("invalid on_conflict: %s (must be rename, skip, or overwrite)", p.OnConflict)
 		}
+	}
+	return "", ""
+}
+
+func validateEmptyParams(params json.RawMessage) (string, string) {
+	if len(params) == 0 || string(params) == "null" {
+		return "", ""
+	}
+	var value map[string]any
+	if err := json.Unmarshal(params, &value); err != nil {
+		return "bad_request", "invalid params"
 	}
 	return "", ""
 }

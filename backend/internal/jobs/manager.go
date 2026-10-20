@@ -31,14 +31,16 @@ type SubmitRequest struct {
 }
 
 type Manager struct {
-	router    Router
-	mu        sync.Mutex
-	next      atomic.Uint64
-	jobs      map[string]*job
-	queue     chan *job
-	done      chan struct{}
-	loopDone  chan struct{}
-	closeOnce sync.Once
+	router      Router
+	mu          sync.Mutex
+	subscribers map[uint64]func(protocol.Event)
+	next        atomic.Uint64
+	nextSub     atomic.Uint64
+	jobs        map[string]*job
+	queue       chan *job
+	done        chan struct{}
+	loopDone    chan struct{}
+	closeOnce   sync.Once
 }
 
 type job struct {
@@ -55,7 +57,7 @@ func NewManager(converter Converter) *Manager {
 }
 
 func NewManagerWithRegistry(router Router) *Manager {
-	m := &Manager{router: router, jobs: make(map[string]*job), queue: make(chan *job, 64), done: make(chan struct{}), loopDone: make(chan struct{})}
+	m := &Manager{router: router, jobs: make(map[string]*job), subscribers: make(map[uint64]func(protocol.Event)), queue: make(chan *job, 64), done: make(chan struct{}), loopDone: make(chan struct{})}
 	go m.loop()
 	return m
 }
@@ -123,6 +125,30 @@ func (m *Manager) Active() int {
 	return len(m.jobs)
 }
 
+func (m *Manager) Subscribe(events func(protocol.Event)) func() {
+	id := m.nextSub.Add(1)
+	m.mu.Lock()
+	m.subscribers[id] = events
+	m.mu.Unlock()
+	return func() {
+		m.mu.Lock()
+		delete(m.subscribers, id)
+		m.mu.Unlock()
+	}
+}
+
+func (m *Manager) broadcast(event protocol.Event) {
+	m.mu.Lock()
+	subscribers := make([]func(protocol.Event), 0, len(m.subscribers))
+	for _, subscriber := range m.subscribers {
+		subscribers = append(subscribers, subscriber)
+	}
+	m.mu.Unlock()
+	for _, subscriber := range subscribers {
+		subscriber(event)
+	}
+}
+
 func (m *Manager) loop() {
 	defer close(m.loopDone)
 	for {
@@ -143,6 +169,7 @@ func (m *Manager) loop() {
 }
 
 type eventEmitter struct {
+	manager   *Manager
 	job       *job
 	files     []protocol.FileJob
 	last      time.Time
@@ -151,9 +178,6 @@ type eventEmitter struct {
 }
 
 func (e *eventEmitter) emit(name string, force bool) {
-	if e.job.req.Events == nil {
-		return
-	}
 	now := time.Now()
 	if name == "job.updated" && !force && !e.last.IsZero() && now.Sub(e.last) < 100*time.Millisecond {
 		return
@@ -166,8 +190,15 @@ func (e *eventEmitter) emit(name string, force bool) {
 			done++
 		}
 	}
-	progress := float64(done) / float64(len(files))
-	e.job.req.Events(protocol.Event{Name: name, Data: protocol.Job{ID: e.job.id, Preset: e.job.req.Preset, Label: e.job.req.Preset, State: e.state, Progress: progress, Files: files}})
+	progress := 0.0
+	if len(files) > 0 {
+		progress = float64(done) / float64(len(files))
+	}
+	event := protocol.Event{Name: name, Data: protocol.Job{ID: e.job.id, Preset: e.job.req.Preset, Label: e.job.req.Preset, State: e.state, Progress: progress, Files: files}}
+	if e.job.req.Events != nil {
+		e.job.req.Events(event)
+	}
+	e.manager.broadcast(event)
 }
 
 type fileResult struct {
@@ -181,7 +212,7 @@ func (m *Manager) run(j *job) {
 	for i, source := range j.req.Files {
 		files[i] = protocol.FileJob{Source: source, State: "pending", Outputs: []string{}}
 	}
-	emitter := &eventEmitter{job: j, files: files, state: "queued"}
+	emitter := &eventEmitter{manager: m, job: j, files: files, state: "queued"}
 	emitter.emit("job.updated", true)
 	if j.ctx.Err() == nil {
 		emitter.state = "running"

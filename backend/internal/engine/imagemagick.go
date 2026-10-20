@@ -145,6 +145,11 @@ func (p OutputPlan) Commit() (string, error) {
 	if p.skip {
 		return "", nil
 	}
+	// A hard link makes the file appear as "created"; Nautilus ignores a rename from a hidden temp name until refresh.
+	if err := os.Link(p.Temp, p.Destination); err == nil {
+		_ = os.Remove(p.Temp)
+		return p.Destination, nil
+	}
 	if err := os.Rename(p.Temp, p.Destination); err != nil {
 		return "", err
 	}
