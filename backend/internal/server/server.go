@@ -12,6 +12,7 @@ import (
 
 	"file-converter/backend/internal/formats"
 	"file-converter/backend/internal/jobs"
+	"file-converter/backend/internal/menu"
 	"file-converter/backend/internal/protocol"
 	"file-converter/backend/internal/registry"
 )
@@ -21,6 +22,8 @@ type Dependencies struct {
 	Registry *registry.Registry
 	Engine   string
 	Version  string
+	// MenuPath overrides the menu policy file; empty uses menu.Path().
+	MenuPath string
 }
 
 type Server struct {
@@ -28,6 +31,7 @@ type Server struct {
 	active       atomic.Int64
 	lastActivity atomic.Int64
 	connections  sync.WaitGroup
+	menuMu       sync.Mutex
 }
 
 func New(deps Dependencies) *Server {
@@ -118,6 +122,7 @@ func (s *Server) handle(conn net.Conn) {
 		case "targets":
 			var p struct {
 				Files []string `json:"files"`
+				Menu  bool     `json:"menu"`
 			}
 			if json.Unmarshal(req.Params, &p) != nil {
 				if writeError(write, req.ID, "bad_request", "invalid targets params") != nil {
@@ -127,7 +132,9 @@ func (s *Server) handle(conn net.Conn) {
 			}
 			var targets []protocol.Target
 			var err error
-			if s.deps.Registry != nil {
+			if s.deps.Registry != nil && p.Menu {
+				targets, err = s.deps.Registry.MenuTargetsForFiles(p.Files, s.loadMenuPolicy())
+			} else if s.deps.Registry != nil {
 				targets, err = s.deps.Registry.TargetsForFiles(p.Files)
 			} else {
 				targets, err = formats.Targets(p.Files)
@@ -139,6 +146,17 @@ func (s *Server) handle(conn net.Conn) {
 				continue
 			}
 			if write(protocol.Response{ID: req.ID, Result: map[string]any{"files_supported": len(targets) > 0, "targets": targets}}) != nil {
+				return
+			}
+		case "menu":
+			result, code, msg := s.handleMenu(req.Params)
+			if code != "" {
+				if writeError(write, req.ID, code, msg) != nil {
+					return
+				}
+				continue
+			}
+			if write(protocol.Response{ID: req.ID, Result: result}) != nil {
 				return
 			}
 		case "convert":
@@ -229,4 +247,72 @@ func (s *Server) engineStatus() []protocol.EngineStatus {
 		return s.deps.Registry.Status()
 	}
 	return []protocol.EngineStatus{{ID: "imagemagick", Available: s.deps.Engine != ""}}
+}
+
+func (s *Server) menuPath() (string, error) {
+	if s.deps.MenuPath != "" {
+		return s.deps.MenuPath, nil
+	}
+	return menu.Path()
+}
+
+// loadMenuPolicy never fails: an unreadable or corrupt policy file falls back
+// to the defaults so the file-manager menu keeps working.
+func (s *Server) loadMenuPolicy() menu.Policy {
+	path, err := s.menuPath()
+	if err != nil {
+		return menu.Policy{}
+	}
+	s.menuMu.Lock()
+	defer s.menuMu.Unlock()
+	policy, err := menu.Load(path)
+	if err != nil {
+		return menu.Policy{}
+	}
+	return policy
+}
+
+func (s *Server) handleMenu(params json.RawMessage) (map[string]any, string, string) {
+	var p struct {
+		Action   string   `json:"action"`
+		Category string   `json:"category"`
+		Formats  []string `json:"formats"`
+	}
+	if json.Unmarshal(params, &p) != nil {
+		return nil, "bad_request", "invalid menu params"
+	}
+	path, err := s.menuPath()
+	if err != nil {
+		return nil, "internal", err.Error()
+	}
+	s.menuMu.Lock()
+	defer s.menuMu.Unlock()
+	policy, err := menu.Load(path)
+	if err != nil {
+		if p.Action == "show" {
+			return nil, "internal", err.Error()
+		}
+		// A corrupt file is replaced by the edit rather than blocking it.
+		policy = menu.Policy{}
+	}
+	if p.Action != "show" {
+		if p.Action == "set" {
+			policy, err = policy.Set(p.Category, p.Formats)
+		} else {
+			policy, err = policy.Reset(p.Category)
+		}
+		if err != nil {
+			return nil, "bad_request", err.Error()
+		}
+		if err := menu.Save(path, policy); err != nil {
+			return nil, "internal", err.Error()
+		}
+	}
+	custom := []string{}
+	for _, category := range menu.Categories {
+		if len(policy[category]) > 0 {
+			custom = append(custom, category)
+		}
+	}
+	return map[string]any{"path": path, "menu": policy.Effective(), "custom": custom}, "", ""
 }

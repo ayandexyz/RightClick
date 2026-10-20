@@ -11,6 +11,7 @@ import (
 
 	"file-converter/backend/internal/engine"
 	"file-converter/backend/internal/formats"
+	"file-converter/backend/internal/menu"
 	"file-converter/backend/internal/protocol"
 )
 
@@ -541,5 +542,34 @@ func TestStatusReportsAvailabilityAndReasonPerEngine(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Status() = %#v, want %#v", got, want)
+	}
+}
+
+func TestMenuTargetsForFilesAppliesPolicy(t *testing.T) {
+	png := filepath.Join(t.TempDir(), "photo.png")
+	if err := os.WriteFile(png, []byte("\x89PNG\r\n\x1a\nfixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := New()
+	r.Register(allImageEngine{})
+
+	all, err := r.TargetsForFiles([]string{png})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := menu.Policy{"image": {"webp", "avif"}}
+	got, err := r.MenuTargetsForFiles([]string{png}, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var formatsOut []string
+	for _, target := range got {
+		formatsOut = append(formatsOut, target.Format)
+	}
+	if want := []string{"webp", "avif"}; !reflect.DeepEqual(formatsOut, want) {
+		t.Fatalf("menu formats = %v, want %v", formatsOut, want)
+	}
+	if len(all) <= len(got) {
+		t.Fatalf("menu targets (%d) should be a subset of all targets (%d)", len(got), len(all))
 	}
 }

@@ -30,9 +30,25 @@ Read-only engine diagnostics. Missing optional engines are reported here, never 
 
 `fcctl engines [--json]` prints one line per engine.
 
+### `menu`
+Reads or edits which targets file-manager menus offer. The policy is stored in `$XDG_CONFIG_HOME/file-converter/menu.toml` (fallback `~/.config/file-converter/menu.toml`), one array of target formats per source category:
+
+```toml
+video = ["mp4", "webm"]
+```
+
+Categories: `image`, `video`, `audio`, `pdf`, `document`, `presentation`, `spreadsheet` (SVG counts as `image`). Defaults: image `jpeg png webp`, video `mp4 mov webm gif`, audio `mp3 m4a wav`, pdf `png jpeg webp`, document/presentation/spreadsheet `pdf`. An empty list, or one with no reachable target, falls back to the defaults, so a menu never disappears; a corrupt file is treated as all-defaults for `targets`. Unknown categories and formats in the file are ignored.
+
+`params: {action: "show"}` | `{action: "set", category, formats: [string]}` | `{action: "reset", category?}` (no category resets all)
+→ `{path, menu: {category: [format]}, custom: [category]}` — `menu` is the effective policy, `custom` the categories that differ from the defaults. `set` rejects unknown categories and formats with `bad_request`.
+
+`fcctl menu show`, `fcctl menu set CATEGORY FORMAT...`, `fcctl menu reset [CATEGORY]`, `fcctl targets FILE... --menu`.
+
 ### `targets`
 What can these files become? This drives the donut / menu.
-`params: {files: [path]}` → `{files_supported: bool, targets: [Target]}`
+`params: {files: [path], menu?: bool}` → `{files_supported: bool, targets: [Target]}`
+
+With `menu: true` the reachable targets are narrowed to the user's menu policy (see `menu`), in policy order; mixed selections offer the union of their categories' lists over the targets reachable for every file. Without it, every reachable target is returned.
 
 ```
 Target = {

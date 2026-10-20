@@ -7,6 +7,7 @@ import (
 
 	"file-converter/backend/internal/engine"
 	"file-converter/backend/internal/formats"
+	"file-converter/backend/internal/menu"
 	"file-converter/backend/internal/protocol"
 )
 
@@ -82,9 +83,26 @@ func (r *Registry) Resolve(source, target formats.Format) (Engine, error) {
 }
 
 func (r *Registry) TargetsForFiles(paths []string) ([]protocol.Target, error) {
-	if len(paths) == 0 {
-		return nil, fmt.Errorf("files list cannot be empty")
+	targets, _, err := r.targetsAndCategories(paths)
+	return targets, err
+}
+
+// MenuTargetsForFiles returns the reachable targets narrowed to what the menu
+// policy offers for the selection's source categories.
+func (r *Registry) MenuTargetsForFiles(paths []string, policy menu.Policy) ([]protocol.Target, error) {
+	targets, categories, err := r.targetsAndCategories(paths)
+	if err != nil {
+		return nil, err
 	}
+	return policy.TargetsForSource(categories, targets), nil
+}
+
+func (r *Registry) targetsAndCategories(paths []string) ([]protocol.Target, []string, error) {
+	if len(paths) == 0 {
+		return nil, nil, fmt.Errorf("files list cannot be empty")
+	}
+	var categories []string
+	seenCategory := map[string]bool{}
 	var common map[formats.Format]bool
 	var hasVideoSource bool
 	var hasImageSource bool
@@ -97,8 +115,12 @@ func (r *Registry) TargetsForFiles(paths []string) ([]protocol.Target, error) {
 		if err != nil {
 			source, err = r.mediaSource(context.Background(), path)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
+		}
+		if category := menu.Category(source); category != "" && !seenCategory[category] {
+			seenCategory[category] = true
+			categories = append(categories, category)
 		}
 		if formats.IsVideoFormat(source) {
 			hasVideoSource = true
@@ -171,7 +193,7 @@ func (r *Registry) TargetsForFiles(paths []string) ([]protocol.Target, error) {
 			out = append(out, target)
 		}
 	}
-	return out, nil
+	return out, categories, nil
 }
 
 type MediaProber interface {

@@ -423,3 +423,88 @@ func TestServerEnginesReportsStatusWithReason(t *testing.T) {
 		t.Fatalf("available engine should report empty reason: %#v", entry)
 	}
 }
+
+func startMenuServer(t *testing.T, menuPath string) (net.Conn, func()) {
+	t.Helper()
+	reg := registry.New()
+	reg.Register(&testEngine{})
+	listener, err := net.Listen("unix", filepath.Join(t.TempDir(), "fcd.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := jobs.NewManagerWithRegistry(reg)
+	srv := New(Dependencies{Jobs: manager, Registry: reg, Version: "test", MenuPath: menuPath})
+	done := make(chan struct{})
+	go func() { _ = srv.Serve(listener); close(done) }()
+	conn, err := net.Dial("unix", listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return conn, func() { _ = conn.Close(); _ = listener.Close(); <-done; manager.Close() }
+}
+
+func TestServerMenuSetShowResetAndMenuTargets(t *testing.T) {
+	menuPath := filepath.Join(t.TempDir(), "cfg", "menu.toml")
+	conn, cleanup := startMenuServer(t, menuPath)
+	defer cleanup()
+	input := imageFixture(t)
+
+	full := sendRequest(t, conn, protocol.Request{ID: 1, Method: "targets", Params: mustJSON(map[string]any{"files": []string{input}})})
+	fullCount := len(full["result"].(map[string]any)["targets"].([]any))
+
+	set := sendRequest(t, conn, protocol.Request{ID: 2, Method: "menu", Params: mustJSON(map[string]any{"action": "set", "category": "image", "formats": []string{"webp"}})})
+	if set["error"] != nil {
+		t.Fatalf("set: %#v", set)
+	}
+	if _, err := os.Stat(menuPath); err != nil {
+		t.Fatalf("policy not saved: %v", err)
+	}
+
+	menuTargets := sendRequest(t, conn, protocol.Request{ID: 3, Method: "targets", Params: mustJSON(map[string]any{"files": []string{input}, "menu": true})})
+	list := menuTargets["result"].(map[string]any)["targets"].([]any)
+	if len(list) != 1 || list[0].(map[string]any)["format"] != "webp" {
+		t.Fatalf("menu targets: %#v", list)
+	}
+	unfiltered := sendRequest(t, conn, protocol.Request{ID: 4, Method: "targets", Params: mustJSON(map[string]any{"files": []string{input}})})
+	if got := len(unfiltered["result"].(map[string]any)["targets"].([]any)); got != fullCount {
+		t.Fatalf("targets without menu changed: %d != %d", got, fullCount)
+	}
+
+	show := sendRequest(t, conn, protocol.Request{ID: 5, Method: "menu", Params: mustJSON(map[string]any{"action": "show"})})
+	result := show["result"].(map[string]any)
+	if result["path"] != menuPath {
+		t.Fatalf("show: %#v", result)
+	}
+	if got := result["menu"].(map[string]any)["image"].([]any); len(got) != 1 || got[0] != "webp" {
+		t.Fatalf("show image: %#v", got)
+	}
+
+	reset := sendRequest(t, conn, protocol.Request{ID: 6, Method: "menu", Params: mustJSON(map[string]any{"action": "reset"})})
+	if reset["error"] != nil {
+		t.Fatalf("reset: %#v", reset)
+	}
+	after := sendRequest(t, conn, protocol.Request{ID: 7, Method: "menu", Params: mustJSON(map[string]any{"action": "show"})})
+	if got := after["result"].(map[string]any)["menu"].(map[string]any)["image"].([]any); len(got) != 3 {
+		t.Fatalf("image not back to defaults: %#v", got)
+	}
+}
+
+func TestServerMenuSetRejectsUnknownFormatAndCorruptFileFallsBack(t *testing.T) {
+	menuPath := filepath.Join(t.TempDir(), "menu.toml")
+	if err := os.WriteFile(menuPath, []byte("image = nonsense\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	conn, cleanup := startMenuServer(t, menuPath)
+	defer cleanup()
+	input := imageFixture(t)
+
+	// A corrupt policy must never break the menu: serve defaults.
+	resp := sendRequest(t, conn, protocol.Request{ID: 1, Method: "targets", Params: mustJSON(map[string]any{"files": []string{input}, "menu": true})})
+	if resp["error"] != nil {
+		t.Fatalf("corrupt policy broke targets: %#v", resp)
+	}
+	bad := sendRequest(t, conn, protocol.Request{ID: 2, Method: "menu", Params: mustJSON(map[string]any{"action": "set", "category": "image", "formats": []string{"hologram"}})})
+	if errValue, ok := bad["error"].(map[string]any); !ok || errValue["code"] != "bad_request" {
+		t.Fatalf("unknown format: %#v", bad)
+	}
+}

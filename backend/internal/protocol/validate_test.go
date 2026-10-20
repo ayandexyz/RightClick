@@ -387,3 +387,35 @@ func TestValidateEnginesAcceptsEmptyAndNullParams(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateTargetsAcceptsMenuFlag(t *testing.T) {
+	params := json.RawMessage(`{"files":["/tmp/a.png"],"menu":true}`)
+	if err := ValidateRequest(Request{ID: 1, Method: "targets", Params: params}); err != nil {
+		t.Fatalf("rejected: %+v", err)
+	}
+}
+
+func TestValidateMenuRequests(t *testing.T) {
+	cases := map[string]bool{
+		`{"action":"show"}`: true,
+		`{"action":"set","category":"video","formats":["mp4"]}`: true,
+		`{"action":"set","category":"video","formats":[]}`:      true,
+		`{"action":"reset"}`:                    true,
+		`{"action":"reset","category":"audio"}`: true,
+		`{}`:                                    false,
+		`{"action":"explode"}`:                  false,
+		`{"action":"set","formats":["mp4"]}`:    false,
+		`{"action":"set","category":"video"}`:   false,
+		`{"action":"show","category":"video","formats":["mp4"]}`: false,
+		`{"action":"reset","formats":["mp4"]}`:                   false,
+	}
+	for params, ok := range cases {
+		err := ValidateRequest(Request{ID: 1, Method: "menu", Params: json.RawMessage(params)})
+		if ok && err != nil {
+			t.Errorf("%s rejected: %+v", params, err)
+		}
+		if !ok && err == nil {
+			t.Errorf("%s accepted", params)
+		}
+	}
+}

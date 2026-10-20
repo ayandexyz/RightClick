@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -26,6 +27,9 @@ type command struct {
 	background string
 	job        string
 	jsonOutput bool
+	menu       bool
+	menuAction string
+	menuArgs   []string
 }
 
 type wireEvent struct {
@@ -162,6 +166,8 @@ func parseArgs(args []string) (command, error) {
 				return command{}, err
 			}
 			cmd.background, i = value, next
+		case "--menu":
+			cmd.menu = true
 		case "--on-conflict":
 			value, next, err := optionValue(args, i)
 			if err != nil {
@@ -173,6 +179,12 @@ func parseArgs(args []string) (command, error) {
 				return command{}, fmt.Errorf("unknown option: %s", args[i])
 			}
 			switch cmd.name {
+			case "menu":
+				if cmd.menuAction == "" {
+					cmd.menuAction = args[i]
+				} else {
+					cmd.menuArgs = append(cmd.menuArgs, args[i])
+				}
 			case "cancel":
 				cmd.job = args[i]
 			default:
@@ -180,7 +192,7 @@ func parseArgs(args []string) (command, error) {
 			}
 		}
 	}
-	if cmd.name != "hello" && cmd.name != "engines" && cmd.name != "targets" && cmd.name != "convert" && cmd.name != "cancel" {
+	if cmd.name != "hello" && cmd.name != "engines" && cmd.name != "menu" && cmd.name != "targets" && cmd.name != "convert" && cmd.name != "cancel" {
 		return command{}, fmt.Errorf("unknown command: %s", cmd.name)
 	}
 	if cmd.name == "targets" || cmd.name == "convert" {
@@ -190,6 +202,14 @@ func parseArgs(args []string) (command, error) {
 	}
 	if cmd.name == "convert" && cmd.preset == "" {
 		return command{}, fmt.Errorf("--to or --preset is required")
+	}
+	if cmd.name == "menu" {
+		if err := validateMenuArgs(cmd); err != nil {
+			return command{}, err
+		}
+	}
+	if cmd.menu && cmd.name != "targets" {
+		return command{}, fmt.Errorf("--menu requires targets")
 	}
 	if (cmd.name == "hello" || cmd.name == "engines") && len(cmd.files) > 0 {
 		return command{}, fmt.Errorf("%s does not accept files", cmd.name)
@@ -201,6 +221,26 @@ func parseArgs(args []string) (command, error) {
 		return command{}, fmt.Errorf("conversion options require convert")
 	}
 	return cmd, nil
+}
+
+func validateMenuArgs(cmd command) error {
+	switch cmd.menuAction {
+	case "show":
+		if len(cmd.menuArgs) != 0 {
+			return fmt.Errorf("menu show takes no arguments")
+		}
+	case "set":
+		if len(cmd.menuArgs) < 2 {
+			return fmt.Errorf("menu set requires a category and at least one format")
+		}
+	case "reset":
+		if len(cmd.menuArgs) > 1 {
+			return fmt.Errorf("menu reset takes at most one category")
+		}
+	default:
+		return fmt.Errorf("menu requires show, set or reset")
+	}
+	return nil
 }
 
 func optionValue(args []string, index int) (string, int, error) {
@@ -244,7 +284,22 @@ func commandRequest(cmd command) protocol.Request {
 	case "engines":
 		return protocol.Request{ID: 1, Method: "engines", Params: raw(map[string]any{})}
 	case "targets":
-		return protocol.Request{ID: 1, Method: "targets", Params: raw(map[string]any{"files": cmd.files})}
+		params := map[string]any{"files": cmd.files}
+		if cmd.menu {
+			params["menu"] = true
+		}
+		return protocol.Request{ID: 1, Method: "targets", Params: raw(params)}
+	case "menu":
+		params := map[string]any{"action": cmd.menuAction}
+		switch cmd.menuAction {
+		case "set":
+			params["category"], params["formats"] = cmd.menuArgs[0], cmd.menuArgs[1:]
+		case "reset":
+			if len(cmd.menuArgs) == 1 {
+				params["category"] = cmd.menuArgs[0]
+			}
+		}
+		return protocol.Request{ID: 1, Method: "menu", Params: raw(params)}
 	case "cancel":
 		return protocol.Request{ID: 1, Method: "cancel", Params: raw(map[string]any{"job": cmd.job})}
 	default:
@@ -285,12 +340,46 @@ func formatHuman(value map[string]any) string {
 		if job, ok := result["job"].(string); ok {
 			return "job " + job + " submitted"
 		}
+		if menuValue, ok := result["menu"].(map[string]any); ok {
+			return formatMenu(result, menuValue)
+		}
 		if engines, ok := result["engines"].([]any); ok && result["server"] == nil {
 			return formatEngines(engines)
 		}
 		return fmt.Sprintf("result: %v", result)
 	}
 	return fmt.Sprintf("%v", value)
+}
+
+func formatMenu(result, menuValue map[string]any) string {
+	custom := map[string]bool{}
+	if list, ok := result["custom"].([]any); ok {
+		for _, c := range list {
+			if name, ok := c.(string); ok {
+				custom[name] = true
+			}
+		}
+	}
+	lines := []string{fmt.Sprintf("menu policy: %v", result["path"])}
+	names := make([]string, 0, len(menuValue))
+	for name := range menuValue {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		var items []string
+		if list, ok := menuValue[name].([]any); ok {
+			for _, item := range list {
+				items = append(items, fmt.Sprint(item))
+			}
+		}
+		line := fmt.Sprintf("%s: %s", name, strings.Join(items, ", "))
+		if custom[name] {
+			line += " (custom)"
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func formatEngines(engines []any) string {
@@ -327,6 +416,6 @@ func formatHumanEvent(message wireEvent) string {
 
 func raw(value any) json.RawMessage { data, _ := json.Marshal(value); return data }
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: fcctl hello | engines [--json] | targets FILE... [--json] | convert FILE... (--to png|jpeg|webp|jxl|avif|gif|bmp|tiff|ico|heic | --preset PRESET) [--quality 1-100] [--max-size PX] [--background COLOR] [--output-dir DIR] [--on-conflict POLICY] [--json] | cancel JOB [--json]")
+	fmt.Fprintln(os.Stderr, "usage: fcctl hello | engines [--json] | targets FILE... [--menu] [--json] | menu show | menu set CATEGORY FORMAT... | menu reset [CATEGORY] | convert FILE... (--to png|jpeg|webp|jxl|avif|gif|bmp|tiff|ico|heic | --preset PRESET) [--quality 1-100] [--max-size PX] [--background COLOR] [--output-dir DIR] [--on-conflict POLICY] [--json] | cancel JOB [--json]")
 }
 func fatal(err error) { fmt.Fprintln(os.Stderr, err); os.Exit(1) }

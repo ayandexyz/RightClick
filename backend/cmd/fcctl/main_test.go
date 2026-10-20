@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -90,6 +91,63 @@ func TestFormatEnginesHumanReadable(t *testing.T) {
 	}}}
 	got := formatHuman(value)
 	for _, want := range []string{"magick", "available", "ffmpeg", "unavailable: ffmpeg not found"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("output %q missing %q", got, want)
+		}
+	}
+}
+
+func TestParseTargetsMenuFlag(t *testing.T) {
+	cmd, err := parseArgs([]string{"targets", "a.png", "--menu"})
+	if err != nil || !cmd.menu {
+		t.Fatalf("cmd=%+v err=%v", cmd, err)
+	}
+	var params map[string]any
+	_ = json.Unmarshal(commandRequest(cmd).Params, &params)
+	if params["menu"] != true {
+		t.Fatalf("params: %#v", params)
+	}
+	if _, err := parseArgs([]string{"convert", "a.png", "--to", "png", "--menu"}); err == nil {
+		t.Fatal("--menu only applies to targets")
+	}
+}
+
+func TestParseMenuCommands(t *testing.T) {
+	for args, want := range map[string]map[string]any{
+		"menu show":               {"action": "show"},
+		"menu set video mp4 webm": {"action": "set", "category": "video", "formats": []any{"mp4", "webm"}},
+		"menu reset":              {"action": "reset"},
+		"menu reset audio":        {"action": "reset", "category": "audio"},
+	} {
+		cmd, err := parseArgs(strings.Fields(args))
+		if err != nil {
+			t.Fatalf("%s: %v", args, err)
+		}
+		req := commandRequest(cmd)
+		if req.Method != "menu" {
+			t.Fatalf("%s: method %q", args, req.Method)
+		}
+		var params map[string]any
+		_ = json.Unmarshal(req.Params, &params)
+		if !reflect.DeepEqual(params, want) {
+			t.Fatalf("%s: params %#v, want %#v", args, params, want)
+		}
+	}
+	for _, bad := range []string{"menu", "menu bogus", "menu set", "menu set video", "menu show video"} {
+		if _, err := parseArgs(strings.Fields(bad)); err == nil {
+			t.Errorf("%q should be rejected", bad)
+		}
+	}
+}
+
+func TestFormatMenuHumanReadable(t *testing.T) {
+	value := map[string]any{"result": map[string]any{
+		"path":   "/c/menu.toml",
+		"custom": []any{"video"},
+		"menu":   map[string]any{"image": []any{"jpeg", "png"}, "video": []any{"mp4"}},
+	}}
+	got := formatHuman(value)
+	for _, want := range []string{"/c/menu.toml", "image: jpeg, png", "video: mp4 (custom)"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("output %q missing %q", got, want)
 		}

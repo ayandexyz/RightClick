@@ -76,6 +76,8 @@ func ValidateRequest(req Request) *Error {
 		code, msg = validateConvert(req.Params)
 	case "cancel":
 		code, msg = validateCancel(req.Params)
+	case "menu":
+		code, msg = validateMenu(req.Params)
 	case "engines", "subscribe":
 		code, msg = validateEmptyParams(req.Params)
 	default:
@@ -112,9 +114,38 @@ func validateHello(params json.RawMessage) (string, string) {
 	return "", ""
 }
 
+func validateMenu(params json.RawMessage) (string, string) {
+	var p struct {
+		Action   string    `json:"action"`
+		Category string    `json:"category"`
+		Formats  *[]string `json:"formats"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return "bad_request", "invalid menu params"
+	}
+	switch p.Action {
+	case "show":
+		if p.Category != "" || p.Formats != nil {
+			return "bad_request", "menu show takes no category or formats"
+		}
+	case "set":
+		if p.Category == "" || p.Formats == nil {
+			return "bad_request", "menu set requires category and formats"
+		}
+	case "reset":
+		if p.Formats != nil {
+			return "bad_request", "menu reset takes no formats"
+		}
+	default:
+		return "bad_request", "menu action must be show, set or reset"
+	}
+	return "", ""
+}
+
 func validateTargets(params json.RawMessage) (string, string) {
 	var p struct {
 		Files []string `json:"files"`
+		Menu  bool     `json:"menu"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return "bad_request", "invalid targets params"
