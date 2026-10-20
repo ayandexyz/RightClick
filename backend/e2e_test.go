@@ -86,36 +86,19 @@ func TestDaemonEndToEndImageConversion(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	var jobID string
-	var finished wireMessage
-	deadline := time.After(15 * time.Second)
-	for finished == nil {
-		select {
-		case <-deadline:
-			t.Fatal("timed out waiting for job.finished")
-		default:
-		}
-		message, err := readMessage(reader)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if result, ok := message["result"].(map[string]any); ok {
-			jobID, _ = result["job"].(string)
-		}
-		if message["event"] == "job.finished" {
-			finished = message
-		}
-	}
-	if jobID == "" {
-		t.Fatalf("conversion response did not include a job id: %#v", finished)
-	}
+	jobID, finished := waitForJob(t, reader, 3, "image-to-jpeg", 15*time.Second)
 	job, ok := finished["data"].(map[string]any)
 	if !ok || job["state"] != "completed" {
 		t.Fatalf("unexpected finished job: %#v", finished)
 	}
+	if jobID == "" {
+		t.Fatalf("conversion response did not include a job id: %#v", finished)
+	}
 	output := filepath.Join(outputDir, "photo.jpg")
-	if _, err := os.Stat(output); err != nil {
+	if info, err := os.Stat(output); err != nil {
 		t.Fatalf("expected output %s: %v", output, err)
+	} else if info.Size() == 0 {
+		t.Fatalf("output %s is empty", output)
 	}
 	if !bytes.HasPrefix(mustRead(t, output), []byte{0xff, 0xd8, 0xff}) {
 		t.Fatalf("output is not a JPEG")
@@ -131,7 +114,12 @@ func TestE2EFFmpegMediaConversion(t *testing.T) {
 
 	mediaDir := t.TempDir()
 	video := filepath.Join(mediaDir, "fixture.mkv")
-	generate := exec.Command("ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=black:s=16x16:r=1", "-f", "lavfi", "-i", "sine=frequency=1000:sample_rate=8000", "-t", "1", "-c:v", "libx264", "-c:a", "aac", video)
+	if output, err := exec.Command("ffmpeg", "-hide_banner", "-encoders").CombinedOutput(); err != nil {
+		t.Skipf("cannot inspect ffmpeg encoders: %v", err)
+	} else if !bytes.Contains(output, []byte(" mpeg4 ")) || !bytes.Contains(output, []byte(" pcm_s16le ")) {
+		t.Skip("ffmpeg does not provide the broadly available mpeg4 and pcm_s16le fixture encoders")
+	}
+	generate := exec.Command("ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=black:s=16x16:r=1", "-f", "lavfi", "-i", "sine=frequency=1000:sample_rate=8000", "-t", "1", "-c:v", "mpeg4", "-c:a", "pcm_s16le", video)
 	if output, err := generate.CombinedOutput(); err != nil {
 		t.Fatalf("generate media fixture: %v\\n%s", err, output)
 	}
@@ -153,8 +141,10 @@ func TestE2EFFmpegMediaConversion(t *testing.T) {
 	assertTargetPresets(t, targets, append([]string{"video-to-mp4", "video-to-mov", "video-to-webm", "video-to-avi"}, audioPresetsForE2E()...))
 
 	outputDir := t.TempDir()
-	convertAndAssertOutput(t, conn, reader, 3, video, "video-to-mp4", outputDir, ".mp4")
+	mp4 := convertAndAssertOutput(t, conn, reader, 3, video, "video-to-mp4", outputDir, ".mp4")
+	assertMediaOutput(t, mp4, "mp4", "video")
 	mp3 := convertAndAssertOutput(t, conn, reader, 4, video, "audio-to-mp3", outputDir, ".mp3")
+	assertMediaOutput(t, mp3, "mp3", "audio")
 
 	audioTargets := request(t, conn, reader, map[string]any{
 		"id": 5, "method": "targets", "params": map[string]any{"files": []string{mp3}},
@@ -202,16 +192,10 @@ func startE2EDaemon(t *testing.T) (net.Conn, *bufio.Reader, func()) {
 	}
 }
 
-func convertAndAssertOutput(t *testing.T, conn net.Conn, reader *bufio.Reader, id int, input, preset, outputDir, extension string) string {
+func waitForJob(t *testing.T, reader *bufio.Reader, requestID int, preset string, timeout time.Duration) (string, wireMessage) {
 	t.Helper()
-	if err := writeMessage(conn, map[string]any{
-		"id": id, "method": "convert", "params": map[string]any{
-			"files": []string{input}, "preset": preset, "output_dir": outputDir,
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	deadline := time.After(30 * time.Second)
+	var jobID string
+	deadline := time.After(timeout)
 	for {
 		select {
 		case <-deadline:
@@ -222,22 +206,84 @@ func convertAndAssertOutput(t *testing.T, conn net.Conn, reader *bufio.Reader, i
 		if err != nil {
 			t.Fatal(err)
 		}
-		if message["error"] != nil {
-			t.Fatalf("%s failed: %#v", preset, message)
+		if responseID, ok := message["id"].(float64); ok && int(responseID) == requestID {
+			if message["error"] != nil {
+				t.Fatalf("%s failed: %#v", preset, message)
+			}
+			result, ok := message["result"].(map[string]any)
+			if !ok {
+				t.Fatalf("%s response missing result: %#v", preset, message)
+			}
+			jobID, _ = result["job"].(string)
+			if jobID == "" {
+				t.Fatalf("%s response missing job id: %#v", preset, message)
+			}
+			continue
 		}
 		if message["event"] != "job.finished" {
 			continue
 		}
 		job, ok := message["data"].(map[string]any)
-		if !ok || job["state"] != "completed" {
-			t.Fatalf("unexpected %s job: %#v", preset, message)
+		if !ok || job["id"] != jobID || job["preset"] != preset {
+			continue
 		}
-		output := filepath.Join(outputDir, strings.TrimSuffix(filepath.Base(input), filepath.Ext(input))+extension)
-		if _, err := os.Stat(output); err != nil {
-			t.Fatalf("expected %s output %s: %v", preset, output, err)
-		}
-		return output
+		return jobID, message
 	}
+}
+
+func convertAndAssertOutput(t *testing.T, conn net.Conn, reader *bufio.Reader, id int, input, preset, outputDir, extension string) string {
+	t.Helper()
+	if err := writeMessage(conn, map[string]any{
+		"id": id, "method": "convert", "params": map[string]any{
+			"files": []string{input}, "preset": preset, "output_dir": outputDir,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	jobID, finished := waitForJob(t, reader, id, preset, 30*time.Second)
+	job, ok := finished["data"].(map[string]any)
+	if !ok || job["state"] != "completed" {
+		t.Fatalf("unexpected %s job: %#v", preset, finished)
+	}
+	if jobID == "" {
+		t.Fatalf("%s response did not include a job id: %#v", preset, finished)
+	}
+	output := filepath.Join(outputDir, strings.TrimSuffix(filepath.Base(input), filepath.Ext(input))+extension)
+	if info, err := os.Stat(output); err != nil {
+		t.Fatalf("expected %s output %s: %v", preset, output, err)
+	} else if info.Size() == 0 {
+		t.Fatalf("%s output %s is empty", preset, output)
+	}
+	return output
+}
+
+func assertMediaOutput(t *testing.T, path, format, codecType string) {
+	t.Helper()
+	probe := exec.Command("ffprobe", "-v", "error", "-show_entries", "format=format_name:stream=codec_type", "-of", "json", "--", path)
+	output, err := probe.Output()
+	if err != nil {
+		t.Fatalf("ffprobe %s: %v", path, err)
+	}
+	var result struct {
+		Format struct {
+			Name string `json:"format_name"`
+		} `json:"format"`
+		Streams []struct {
+			CodecType string `json:"codec_type"`
+		} `json:"streams"`
+	}
+	if err := json.Unmarshal(output, &result); err != nil {
+		t.Fatalf("parse ffprobe output for %s: %v", path, err)
+	}
+	if !strings.Contains(result.Format.Name, format) {
+		t.Fatalf("ffprobe format for %s = %q, want %q", path, result.Format.Name, format)
+	}
+	for _, stream := range result.Streams {
+		if stream.CodecType == codecType {
+			return
+		}
+	}
+	t.Fatalf("ffprobe found no %s stream in %s", codecType, path)
 }
 
 func assertTargetPresets(t *testing.T, message wireMessage, want []string) {
