@@ -372,7 +372,7 @@ func supportedOutputExtension(ext string) bool {
 	switch ext {
 	case "png", "jpg", "webp", "jxl", "avif", "gif", "bmp", "tiff", "ico", "heic",
 		"mp4", "mov", "webm", "mkv", "avi", "mp3", "wav", "flac", "aac", "m4a", "ogg", "opus",
-		"aiff", "alac", "ac3", "amr", "wma", "pdf":
+		"aiff", "alac", "ac3", "amr", "wma", "pdf", "txt":
 		return true
 	default:
 		return false

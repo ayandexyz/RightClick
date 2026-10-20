@@ -26,11 +26,18 @@ func (o Operation) runExternal(ctx context.Context, tb Toolbox, inputs []string,
 		switch o.ID {
 		case "pdf-grayscale":
 			return tb.GS.Grayscale(ctx, inputs[0], output)
+		case "pdf-compress-light", "pdf-compress-balanced", "pdf-compress-strong":
+			return tb.GS.Compress(ctx, inputs[0], output, o.Preset)
 		}
 	case EnginePoppler:
 		switch o.ID {
 		case "pdf-to-text":
 			return tb.Poppler.Text(ctx, inputs[0], output)
+		case "pdf-extract-images":
+			// Numbered operations do not write their own output; they fill the
+			// directory the job layer made and the job layer publishes each file.
+			_, err := tb.Poppler.Images(ctx, inputs[0], output)
+			return err
 		}
 	}
 	return fmt.Errorf("%s has no implementation", o.ID)

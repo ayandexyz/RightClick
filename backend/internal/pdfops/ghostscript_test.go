@@ -10,9 +10,9 @@ import (
 
 func TestGhostscriptCompressFlags(t *testing.T) {
 	cases := map[string]string{
-		"light":  "/prepress",
-		"medium": "/printer",
-		"heavy":  "/screen",
+		"light":    "/printer",
+		"balanced": "/ebook",
+		"strong":   "/screen",
 	}
 	rec := &recordRunner{err: nil}
 	gs := NewGhostscript(rec.run)

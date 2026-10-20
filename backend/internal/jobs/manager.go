@@ -799,3 +799,116 @@ func (m *Manager) inputUnreadable(j *job, source string) bool {
 	}
 	return j.ctx.Err() == nil
 }
+
+// runNumberedOperation runs an operation that produces an unknown number of
+// outputs from one input, such as extracting every embedded image. The engine
+// writes into a staging directory; this then plans and publishes each file under
+// its numbered name.
+//
+// The set is published as a unit: if any file cannot be planned or committed,
+// the ones already committed are rolled back, so a user never sees a partial
+// extraction on disk. A document with nothing to extract is reported skipped
+// with a notice rather than as a failure, because an empty result set is not
+// something the user can act on.
+func (m *Manager) runNumberedOperation(j *job, op pdfops.Operation, source string, file protocol.FileJob) protocol.FileJob {
+	if j.ctx.Err() != nil {
+		file.State = "cancelled"
+		return file
+	}
+	stage, err := os.MkdirTemp("", "fcd-numbered-*")
+	if err != nil {
+		file.State = "failed"
+		file.Error = &protocol.FileError{Code: "internal", Message: err.Error()}
+		return file
+	}
+	defer os.RemoveAll(stage)
+
+	if err := op.Run(j.ctx, m.pdfToolbox(), []string{source}, stage, j.op.Params); err != nil {
+		return m.failOperationFile(j, file, err)
+	}
+	ext := op.OutputExtension()
+	produced, err := filepath.Glob(filepath.Join(stage, "*.png"))
+	if err != nil {
+		file.State = "failed"
+		file.Error = &protocol.FileError{Code: "internal", Message: err.Error()}
+		return file
+	}
+	// Engines write with their own extension; the published name uses the
+	// operation's, so a future engine emitting another format still lands right.
+	type pending struct {
+		plan    engine.OutputPlan
+		release func()
+	}
+	var plans []pending
+	cleanup := func() {
+		for i := len(plans) - 1; i >= 0; i-- {
+			plans[i].plan.Rollback()
+			plans[i].release()
+		}
+	}
+	for i, staged := range produced {
+		plan, release, err := m.reserveOutput(func(taken func(string) bool) (engine.OutputPlan, error) {
+			return engine.PlanNamedOutputExcluding(
+				j.outputDirFor(source), source, numberedName(op, source, i+1), ext, j.op.Conflict, taken)
+		})
+		if err != nil {
+			cleanup()
+			file.State = "failed"
+			file.Error = &protocol.FileError{Code: "internal", Message: err.Error()}
+			return file
+		}
+		if plan.Skipped() {
+			release()
+			file.State = "skipped"
+			return file
+		}
+		if err := os.Rename(staged, plan.Temp); err != nil {
+			release()
+			cleanup()
+			file.State = "failed"
+			file.Error = &protocol.FileError{Code: "internal", Message: err.Error()}
+			return file
+		}
+		plans = append(plans, pending{plan: plan, release: release})
+	}
+	if len(plans) == 0 {
+		file.State = "skipped"
+		file.Notice = "no embedded images"
+		return file
+	}
+	outputs := make([]string, 0, len(plans))
+	for _, p := range plans {
+		if j.ctx.Err() != nil {
+			cleanup()
+			file.State = "cancelled"
+			file.Outputs = nil
+			return file
+		}
+		var committed protocol.FileJob
+		_, committed = m.publishPlan(j, p.plan, file)
+		if committed.State != "done" {
+			cleanup()
+			file.State = committed.State
+			file.Outputs = nil
+			if committed.Error != nil {
+				file.Error = committed.Error
+			}
+			return file
+		}
+		outputs = append(outputs, p.plan.Destination)
+	}
+	for _, p := range plans {
+		p.release()
+	}
+	file.State, file.Progress, file.Outputs = "done", 1, outputs
+	return file
+}
+
+// outputDirFor returns the directory an operation should write into for one
+// source: the requested output_dir, or the source's own directory.
+func (j *job) outputDirFor(source string) string {
+	if j.op.OutputDir != "" {
+		return j.op.OutputDir
+	}
+	return filepath.Dir(source)
+}

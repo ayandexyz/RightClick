@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -121,9 +122,19 @@ func (m *Manager) SubmitOperation(req OperationRequest) (string, error) {
 // writes one merged.pdf; the rest append their suffix to the source stem.
 func operationOutputName(op pdfops.Operation, source string) string {
 	if op.Merges {
+		if op.InputKind() == pdfops.InputImage {
+			return "images"
+		}
 		return "merged"
 	}
 	return strings.TrimSuffix(filepath.Base(source), filepath.Ext(source)) + op.Suffix
+}
+
+// numberedName is the base name for the Nth output of a numbered operation:
+// <stem>-image-1, <stem>-image-2, and so on, with the extension added by the
+// planner.
+func numberedName(op pdfops.Operation, source string, n int) string {
+	return strings.TrimSuffix(filepath.Base(source), filepath.Ext(source)) + op.Suffix + "-" + strconv.Itoa(n)
 }
 
 // runOperation performs one unit of work: a merge is a single unit covering
@@ -206,7 +217,7 @@ func (m *Manager) mergeOperation(j *job, op pdfops.Operation) []protocol.FileJob
 	// The merge output must not collide with any of its own inputs.
 	source := j.op.Files[0]
 	plan, release, err := m.reserveOutput(func(taken func(string) bool) (engine.OutputPlan, error) {
-		return engine.PlanNamedOutputExcluding(outputDir, source, operationOutputName(op, source), "pdf", j.op.Conflict, taken)
+		return engine.PlanNamedOutputExcluding(outputDir, source, operationOutputName(op, source), op.OutputExtension(), j.op.Conflict, taken)
 	})
 	defer release()
 	if err != nil {
@@ -288,8 +299,11 @@ func (m *Manager) runOneOperation(j *job, op pdfops.Operation, index int, source
 	if outputDir == "" {
 		outputDir = filepath.Dir(source)
 	}
+	if op.Numbered {
+		return fileResult{index: index, file: m.runNumberedOperation(j, op, source, file)}
+	}
 	plan, release, err := m.reserveOutput(func(taken func(string) bool) (engine.OutputPlan, error) {
-		return engine.PlanNamedOutputExcluding(outputDir, source, operationOutputName(op, source), "pdf", j.op.Conflict, taken)
+		return engine.PlanNamedOutputExcluding(outputDir, source, operationOutputName(op, source), op.OutputExtension(), j.op.Conflict, taken)
 	})
 	defer release()
 	if err != nil {

@@ -1026,16 +1026,12 @@ func pngFixture(t *testing.T, dir, name string) string {
 	return path
 }
 
-// pdfEngineForID is the test-side mirror of the daemon's engine mapping: every
-// operation published on the wire has a fixed engine, so an assertion can pin
-// it by ID rather than parsing the catalogue from the test.
+// pdfEngineForID reads the engine straight from the catalogue, so this assertion
+// cannot drift when an operation's engine is reassigned.
 func pdfEngineForID(id string) string {
-	switch id {
-	case "pdf-repair", "pdf-linearize", "pdf-flatten":
-		return "qpdf"
-	case "pdf-compress", "pdf-grayscale":
-		return "ghostscript"
-	default:
-		return "pdfcpu"
+	op, ok := pdfops.Lookup(id)
+	if !ok {
+		return ""
 	}
+	return op.EngineID()
 }

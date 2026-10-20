@@ -69,6 +69,7 @@ type Operation struct {
 	NeedsAngle       bool
 	Suffix           string // appended to the source name to form the output name; unused by merge
 	Merges           bool   // all inputs produce one output
+	Preset           string // Ghostscript compress preset: "light", "balanced", "strong"
 }
 
 // InputKind reports what the operation accepts, defaulting to PDF so entries that

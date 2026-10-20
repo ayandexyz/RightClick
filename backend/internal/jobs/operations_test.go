@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -652,4 +653,174 @@ func indexOfSource(files []protocol.FileJob, source string) int {
 		}
 	}
 	return -1
+}
+
+// fakePopplerRunner stands in for pdfimages by writing a chosen number of PNGs
+// into the staging directory the job layer hands the engine.
+type fakePopplerRunner struct {
+	images int
+	err    error
+	dirs   []string
+}
+
+func (f *fakePopplerRunner) run(_ context.Context, name string, args []string) error {
+	if name != "pdfimages" {
+		return fmt.Errorf("unexpected binary %s", name)
+	}
+	root := args[len(args)-1]
+	f.dirs = append(f.dirs, root)
+	if f.err != nil {
+		return f.err
+	}
+	for i := 0; i < f.images; i++ {
+		path := filepath.Join(filepath.Dir(root), fmt.Sprintf("img-%03d.png", i))
+		if err := os.WriteFile(path, []byte("png"), 0o600); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func runExtractImages(t *testing.T, m *Manager, source, outDir string) protocol.Job {
+	t.Helper()
+	return submitOp(t, m, OperationRequest{Op: "pdf-extract-images", Files: []string{source}, OutputDir: outDir})
+}
+
+func TestExtractImagesPublishesNumberedOutputsInOrder(t *testing.T) {
+	dir := t.TempDir()
+	source := writePDFSource(t, dir, "doc.pdf")
+	pop := &fakePopplerRunner{images: 3}
+	m := newOperationManager(t, newFakePDFBackend(1))
+	m.SetPDFToolbox(pdfops.Toolbox{PDFCPU: newFakePDFBackend(1), Poppler: pdfops.NewPoppler(pop.run)})
+
+	job := runExtractImages(t, m, source, dir)
+	if job.State != "completed" {
+		t.Fatalf("job = %s, files = %+v", job.State, job.Files)
+	}
+	file := job.Files[0]
+	if file.State != "done" {
+		t.Fatalf("file = %+v, want done", file)
+	}
+	want := []string{"doc-image-1.png", "doc-image-2.png", "doc-image-3.png"}
+	if len(file.Outputs) != len(want) {
+		t.Fatalf("outputs = %v, want %v", file.Outputs, want)
+	}
+	for i, name := range want {
+		if filepath.Base(file.Outputs[i]) != name {
+			t.Fatalf("outputs[%d] = %s, want %s", i, file.Outputs[i], name)
+		}
+		if _, err := os.Stat(file.Outputs[i]); err != nil {
+			t.Fatalf("output %s not published: %v", file.Outputs[i], err)
+		}
+	}
+	// The staging directory must not survive into the output directory.
+	if entries, err := os.ReadDir(dir); err == nil {
+		for _, e := range entries {
+			if e.Name() == "img-000.png" {
+				t.Fatal("staged image leaked into the output directory")
+			}
+		}
+	}
+}
+
+func TestExtractImagesWithNothingEmbeddedIsSkipped(t *testing.T) {
+	dir := t.TempDir()
+	source := writePDFSource(t, dir, "doc.pdf")
+	pop := &fakePopplerRunner{images: 0}
+	m := newOperationManager(t, newFakePDFBackend(1))
+	m.SetPDFToolbox(pdfops.Toolbox{PDFCPU: newFakePDFBackend(1), Poppler: pdfops.NewPoppler(pop.run)})
+
+	job := runExtractImages(t, m, source, dir)
+	if job.State != "completed" {
+		t.Fatalf("job = %s, want completed", job.State)
+	}
+	file := job.Files[0]
+	if file.State != "skipped" {
+		t.Fatalf("file state = %s, want skipped", file.State)
+	}
+	if file.Notice != "no embedded images" {
+		t.Fatalf("notice = %q, want %q", file.Notice, "no embedded images")
+	}
+	if len(file.Outputs) != 0 {
+		t.Fatalf("outputs = %v, want none", file.Outputs)
+	}
+}
+
+func TestExtractImagesFailureLeavesNothingPublished(t *testing.T) {
+	dir := t.TempDir()
+	source := writePDFSource(t, dir, "doc.pdf")
+	pop := &fakePopplerRunner{images: 2, err: errors.New("boom")}
+	m := newOperationManager(t, newFakePDFBackend(1))
+	m.SetPDFToolbox(pdfops.Toolbox{PDFCPU: newFakePDFBackend(1), Poppler: pdfops.NewPoppler(pop.run)})
+
+	job := runExtractImages(t, m, source, dir)
+	if job.State != "failed" {
+		t.Fatalf("job = %s, want failed", job.State)
+	}
+	for _, name := range []string{"doc-image-1.png", "doc-image-2.png"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
+			t.Fatalf("%s should not exist after a failure", name)
+		}
+	}
+}
+
+// A collision on the second output must rename only that file; the first keeps
+// its planned name.
+func TestExtractImagesRenamesOnlyTheCollidingOutput(t *testing.T) {
+	dir := t.TempDir()
+	source := writePDFSource(t, dir, "doc.pdf")
+	if err := os.WriteFile(filepath.Join(dir, "doc-image-2.png"), []byte("existing"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pop := &fakePopplerRunner{images: 2}
+	m := newOperationManager(t, newFakePDFBackend(1))
+	m.SetPDFToolbox(pdfops.Toolbox{PDFCPU: newFakePDFBackend(1), Poppler: pdfops.NewPoppler(pop.run)})
+
+	job := runExtractImages(t, m, source, dir)
+	file := job.Files[0]
+	if file.State != "done" {
+		t.Fatalf("file = %+v, want done", file)
+	}
+	if got := filepath.Base(file.Outputs[0]); got != "doc-image-1.png" {
+		t.Fatalf("outputs[0] = %s, want doc-image-1.png", got)
+	}
+	if got := filepath.Base(file.Outputs[1]); got != "doc-image-2 (1).png" {
+		t.Fatalf("outputs[1] = %s, want the renamed doc-image-2 (1).png", got)
+	}
+	// The pre-existing file must be untouched.
+	content, err := os.ReadFile(filepath.Join(dir, "doc-image-2.png"))
+	if err != nil || string(content) != "existing" {
+		t.Fatalf("existing file = %q (%v), want it left alone", content, err)
+	}
+}
+
+func TestExtractTextWritesASingleTxtOutput(t *testing.T) {
+	dir := t.TempDir()
+	source := writePDFSource(t, dir, "doc.pdf")
+	text := &recordTextRunner{}
+	m := newOperationManager(t, newFakePDFBackend(1))
+	m.SetPDFToolbox(pdfops.Toolbox{PDFCPU: newFakePDFBackend(1), Poppler: pdfops.NewPoppler(text.run)})
+
+	job := submitOp(t, m, OperationRequest{Op: "pdf-to-text", Files: []string{source}, OutputDir: dir})
+	if job.State != "completed" {
+		t.Fatalf("job = %s, files = %+v", job.State, job.Files)
+	}
+	file := job.Files[0]
+	if file.State != "done" {
+		t.Fatalf("file = %+v, want done", file)
+	}
+	if len(file.Outputs) != 1 || filepath.Base(file.Outputs[0]) != "doc-text.txt" {
+		t.Fatalf("outputs = %v, want [doc-text.txt]", file.Outputs)
+	}
+}
+
+// recordTextRunner writes a stand-in text file wherever pdftotext is pointed.
+type recordTextRunner struct{ args []string }
+
+func (r *recordTextRunner) run(_ context.Context, name string, args []string) error {
+	if name != "pdftotext" {
+		return fmt.Errorf("unexpected binary %s", name)
+	}
+	r.args = args
+	return os.WriteFile(args[len(args)-1], []byte("hello"), 0o600)
 }

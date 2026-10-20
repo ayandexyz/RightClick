@@ -82,10 +82,10 @@ func (g *Ghostscript) Grayscale(ctx context.Context, input, output string) error
 func pdfSettings(preset string) (string, error) {
 	switch preset {
 	case "light":
-		return "/prepress", nil
-	case "medium":
 		return "/printer", nil
-	case "heavy":
+	case "balanced":
+		return "/ebook", nil
+	case "strong":
 		return "/screen", nil
 	default:
 		return "", fmt.Errorf("unknown preset %q", preset)

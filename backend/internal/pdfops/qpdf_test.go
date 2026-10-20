@@ -9,11 +9,14 @@ import (
 )
 
 // recordRunner captures the binary and arguments used so the test can assert
-// the engine's flags without running qpdf.
+// the engine's flags without running qpdf. When write is set it is called
+// instead of just recording, so engines whose output is a side effect on disk
+// (pdfimages) can be exercised too.
 type recordRunner struct {
 	gotName string
 	gotArgs []string
 	err     error
+	write   func(name string, args []string) error
 	calls   int32
 }
 
@@ -21,6 +24,11 @@ func (r *recordRunner) run(ctx context.Context, name string, args []string) erro
 	atomic.AddInt32(&r.calls, 1)
 	r.gotName = name
 	r.gotArgs = append([]string(nil), args...)
+	if r.write != nil {
+		if err := r.write(name, args); err != nil {
+			return err
+		}
+	}
 	return r.err
 }
 
