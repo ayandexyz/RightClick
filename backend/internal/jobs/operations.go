@@ -317,6 +317,13 @@ func (m *Manager) runOneOperation(j *job, op pdfops.Operation, index int, source
 	}
 	if err := op.Run(j.ctx, m.pdfToolbox(), []string{source}, plan.Temp, j.op.Params); err != nil {
 		plan.Rollback()
+		// Ghostscript compress reports ErrNoGain when the output is no smaller
+		// than the input: treat it as a skip-with-notice rather than a failure.
+		if errors.Is(err, pdfops.ErrNoGain) {
+			file.State = "skipped"
+			file.Notice = "already as small as it can get"
+			return fileResult{index: index, file: file}
+		}
 		return fileResult{index: index, file: m.failOperationFile(j, file, err)}
 	}
 	output, file := m.publishPlan(j, plan, file)

@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"file-converter/backend/internal/pdfops"
 )
 
 func TestParseConvertAcceptsToAlias(t *testing.T) {
@@ -288,5 +290,63 @@ func TestPDFRequestBodyForList(t *testing.T) {
 	files, _ := params["files"].([]any)
 	if len(files) != 1 || files[0] != source {
 		t.Fatalf("files = %v", params["files"])
+	}
+}
+
+// TestEveryCatalogueOperationIsReachableFromTheCLI is what makes `fcctl pdf`
+// table-driven: every instant operation in the catalogue must have a verb in
+// pdfCommandByShortName, so adding an operation without a CLI verb is caught
+// here. We check the dispatcher separately from full argument validation so
+// callers learn about minimum-file requirements only when they actually pass
+// files.
+func TestEveryCatalogueOperationIsReachableFromTheCLI(t *testing.T) {
+	for _, op := range pdfops.Catalogue() {
+		name := pdfShortName(op.ID)
+		opID, ok := pdfCommandByShortName(name)
+		if !ok {
+			t.Errorf("pdf %s (id %s): no CLI verb", name, op.ID)
+			continue
+		}
+		if opID != op.ID {
+			t.Errorf("pdf %s -> %s, want %s", name, opID, op.ID)
+		}
+	}
+}
+
+func TestFixedAngleVariantsNeedNoAngle(t *testing.T) {
+	for _, name := range []string{"rotate-cw", "rotate-ccw", "rotate-180"} {
+		cmd, err := parsePDFArgs([]string{"pdf", name, "/tmp/a.pdf"})
+		if err != nil {
+			t.Fatalf("pdf %s: %v", name, err)
+		}
+		if cmd.pdfAngle != nil {
+			t.Fatalf("pdf %s should not require an angle", name)
+		}
+	}
+	if _, err := parsePDFArgs([]string{"pdf", "rotate-cw", "/tmp/a.pdf", "--angle", "90"}); err == nil {
+		t.Fatal("a fixed-angle variant should reject an explicit angle")
+	}
+}
+
+func TestUnknownPDFCommandListsTheValidOnes(t *testing.T) {
+	_, err := parsePDFArgs([]string{"pdf", "frobnicate", "/tmp/a.pdf"})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	for _, want := range []string{"compress-balanced", "repair", "to-text", "extract-images", "list"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q does not mention %q", err, want)
+		}
+	}
+}
+
+func TestExtractImagesIsNumberedAndToTextIsTxt(t *testing.T) {
+	images, _ := pdfops.Lookup("pdf-extract-images")
+	if !images.Numbered || images.OutputExtension() != "png" {
+		t.Fatalf("extract-images = %+v, want numbered png", images)
+	}
+	text, _ := pdfops.Lookup("pdf-to-text")
+	if text.Numbered || text.OutputExtension() != "txt" {
+		t.Fatalf("to-text = %+v, want a single txt", text)
 	}
 }

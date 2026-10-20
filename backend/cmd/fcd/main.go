@@ -41,8 +41,16 @@ func main() {
 	manager := jobs.NewManagerWithRegistry(engines)
 	manager.SetMaxWorkers(*maxWorkers)
 	// The engines are built once at startup and shared by the manager and the
-	// server. DisableConfigDir is already called inside NewPDFCPUBackend.
-	pdfToolbox := pdfops.Toolbox{PDFCPU: pdfops.NewPDFCPUBackend()}
+	// server. DisableConfigDir is already called inside NewPDFCPUBackend. Each
+	// optional engine reports itself unavailable if its binary is missing, so
+	// the menu only shows operations a user can actually run.
+	pdfToolbox := pdfops.Toolbox{
+		PDFCPU:  pdfops.NewPDFCPUBackend(),
+		QPDF:    pdfops.NewQPDF(nil),
+		GS:      pdfops.NewGhostscript(nil),
+		Poppler: pdfops.NewPoppler(nil),
+		OCR:     pdfops.NewOCR(nil),
+	}
 	manager.SetPDFToolbox(pdfToolbox)
 	defer manager.Close()
 	srv := server.New(server.Dependencies{Jobs: manager, Registry: engines, Engine: enginePath, Version: "0.1.0", PDFToolbox: pdfToolbox})

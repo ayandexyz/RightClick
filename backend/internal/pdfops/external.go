@@ -29,6 +29,11 @@ func (o Operation) runExternal(ctx context.Context, tb Toolbox, inputs []string,
 		case "pdf-compress-light", "pdf-compress-balanced", "pdf-compress-strong":
 			return tb.GS.Compress(ctx, inputs[0], output, o.Preset)
 		}
+	case EngineTesseract:
+		switch o.ID {
+		case "pdf-ocr":
+			return tb.OCR.Pdf(ctx, inputs[0], output, p)
+		}
 	case EnginePoppler:
 		switch o.ID {
 		case "pdf-to-text":

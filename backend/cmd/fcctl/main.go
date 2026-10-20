@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"file-converter/backend/internal/pdfops"
 	"file-converter/backend/internal/protocol"
 )
 
@@ -275,21 +276,16 @@ func parsePDFArgs(args []string) (command, error) {
 	}
 	cmd := command{name: "pdf", conflict: "rename"}
 	sub := args[1]
-	known := map[string]string{
-		"merge":   "pdf-merge",
-		"extract": "pdf-extract",
-		"delete":  "pdf-delete",
-		"rotate":  "pdf-rotate",
-		"reverse": "pdf-reverse",
-		"list":    "pdf-list",
-	}
-	op, ok := known[sub]
-	if !ok {
-		return command{}, fmt.Errorf("unknown pdf command: %s", sub)
-	}
-	cmd.op = op
-	if op == "pdf-list" {
-		cmd.pdfList = true
+	// `list` is not a catalogue operation; it asks the daemon which operations
+	// apply to the given selection.
+	if sub == "list" {
+		cmd.op, cmd.pdfList = "pdf-list", true
+	} else {
+		op, ok := pdfCommandByShortName(sub)
+		if !ok {
+			return command{}, fmt.Errorf("unknown pdf command: %s; valid: %s", sub, strings.Join(pdfShortNames(), " "))
+		}
+		cmd.op = op
 	}
 	rest := args[2:]
 	for i := 0; i < len(rest); i++ {
@@ -332,29 +328,29 @@ func parsePDFArgs(args []string) (command, error) {
 			cmd.files = append(cmd.files, rest[i])
 		}
 	}
-	switch op {
-	case "pdf-list":
+	if cmd.pdfList {
 		if len(cmd.files) != 1 {
 			return command{}, fmt.Errorf("pdf list takes exactly one file")
 		}
-	default:
-		if op == "pdf-merge" && len(cmd.files) < 2 {
-			return command{}, fmt.Errorf("pdf merge needs at least 2 files")
-		}
-		if len(cmd.files) == 0 {
-			return command{}, fmt.Errorf("at least one file is required")
-		}
+		return cmd, nil
 	}
-	if (op == "pdf-extract" || op == "pdf-delete") && cmd.pdfPages == "" {
+	opDef, _ := pdfops.Lookup(cmd.op)
+	if len(cmd.files) == 0 {
+		return command{}, fmt.Errorf("at least one file is required")
+	}
+	if opDef.MinInputs >= 2 && len(cmd.files) < opDef.MinInputs {
+		return command{}, fmt.Errorf("pdf %s needs at least %d files", sub, opDef.MinInputs)
+	}
+	if opDef.NeedsPages && cmd.pdfPages == "" {
 		return command{}, fmt.Errorf("pdf %s requires --pages", sub)
 	}
-	if op == "pdf-rotate" && cmd.pdfAngle == nil {
-		return command{}, fmt.Errorf("pdf rotate requires --angle")
+	if opDef.NeedsAngle && opDef.FixedAngle == 0 && cmd.pdfAngle == nil {
+		return command{}, fmt.Errorf("pdf %s requires --angle", sub)
 	}
-	if op != "pdf-rotate" && cmd.pdfAngle != nil {
+	if !opDef.NeedsAngle && cmd.pdfAngle != nil {
 		return command{}, fmt.Errorf("--angle is only valid for pdf rotate")
 	}
-	if op != "pdf-extract" && op != "pdf-delete" && op != "pdf-rotate" && cmd.pdfPages != "" {
+	if !opDef.NeedsPages && !opDef.OptionalPages && cmd.pdfPages != "" {
 		return command{}, fmt.Errorf("--pages is only valid for pdf extract, delete or rotate")
 	}
 	return cmd, nil
@@ -606,3 +602,63 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "usage: fcctl hello | engines [--json] | targets FILE... [--menu] [--json] | menu show | menu set CATEGORY FORMAT... | menu reset [CATEGORY] | convert FILE... (--to png|jpeg|webp|jxl|avif|gif|bmp|tiff|ico|heic | --preset PRESET) [--quality 1-100] [--max-size PX] [--background COLOR] [--out-dir DIR] [--recursive] [--on-conflict POLICY] [--json] | cancel JOB [--json] | pdf (merge FILE FILE... | extract FILE... --pages SPEC | delete FILE... --pages SPEC | rotate FILE... --angle 90|180|270 [--pages SPEC] | reverse FILE... | list FILE) [--out-dir DIR] [--on-conflict POLICY] [--json]")
 }
 func fatal(err error) { fmt.Fprintln(os.Stderr, err); os.Exit(1) }
+
+// pdfShortName is the CLI verb for an operation ID, derived by stripping the
+// "pdf-" prefix and well-known longer names that do not lend themselves to a
+// straight strip (extract-images, from-images, to-text, compress-balanced,
+// strip-metadata).
+func pdfShortName(id string) string {
+	short := strings.TrimPrefix(id, "pdf-")
+	switch id {
+	case "pdf-extract-images":
+		return "extract-images"
+	case "pdf-from-images":
+		return "from-images"
+	case "pdf-to-text":
+		return "to-text"
+	case "pdf-compress-light":
+		return "compress-light"
+	case "pdf-compress-balanced":
+		return "compress-balanced"
+	case "pdf-compress-strong":
+		return "compress-strong"
+	case "pdf-rotate-cw":
+		return "rotate-cw"
+	case "pdf-rotate-ccw":
+		return "rotate-ccw"
+	case "pdf-rotate-180":
+		return "rotate-180"
+	case "pdf-strip-metadata":
+		return "strip-metadata"
+	}
+	return short
+}
+
+// pdfCommandByShortName maps a CLI verb back to the operation ID. Recognising
+// both `compress` (an alias for `compress-balanced`) and the long names makes
+// the CLI forgiving when invoked by hand.
+func pdfCommandByShortName(name string) (string, bool) {
+	if name == "compress" {
+		if _, ok := pdfops.Lookup("pdf-compress-balanced"); ok {
+			return "pdf-compress-balanced", true
+		}
+	}
+	for _, op := range pdfops.Catalogue() {
+		if pdfShortName(op.ID) == name {
+			return op.ID, true
+		}
+	}
+	return "", false
+}
+
+// pdfShortNames lists the CLI verbs the CLI accepts, in catalogue order, for
+// the error message printed when a user types an unknown one.
+func pdfShortNames() []string {
+	ops := pdfops.Catalogue()
+	names := make([]string, 0, len(ops)+2)
+	names = append(names, "list")
+	for _, op := range ops {
+		names = append(names, pdfShortName(op.ID))
+	}
+	return names
+}
