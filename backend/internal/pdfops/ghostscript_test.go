@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -15,7 +16,7 @@ func TestGhostscriptCompressFlags(t *testing.T) {
 		"strong":   "/screen",
 	}
 	rec := &recordRunner{err: nil}
-	gs := NewGhostscript(rec.run)
+	gs := newTestGhostscript(rec.run)
 	for preset, wantFlag := range cases {
 		err := gs.Compress(context.Background(), writeSource(t, 4096), "/tmp/out.pdf", preset)
 		if !errors.Is(err, ErrNoGain) && err != nil {
@@ -41,7 +42,7 @@ func TestGhostscriptCompressFlags(t *testing.T) {
 }
 
 func TestGhostscriptRejectsUnknownPreset(t *testing.T) {
-	gs := NewGhostscript(func(_ context.Context, _ string, _ []string) error { return nil })
+	gs := newTestGhostscript(func(_ context.Context, _ string, _ []string) error { return nil })
 	err := gs.Compress(context.Background(), "in.pdf", "out.pdf", "extreme")
 	if err == nil || !strings.Contains(err.Error(), "extreme") {
 		t.Fatalf("err = %v, want it to name the preset", err)
@@ -50,7 +51,7 @@ func TestGhostscriptRejectsUnknownPreset(t *testing.T) {
 
 func TestGhostscriptGrayscaleFlags(t *testing.T) {
 	rec := &recordRunner{err: nil}
-	gs := NewGhostscript(rec.run)
+	gs := newTestGhostscript(rec.run)
 	if err := gs.Grayscale(context.Background(), "in.pdf", "out.pdf"); err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +69,7 @@ func TestGhostscriptCompressReturnsErrNoGainWhenBigger(t *testing.T) {
 	if err := os.WriteFile(out, make([]byte, 1024), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	gs := NewGhostscript(func(_ context.Context, _ string, _ []string) error {
+	gs := newTestGhostscript(func(_ context.Context, _ string, _ []string) error {
 		// Produce an "output" the same size as the input so checkShrink fires.
 		if err := os.WriteFile(out, make([]byte, 1024), 0o600); err != nil {
 			return err
@@ -85,7 +86,7 @@ func TestGhostscriptCompressSucceedsWhenSmaller(t *testing.T) {
 	dir := t.TempDir()
 	in := writeSource(t, 1024)
 	out := dir + "/shrink.pdf"
-	gs := NewGhostscript(func(_ context.Context, _ string, _ []string) error {
+	gs := newTestGhostscript(func(_ context.Context, _ string, _ []string) error {
 		if err := os.WriteFile(out, make([]byte, 512), 0o600); err != nil {
 			return err
 		}
@@ -93,6 +94,55 @@ func TestGhostscriptCompressSucceedsWhenSmaller(t *testing.T) {
 	})
 	if err := gs.Compress(context.Background(), in, out, "light"); err != nil {
 		t.Fatalf("err = %v, want nil", err)
+	}
+}
+
+// newTestGhostscript builds an engine whose page counter accepts the fake
+// outputs these tests write, which are not real PDFs.
+func newTestGhostscript(run Runner) *Ghostscript {
+	gs := NewGhostscript(run)
+	gs.pages = func(context.Context, string) (int, error) { return 1, nil }
+	return gs
+}
+
+func TestGhostscriptRejectsLockedInputWithoutRunning(t *testing.T) {
+	rec := &recordRunner{}
+	gs := NewGhostscript(rec.run)
+	gs.pages = func(context.Context, string) (int, error) { return 0, ErrPasswordRequired }
+	for name, run := range map[string]func() error{
+		"compress":  func() error { return gs.Compress(context.Background(), "in.pdf", "out.pdf", "light") },
+		"grayscale": func() error { return gs.Grayscale(context.Background(), "in.pdf", "out.pdf") },
+	} {
+		if err := run(); !errors.Is(err, ErrPasswordRequired) {
+			t.Fatalf("%s err = %v, want ErrPasswordRequired", name, err)
+		}
+	}
+	if rec.calls != 0 {
+		t.Fatalf("gs ran %d times for a locked input", rec.calls)
+	}
+}
+
+// Runs the real binaries: a locked PDF must fail, not publish an empty file.
+func TestGhostscriptRealLockedPDFFails(t *testing.T) {
+	if availableBinary("gs") != nil || availableBinary("qpdf") != nil {
+		t.Skip("gs and qpdf are required")
+	}
+	dir := t.TempDir()
+	plain, locked, out := filepath.Join(dir, "p.pdf"), filepath.Join(dir, "l.pdf"), filepath.Join(dir, "o.pdf")
+	if err := os.WriteFile(plain, []byte(minimalPDF), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Exit 3 is qpdf's "succeeded with warnings", expected for the hand-written fixture.
+	var exitErr *exitCodeError
+	if err := defaultRunTool(context.Background(), "qpdf", []string{"--encrypt", "u", "o", "256", "--", plain, locked}); err != nil && !(errors.As(err, &exitErr) && exitErr.code == 3) {
+		t.Fatalf("cannot build an encrypted fixture: %v", err)
+	}
+	gs := NewGhostscript(nil)
+	if err := gs.Compress(context.Background(), locked, out, "light"); !errors.Is(err, ErrPasswordRequired) {
+		t.Fatalf("compress err = %v, want ErrPasswordRequired", err)
+	}
+	if err := gs.Grayscale(context.Background(), locked, out); !errors.Is(err, ErrPasswordRequired) {
+		t.Fatalf("grayscale err = %v, want ErrPasswordRequired", err)
 	}
 }
 

@@ -18,6 +18,8 @@ var ErrNoGain = errors.New("ghostscript did not shrink the file")
 // medium, heavy).
 type Ghostscript struct {
 	runner Runner
+	// pages counts a PDF's pages; a field so tests can run without real PDFs.
+	pages func(ctx context.Context, path string) (int, error)
 }
 
 // NewGhostscript wires the engine. Tests substitute a recording runner.
@@ -25,7 +27,7 @@ func NewGhostscript(runner Runner) *Ghostscript {
 	if runner == nil {
 		runner = defaultRunTool
 	}
-	return &Ghostscript{runner: runner}
+	return &Ghostscript{runner: runner, pages: NewPDFCPUBackend().PageCount}
 }
 
 // ID names the engine in status output and operation entries.
@@ -44,11 +46,14 @@ func (g *Ghostscript) Compress(ctx context.Context, input, output, preset string
 	if err != nil {
 		return err
 	}
+	if err := g.rejectLocked(ctx, input); err != nil {
+		return err
+	}
 	args := []string{
 		"-sDEVICE=pdfwrite",
 		"-dCompatibilityLevel=1.4",
 		fmt.Sprintf("-dPDFSETTINGS=%s", settings),
-		"-dNOPAUSE", "-dBATCH", "-dQUIET",
+		"-dSAFER", "-dNOPAUSE", "-dBATCH", "-dQUIET",
 		fmt.Sprintf("-sOutputFile=%s", output),
 		input,
 	}
@@ -61,17 +66,33 @@ func (g *Ghostscript) Compress(ctx context.Context, input, output, preset string
 // Grayscale renders every page through a color transform so the output contains
 // only black, white, and grays.
 func (g *Ghostscript) Grayscale(ctx context.Context, input, output string) error {
+	if err := g.rejectLocked(ctx, input); err != nil {
+		return err
+	}
 	args := []string{
 		"-sDEVICE=pdfwrite",
 		"-sColorConversionStrategy=Gray",
 		"-dProcessColorModel=/DeviceGray",
 		"-dCompatibilityLevel=1.4",
-		"-dNOPAUSE", "-dBATCH", "-dQUIET",
+		"-dSAFER", "-dNOPAUSE", "-dBATCH", "-dQUIET",
 		fmt.Sprintf("-sOutputFile=%s", output),
 		input,
 	}
 	if err := g.runner(ctx, "gs", args); err != nil {
 		return fmt.Errorf("gs grayscale: %w", err)
+	}
+	return nil
+}
+
+// rejectLocked fails a password-protected input before Ghostscript runs.
+// Ghostscript reports "requires a password" but still exits 0 and writes a
+// pageless document, so its output cannot be trusted to signal the problem,
+// and pdfcpu even counts that pageless file as one page. Only the input probe
+// is reliable. Any other probe failure is ignored here: the job layer
+// classifies unreadable files after the operation fails.
+func (g *Ghostscript) rejectLocked(ctx context.Context, input string) error {
+	if _, err := g.pages(ctx, input); errors.Is(err, ErrPasswordRequired) {
+		return ErrPasswordRequired
 	}
 	return nil
 }
