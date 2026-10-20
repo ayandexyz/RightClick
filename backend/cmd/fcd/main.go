@@ -11,6 +11,7 @@ import (
 
 	"file-converter/backend/internal/engine"
 	"file-converter/backend/internal/jobs"
+	"file-converter/backend/internal/pdfops"
 	"file-converter/backend/internal/registry"
 	"file-converter/backend/internal/server"
 	"file-converter/backend/internal/transport"
@@ -39,8 +40,12 @@ func main() {
 	engines, enginePath := setupEngines()
 	manager := jobs.NewManagerWithRegistry(engines)
 	manager.SetMaxWorkers(*maxWorkers)
+	// pdfcpu is linked in once at startup and shared by the manager and the
+	// server. DisableConfigDir is already called inside NewPDFCPUBackend.
+	pdfBackend := pdfops.NewPDFCPUBackend()
+	manager.SetPDFBackend(pdfBackend)
 	defer manager.Close()
-	srv := server.New(server.Dependencies{Jobs: manager, Registry: engines, Engine: enginePath, Version: "0.1.0"})
+	srv := server.New(server.Dependencies{Jobs: manager, Registry: engines, Engine: enginePath, Version: "0.1.0", PDFBackend: pdfBackend})
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	go func() { <-stop; _ = listener.Close() }()

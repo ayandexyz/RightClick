@@ -3,7 +3,12 @@ package main
 import (
 	"errors"
 	"net"
+	"os"
 	"testing"
+
+	"file-converter/backend/internal/jobs"
+	"file-converter/backend/internal/pdfops"
+	"file-converter/backend/internal/server"
 )
 
 func TestIsClosedRecognizesListenerCloseErrors(t *testing.T) {
@@ -49,5 +54,49 @@ func TestEngineRegistryIncludesFFmpeg(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("daemon engine registry does not include ffmpeg")
+	}
+}
+
+func TestNewEngineRegistryReportsPDFCPU(t *testing.T) {
+	// The cmd/fcd wiring must surface pdfcpu to clients even though it is not a
+	// conversion engine the registry tracks.
+	backend := pdfops.NewPDFCPUBackend()
+	manager := jobs.NewManagerWithRegistry(newEngineRegistry())
+	defer manager.Close()
+	manager.SetPDFBackend(backend)
+	deps := server.Dependencies{Jobs: manager, Registry: newEngineRegistry(), PDFBackend: backend}
+	srv := server.New(deps)
+	status := srv.EngineStatus()
+	found := false
+	for _, entry := range status {
+		if entry.ID == "pdfcpu" {
+			found = true
+			if !entry.Available {
+				t.Fatalf("pdfcpu report = %+v, want available", entry)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("server status = %+v, want pdfcpu present", status)
+	}
+}
+
+func TestNewPDFCPUBackendDoesNotCreateConfigDir(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	backend := pdfops.NewPDFCPUBackend()
+	if err := backend.Available(); err != nil {
+		t.Fatalf("Available: %v", err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.Name() == "" {
+			continue
+		}
+		t.Fatalf("config directory created: %s", entry.Name())
 	}
 }

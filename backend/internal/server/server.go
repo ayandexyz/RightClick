@@ -117,11 +117,11 @@ func (s *Server) handle(conn net.Conn) {
 		}
 		switch req.Method {
 		case "hello":
-			if write(protocol.Response{ID: req.ID, Result: map[string]any{"server": "fcd", "version": s.deps.Version, "protocol": 1, "engines": s.engineStatus()}}) != nil {
+			if write(protocol.Response{ID: req.ID, Result: map[string]any{"server": "fcd", "version": s.deps.Version, "protocol": 1, "engines": s.EngineStatus()}}) != nil {
 				return
 			}
 		case "engines":
-			if write(protocol.Response{ID: req.ID, Result: map[string]any{"engines": s.engineStatus()}}) != nil {
+			if write(protocol.Response{ID: req.ID, Result: map[string]any{"engines": s.EngineStatus()}}) != nil {
 				return
 			}
 		case "targets":
@@ -368,11 +368,23 @@ func writeEvent(write func(any) error) func(protocol.Event) {
 	return func(event protocol.Event) { _ = write(event) }
 }
 
-func (s *Server) engineStatus() []protocol.EngineStatus {
+func (s *Server) EngineStatus() []protocol.EngineStatus {
+	var status []protocol.EngineStatus
 	if s.deps.Registry != nil {
-		return s.deps.Registry.Status()
+		status = s.deps.Registry.Status()
+	} else {
+		status = []protocol.EngineStatus{{ID: "imagemagick", Available: s.deps.Engine != ""}}
 	}
-	return []protocol.EngineStatus{{ID: "imagemagick", Available: s.deps.Engine != ""}}
+	// pdfcpu is linked in rather than a conversion engine, so it is not in the
+	// registry; report it alongside the others so clients can see it is present.
+	if s.deps.PDFBackend != nil {
+		pdf := protocol.EngineStatus{ID: s.deps.PDFBackend.ID(), Available: true}
+		if err := s.deps.PDFBackend.Available(); err != nil {
+			pdf.Available, pdf.Reason = false, err.Error()
+		}
+		status = append(status, pdf)
+	}
+	return status
 }
 
 func (s *Server) menuPath() (string, error) {
