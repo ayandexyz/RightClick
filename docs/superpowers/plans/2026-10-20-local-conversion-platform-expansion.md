@@ -408,6 +408,8 @@ go vet ./...
 
 ### Task 11: Expand image and vector formats
 
+> **Status:** SVG input (SVG to PNG/JPEG/WebP via `rsvg-convert`) is done; see `2026-10-20-svg-rasterization.md`. Still open: SVG to PDF, TGA, PPM/PGM/PBM, QOI, EXR.
+
 **Files:**
 - Modify: `backend/internal/formats/`
 - Modify: `backend/internal/engine/imagemagick.go`

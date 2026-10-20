@@ -33,15 +33,15 @@
 - Produces `formats.SVG` and `formats.IsSVGFormat(format formats.Format) bool`.
 - Produces `formats.PresetFormat("svg-to-png")`, `formats.PresetFormat("svg-to-jpeg")`, and `formats.PresetFormat("svg-to-webp")`.
 
-- [ ] Add `SVG Format = "svg"` without adding it to raster `IsImageFormat`.
-- [ ] Extend `Detect` to read a bounded prefix and identify an SVG root element after optional UTF-8 BOM, XML declaration, comments, and whitespace. Require an SVG namespace or an unambiguous `<svg` root; return `SVG` only for valid XML-shaped input.
-- [ ] Add `.svg` to `FormatFromExtension` only as a hint for media probing; content detection remains authoritative.
-- [ ] Add `IsSVGFormat` and ensure `IsImageFormat(SVG)` remains false so ImageMagick does not claim SVG directly.
-- [ ] Add three protocol targets with labels `SVG to PNG`, `SVG to JPEG`, and `SVG to WebP`, category `image`, and formats `png`, `jpeg`, and `webp`.
-- [ ] Update target preset normalization in `manager.go` so user target `png`, `jpeg`, or `webp` is not incorrectly converted into an SVG preset; explicit SVG presets remain accepted.
-- [ ] Write failing tests for valid SVG detection, extension mismatch, malformed SVG rejection, preset mappings, and raster-to-SVG absence.
-- [ ] Run `go test ./internal/formats ./internal/protocol ./internal/jobs`; expected result is PASS after implementation.
-- [ ] Commit: `feat: recognize SVG inputs and presets`.
+- [x] Add `SVG Format = "svg"` without adding it to raster `IsImageFormat`.
+- [x] Extend `Detect` to read a bounded prefix and identify an SVG root element after optional UTF-8 BOM, XML declaration, comments, and whitespace. Require an SVG namespace or an unambiguous `<svg` root; return `SVG` only for valid XML-shaped input.
+- [x] Add `.svg` to `FormatFromExtension` only as a hint for media probing; content detection remains authoritative.
+- [x] Add `IsSVGFormat` and ensure `IsImageFormat(SVG)` remains false so ImageMagick does not claim SVG directly.
+- [x] Add three protocol targets with labels `SVG to PNG`, `SVG to JPEG`, and `SVG to WebP`, category `image`, and formats `png`, `jpeg`, and `webp`.
+- [x] Update target preset normalization in `manager.go` so user target `png`, `jpeg`, or `webp` is not incorrectly converted into an SVG preset; explicit SVG presets remain accepted.
+- [x] Write failing tests for valid SVG detection, extension mismatch, malformed SVG rejection, preset mappings, and raster-to-SVG absence.
+- [x] Run `go test ./internal/formats ./internal/protocol ./internal/jobs`; expected result is PASS after implementation.
+- [x] Commit: `feat: recognize SVG inputs and presets`.
 
 ### Task 2: Implement bounded SVG safety validation
 
@@ -59,12 +59,12 @@
 - `func (e *SVG) Convert(ctx context.Context, source string, sourceFormat formats.Format, destination string, target formats.Format, options protocol.ImageOptions) error`.
 - `func ValidateSVG(path string, maxBytes int64) error`.
 
-- [ ] Write tests first for absolute regular-file validation, size limits, malformed XML, `DOCTYPE`, `ENTITY`, `<script>`, `onload=`, `href="file:..."`, `href="http..."`, `href="https..."`, `href="data:..."`, and `../` references.
-- [ ] Implement bounded file reading using `io.LimitReader`; reject files exceeding the configured maximum before parsing.
-- [ ] Parse XML with Go's `encoding/xml` after scanning forbidden constructs. Reject external entities and DTDs before parsing; reject script elements, event-handler attributes, external/data references, and traversal-like resource paths.
-- [ ] Keep the validator independent of the renderer executable so unsafe files fail consistently even when `rsvg-convert` is mocked.
-- [ ] Run `go test ./internal/engine`; expected result is PASS.
-- [ ] Commit: `feat: validate SVG input safely`.
+- [x] Write tests first for absolute regular-file validation, size limits, malformed XML, `DOCTYPE`, `ENTITY`, `<script>`, `onload=`, `href="file:..."`, `href="http..."`, `href="https..."`, `href="data:..."`, and `../` references.
+- [x] Implement bounded file reading using `io.LimitReader`; reject files exceeding the configured maximum before parsing.
+- [x] Parse XML with Go's `encoding/xml` after scanning forbidden constructs. Reject external entities and DTDs before parsing; reject script elements, event-handler attributes, external/data references, and traversal-like resource paths.
+- [x] Keep the validator independent of the renderer executable so unsafe files fail consistently even when `rsvg-convert` is mocked.
+- [x] Run `go test ./internal/engine`; expected result is PASS.
+- [x] Commit: `feat: validate SVG input safely`.
 
 ### Task 3: Add dedicated SVG renderer command construction
 
@@ -77,13 +77,13 @@
 - Expected command shape: `rsvg-convert --format png --output <destination> <source>` for PNG output and for the intermediate stage of JPEG/WebP output.
 - The focused ImageMagick helper receives an intermediate PNG path and final target path, and invokes ImageMagick with `sourceFormat=formats.PNG` so SVG is never passed to ImageMagick.
 
-- [ ] Add tests proving `Supports` rejects raster/video/audio sources and unsupported targets, and accepts SVG to PNG/JPEG/WebP.
-- [ ] Add tests asserting all conversions invoke `rsvg-convert` with `--format png`, `--output`, destination, and source, regardless of spaces or shell metacharacters in paths.
-- [ ] Implement `Convert` to validate source, resolve the executable, choose PNG as the renderer output format, and invoke the runner with argument slices.
-- [ ] For JPEG/WebP targets, always render a controlled PNG intermediate with `rsvg-convert`, then invoke ImageMagick on that PNG intermediate through a focused conversion helper. Do not route SVG through generic ImageMagick input handling.
-- [ ] Return clear errors for missing renderer, invalid target, validation failure, and renderer failure.
-- [ ] Run `go test ./internal/engine`; expected result is PASS.
-- [ ] Commit: `feat: render SVG through dedicated engine`.
+- [x] Add tests proving `Supports` rejects raster/video/audio sources and unsupported targets, and accepts SVG to PNG/JPEG/WebP.
+- [x] Add tests asserting all conversions invoke `rsvg-convert` with `--format png`, `--output`, destination, and source, regardless of spaces or shell metacharacters in paths.
+- [x] Implement `Convert` to validate source, resolve the executable, choose PNG as the renderer output format, and invoke the runner with argument slices.
+- [x] For JPEG/WebP targets, always render a controlled PNG intermediate with `rsvg-convert`, then invoke ImageMagick on that PNG intermediate through a focused conversion helper. Do not route SVG through generic ImageMagick input handling.
+- [x] Return clear errors for missing renderer, invalid target, validation failure, and renderer failure.
+- [x] Run `go test ./internal/engine`; expected result is PASS.
+- [x] Commit: `feat: render SVG through dedicated engine`.
 
 ### Task 4: Integrate SVG engine with registry and image output conversion
 
@@ -98,14 +98,14 @@
 - Registry resolves SVG sources to SVG engine routes and does not resolve raster sources to SVG targets.
 - Existing `Engine` interface remains unchanged.
 
-- [ ] Register the SVG engine alongside ImageMagick and FFmpeg, preserving existing engine ordering and availability behavior.
-- [ ] Add SVG to supported-format discovery without adding it to normal raster output candidates.
-- [ ] Ensure SVG target discovery returns the three SVG presets only for SVG inputs and does not expose them for raster, video, or audio inputs.
-- [ ] Ensure existing raster GIF remains `image-to-gif` and is not confused with SVG-to-raster presets.
-- [ ] If JPEG/WebP requires a second engine stage, add a small registry/job conversion path that keeps the SVG intermediate in the controlled temporary directory and publishes only the final output.
-- [ ] Add registry and job tests for SVG target discovery, unavailable renderer behavior, mixed-input intersection, and raster-to-SVG rejection.
-- [ ] Run `go test ./internal/registry ./internal/jobs ./...`; expected result is PASS.
-- [ ] Commit: `feat: integrate SVG conversion into jobs`.
+- [x] Register the SVG engine alongside ImageMagick and FFmpeg, preserving existing engine ordering and availability behavior.
+- [x] Add SVG to supported-format discovery without adding it to normal raster output candidates.
+- [x] Ensure SVG target discovery returns the three SVG presets only for SVG inputs and does not expose them for raster, video, or audio inputs.
+- [x] Ensure existing raster GIF remains `image-to-gif` and is not confused with SVG-to-raster presets.
+- [x] If JPEG/WebP requires a second engine stage, add a small registry/job conversion path that keeps the SVG intermediate in the controlled temporary directory and publishes only the final output.
+- [x] Add registry and job tests for SVG target discovery, unavailable renderer behavior, mixed-input intersection, and raster-to-SVG rejection.
+- [x] Run `go test ./internal/registry ./internal/jobs ./...`; expected result is PASS.
+- [x] Commit: `feat: integrate SVG conversion into jobs`.
 
 ### Task 5: Add Nautilus SVG support and documentation
 
@@ -119,12 +119,12 @@
 - Nautilus recognizes `image/svg+xml` and common SVG MIME aliases if present.
 - Existing target ordering and disabled-target filtering remain unchanged.
 
-- [ ] Add SVG MIME types to the supported selection set.
-- [ ] Add a frontend test that mocks SVG targets and asserts the Convert to menu exposes all enabled SVG targets.
-- [ ] Document SVG presets and the dedicated renderer dependency in README and protocol docs.
-- [ ] Explicitly document that raster-to-SVG is unsupported and that external SVG resources are rejected.
-- [ ] Run `python3 -m unittest discover -s frontends/omarchy/tests`; expected result is PASS.
-- [ ] Commit: `docs: expose SVG conversion in Linux integration`.
+- [x] Add SVG MIME types to the supported selection set.
+- [x] Add a frontend test that mocks SVG targets and asserts the Convert to menu exposes all enabled SVG targets.
+- [x] Document SVG presets and the dedicated renderer dependency in README and protocol docs.
+- [x] Explicitly document that raster-to-SVG is unsupported and that external SVG resources are rejected.
+- [x] Run `python3 -m unittest discover -s frontends/omarchy/tests`; expected result is PASS.
+- [x] Commit: `docs: expose SVG conversion in Linux integration`.
 
 ### Task 6: Verify real conversions and release readiness
 
@@ -133,14 +133,14 @@
 - Test fixtures: use temporary SVG files created inside the test; do not add binary fixtures.
 - Modify: `README.md` only for verified dependency/setup commands if needed.
 
-- [ ] Add a real SVG fixture containing a rectangle and circle with explicit dimensions.
-- [ ] Add an end-to-end SVG-to-PNG test that checks the PNG signature and non-zero output.
-- [ ] Add conditional SVG-to-JPEG and SVG-to-WebP checks when ImageMagick write capabilities are available; unavailable optional formats must be skipped with an explicit reason.
-- [ ] Add negative end-to-end checks for a malicious SVG with a DOCTYPE and external reference.
-- [ ] Run `go test ./...`.
-- [ ] Run `go vet ./...`.
-- [ ] Run `python3 -m unittest discover -s frontends/omarchy/tests`.
-- [ ] Run `git diff --check` and inspect `git diff --stat`.
+- [x] Add a real SVG fixture containing a rectangle and circle with explicit dimensions.
+- [x] Add an end-to-end SVG-to-PNG test that checks the PNG signature and non-zero output.
+- [x] Add conditional SVG-to-JPEG and SVG-to-WebP checks when ImageMagick write capabilities are available; unavailable optional formats must be skipped with an explicit reason.
+- [x] Add negative end-to-end checks for a malicious SVG with a DOCTYPE and external reference.
+- [x] Run `go test ./...`.
+- [x] Run `go vet ./...`.
+- [x] Run `python3 -m unittest discover -s frontends/omarchy/tests`.
+- [x] Run `git diff --check` and inspect `git diff --stat`.
 - [ ] Reinstall locally with `./frontends/omarchy/install.sh` only after all tests pass.
 - [ ] Confirm `fcd.service` is active and `fcctl targets /absolute/path/example.svg` lists SVG-to-PNG/JPEG/WebP.
-- [ ] Commit: `test: verify SVG conversion end to end`.
+- [x] Commit: `test: verify SVG conversion end to end`.
