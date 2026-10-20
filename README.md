@@ -9,8 +9,56 @@ The Linux Go backend supports image conversion plus FFmpeg-backed video and audi
 
 - `fcd` serves protocol v1 over `$XDG_RUNTIME_DIR/file-converter/fcd.sock`.
 - `fcctl` is a small NDJSON development client.
-- Supported image presets are `image-to-png`, `image-to-jpeg`, `image-to-webp`, `image-to-jxl`, `image-to-avif`, `image-to-gif`, `image-to-bmp`, `image-to-tiff`, `image-to-ico`, and `image-to-heic`.
-- Media presets are exactly five video outputs (`video-to-mp4`, `video-to-mov`, `video-to-webm`, `video-to-mkv`, `video-to-avi`) and twelve audio outputs (`audio-to-mp3`, `audio-to-wav`, `audio-to-flac`, `audio-to-aac`, `audio-to-m4a`, `audio-to-ogg`, `audio-to-opus`, `audio-to-aiff`, `audio-to-alac`, `audio-to-ac3`, `audio-to-amr`, `audio-to-wma`). `ffprobe` classifies sources from their stream contents, with video taking precedence when both audio and video streams exist. Video inputs may extract audio using FFmpeg's `-vn` option; audio sources never advertise video targets.
+### Image conversions
+
+Image conversions use ImageMagick. The available output targets are:
+
+| Output format | Preset |
+| --- | --- |
+| PNG | `image-to-png` |
+| JPEG | `image-to-jpeg` |
+| WebP | `image-to-webp` |
+| JPEG XL | `image-to-jxl` |
+| AVIF | `image-to-avif` |
+| GIF | `image-to-gif` |
+| BMP | `image-to-bmp` |
+| TIFF | `image-to-tiff` |
+| ICO | `image-to-ico` |
+| HEIC | `image-to-heic` |
+
+### Video conversions
+
+Video conversions use FFmpeg. Video inputs can also be converted to audio outputs, but audio inputs never advertise video targets.
+
+| Output format | Preset |
+| --- | --- |
+| MP4 | `video-to-mp4` |
+| MOV | `video-to-mov` |
+| WebM | `video-to-webm` |
+| MKV | `video-to-mkv` |
+| AVI | `video-to-avi` |
+| Animated GIF | `video-to-gif` |
+
+### Audio conversions
+
+Audio conversions use FFmpeg. Video inputs may extract audio using FFmpeg's `-vn` option.
+
+| Output format | Preset |
+| --- | --- |
+| MP3 | `audio-to-mp3` |
+| WAV | `audio-to-wav` |
+| FLAC | `audio-to-flac` |
+| AAC | `audio-to-aac` |
+| M4A | `audio-to-m4a` |
+| OGG | `audio-to-ogg` |
+| Opus | `audio-to-opus` |
+| AIFF | `audio-to-aiff` |
+| ALAC | `audio-to-alac` |
+| AC3 | `audio-to-ac3` |
+| AMR | `audio-to-amr` |
+| WMA | `audio-to-wma` |
+
+`ffprobe` classifies media sources from their stream contents, with video taking precedence when both audio and video streams exist.
 - ICO output is capped at 256×256; GIF/WebP animation is preserved when supported.
 - Inputs are absolute regular files and formats are detected from file content.
 - ImageMagick performs conversion. The daemon never uploads files or uses a network service.
