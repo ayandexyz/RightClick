@@ -8,6 +8,7 @@ if _here not in sys.path:
 
 from fc_client.client import FcClient, FcError, DaemonUnavailable, RequestError
 from fc_client.daemon import ensure_daemon
+from fc_client.messages import friendly_error
 from fc_client.notify import send
 
 log = logging.getLogger("file_converter")
@@ -220,16 +221,11 @@ def _notify_operation(job, op):
             send(title, f"{len(done)} done, {len(skipped)} skipped")
     elif state == "failed":
         first = failed[0].get("error", {})
-        code = first.get("code", "")
-        message = first.get("message", "")
-        if code == "invalid_pdf":
-            send(title, f"PDF could not be read: {message}")
-        elif code == "password_required":
-            send(title, "PDF is locked — passwords are not supported yet")
-        elif message:
-            send(f"{title} failed", message)
-        else:
-            send(f"{title} failed", "Operation failed")
+        send(f"{title} failed", friendly_error(
+            first.get("code", ""),
+            first.get("message", ""),
+            os.path.basename(failed[0].get("source", "")),
+        ))
     elif state == "cancelled":
         send(f"{title} cancelled", "")
     else:

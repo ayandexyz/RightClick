@@ -61,7 +61,9 @@ def main():
         shutil.copy2(FRONTEND / "file_converter.py", extension_dir / "file_converter.py")
         package = extension_dir / "fc_client"
         shutil.rmtree(package, ignore_errors=True)
-        shutil.copytree(FRONTEND / "fc_client", package)
+        # The client is shared with the PDF Studio and lives outside this
+        # frontend, but the installed layout is unchanged: extensions/fc_client/.
+        shutil.copytree(ROOT / "frontends" / "common" / "fc_client", package)
         bin_dir = Path.home() / ".local/bin"
         bin_dir.mkdir(parents=True, exist_ok=True)
         # Copy beside the target and rename: a running fcd keeps its old inode, so this works while the service runs.

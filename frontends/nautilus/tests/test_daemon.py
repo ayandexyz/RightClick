@@ -6,7 +6,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-sys.path.insert(0, str(Path(__file__).parents[1]))
+# The client lives in frontends/common so the Studio can share it.
+sys.path.insert(0, str(Path(__file__).parents[2] / "common"))
 from fc_client import daemon
 
 
