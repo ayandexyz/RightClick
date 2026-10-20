@@ -40,3 +40,25 @@ func TestPDFCPUImportImagesReal(t *testing.T) {
 		t.Fatalf("output not written: %v", err)
 	}
 }
+
+// The job layer creates an empty placeholder at the output path before calling
+// the backend. pdfcpu appends to an existing file, so the import must still
+// produce a valid PDF with one page per image.
+func TestPDFCPUImportImagesOverEmptyPlaceholder(t *testing.T) {
+	tmp := t.TempDir()
+	a, b := filepath.Join(tmp, "a.png"), filepath.Join(tmp, "b.png")
+	makePNG(t, a)
+	makePNG(t, b)
+	out := filepath.Join(tmp, "out.pdf")
+	if err := os.WriteFile(out, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	be := NewPDFCPUBackend()
+	if err := be.ImportImages(context.Background(), []string{a, b}, out); err != nil {
+		t.Fatalf("ImportImages over a placeholder = %v", err)
+	}
+	pages, err := be.PageCount(context.Background(), out)
+	if err != nil || pages != 2 {
+		t.Fatalf("pages = %d, err = %v, want 2 pages", pages, err)
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -121,6 +122,12 @@ func (b *PDFCPU) Rotate(ctx context.Context, input, output string, pages []int, 
 func (b *PDFCPU) ImportImages(ctx context.Context, inputs []string, output string) error {
 	if len(inputs) == 0 {
 		return fmt.Errorf("images-to-pdf needs at least one image")
+	}
+	// ImportImagesFile appends to an existing output file, and the job layer
+	// hands every backend an empty placeholder, which pdfcpu would then try to
+	// read as a PDF. Clear the placeholder so it writes a fresh file.
+	if err := os.Remove(output); err != nil && !os.IsNotExist(err) {
+		return err
 	}
 	return runPDFCPU(ctx, func() error {
 		return api.ImportImagesFile(inputs, output, nil, model.NewDefaultConfiguration())
