@@ -168,6 +168,7 @@ func (s *Server) handle(conn net.Conn) {
 				Quality    *int     `json:"quality,omitempty"`
 				MaxSize    *int     `json:"max_size,omitempty"`
 				Background string   `json:"background,omitempty"`
+				Recursive  bool     `json:"recursive,omitempty"`
 			}
 			if json.Unmarshal(req.Params, &p) != nil {
 				if writeError(write, req.ID, "bad_request", "invalid convert params") != nil {
@@ -178,7 +179,7 @@ func (s *Server) handle(conn net.Conn) {
 			if p.Conflict == "" {
 				p.Conflict = "rename"
 			}
-			id, err := s.deps.Jobs.Submit(jobs.SubmitRequest{Files: p.Files, Preset: p.Preset, OutputDir: p.OutputDir, Conflict: protocol.ConflictPolicy(p.Conflict), Options: protocol.ImageOptions{Quality: p.Quality, MaxSize: p.MaxSize, Background: strings.ToLower(p.Background)}, Events: writeEvent(write)})
+			id, err := s.deps.Jobs.Submit(jobs.SubmitRequest{Files: p.Files, Preset: p.Preset, OutputDir: p.OutputDir, Conflict: protocol.ConflictPolicy(p.Conflict), Recursive: p.Recursive, Options: protocol.ImageOptions{Quality: p.Quality, MaxSize: p.MaxSize, Background: strings.ToLower(p.Background)}, Events: writeEvent(write)})
 			if err != nil {
 				code := "unsupported"
 				if errors.Is(err, formats.ErrInvalidInput) {

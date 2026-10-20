@@ -63,7 +63,16 @@ Target = {
 Targets are ordered by the user's toolbar profile, so frontends keep the order.
 
 ### `convert`
-`params: {files: [path], preset: string, output_dir?: string, on_conflict?: "rename"|"skip"|"overwrite", quality?: 1..100, max_size?: positive integer, background?: color}`
+`params: {files: [path], preset: string, output_dir?: string, on_conflict?: "rename"|"skip"|"overwrite", quality?: 1..100, max_size?: positive integer, background?: color, recursive?: bool}`
+
+### Folders
+`files` may contain folders as well as files. A folder contributes its top-level files, or every file below it when `recursive` is true. Expansion is deterministic: files keep request order and the files a folder contributes are sorted by path. Hidden files and folders and symbolic links found while scanning are skipped, so a scan never leaves the folder. Files named directly are kept even if hidden.
+
+With `output_dir`, a file found under a folder keeps its path relative to that folder (`photos/trip/a.png` with `output_dir: /dest` writes `/dest/trip/a.jpg`); without it, outputs sit next to their sources. Files named directly go straight into `output_dir`.
+
+A file found by scanning that cannot be converted (unknown type, same format as the target, no route, unsafe name) is reported as `skipped` with the reason in the file's `notice`, and does not fail the job. The same problem with a file named directly is a `failed` file. A folder with nothing to convert is rejected with `bad_request`.
+
+`fcctl convert FOLDER --recursive --out-dir DEST --to jpeg`; relative paths are resolved by `fcctl`.
 
 Image presets include `image-to-png`, `image-to-jpeg`, `image-to-webp`, `image-to-jxl`, `image-to-avif`, `image-to-gif`, `image-to-bmp`, `image-to-tiff`, `image-to-ico`, and `image-to-heic`. The daemon advertises only targets writable by the installed ImageMagick build. ICO output is limited to 256×256.
 

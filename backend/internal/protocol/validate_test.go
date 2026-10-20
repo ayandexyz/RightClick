@@ -419,3 +419,14 @@ func TestValidateMenuRequests(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateConvertAcceptsRecursiveFlag(t *testing.T) {
+	params := json.RawMessage(`{"files":["/tmp/folder"],"preset":"image-to-jpeg","recursive":true}`)
+	if err := ValidateRequest(Request{ID: 1, Method: "convert", Params: params}); err != nil {
+		t.Fatalf("rejected: %+v", err)
+	}
+	bad := json.RawMessage(`{"files":["/tmp/folder"],"preset":"image-to-jpeg","recursive":"yes"}`)
+	if err := ValidateRequest(Request{ID: 1, Method: "convert", Params: bad}); err == nil {
+		t.Fatal("non-boolean recursive accepted")
+	}
+}

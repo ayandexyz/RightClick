@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -65,6 +66,13 @@ func TestParseImageOptionsRejectBadValuesAndNonConvert(t *testing.T) {
 		if _, err := parseArgs(args); err == nil {
 			t.Fatalf("parseArgs(%v) succeeded", args)
 		}
+	}
+}
+
+func TestFormatFinishedEventIncludesSkipNotice(t *testing.T) {
+	message := wireEvent{Event: "job.finished", Data: jobData{ID: "job-1", State: "completed", Files: []fileData{{Source: "/p/notes.txt", State: "skipped", Notice: "unsupported image format"}}}}
+	if line := formatHumanEvent(message); !strings.Contains(line, "skipped /p/notes.txt: unsupported image format") {
+		t.Fatalf("line = %q", line)
 	}
 }
 
@@ -151,5 +159,44 @@ func TestFormatMenuHumanReadable(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("output %q missing %q", got, want)
 		}
+	}
+}
+
+func TestParseConvertRecursiveAndOutDirAlias(t *testing.T) {
+	cmd, err := parseArgs([]string{"convert", "/photos", "--recursive", "--to", "jpeg", "--out-dir", "/dest"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cmd.recursive || cmd.outputDir != "/dest" {
+		t.Fatalf("cmd = %+v", cmd)
+	}
+	var params map[string]any
+	_ = json.Unmarshal(commandRequest(cmd).Params, &params)
+	if params["recursive"] != true || params["output_dir"] != "/dest" {
+		t.Fatalf("params = %#v", params)
+	}
+	plain, _ := parseArgs([]string{"convert", "/a.png", "--to", "jpeg"})
+	var plainParams map[string]any
+	_ = json.Unmarshal(commandRequest(plain).Params, &plainParams)
+	if _, ok := plainParams["recursive"]; ok {
+		t.Fatalf("recursive sent without the flag: %#v", plainParams)
+	}
+	if _, err := parseArgs([]string{"targets", "/a", "--recursive"}); err == nil {
+		t.Fatal("--recursive only applies to convert")
+	}
+}
+
+func TestParseConvertMakesRelativeInputsAbsolute(t *testing.T) {
+	cmd, err := parseArgs([]string{"convert", "photos/", "--to", "jpeg", "--out-dir", "dest"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var params struct {
+		Files     []string `json:"files"`
+		OutputDir string   `json:"output_dir"`
+	}
+	_ = json.Unmarshal(commandRequest(cmd).Params, &params)
+	if !filepath.IsAbs(params.Files[0]) || !strings.HasSuffix(params.Files[0], "/photos") || !filepath.IsAbs(params.OutputDir) {
+		t.Fatalf("params = %+v", params)
 	}
 }

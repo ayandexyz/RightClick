@@ -508,3 +508,51 @@ func TestServerMenuSetRejectsUnknownFormatAndCorruptFileFallsBack(t *testing.T) 
 		t.Fatalf("unknown format: %#v", bad)
 	}
 }
+
+func TestServerConvertRecursiveFolder(t *testing.T) {
+	conn, cleanup := startTestServer(t, &testEngine{})
+	defer cleanup()
+	root := t.TempDir()
+	for _, rel := range []string{"a.png", "sub/b.png"} {
+		path := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("\x89PNG\r\n\x1a\nfixture"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out := t.TempDir()
+	resp := sendRequest(t, conn, protocol.Request{ID: 1, Method: "convert", Params: mustJSON(map[string]any{
+		"files": []string{root}, "preset": "image-to-webp", "output_dir": out, "recursive": true,
+	})})
+	if resp["error"] != nil {
+		t.Fatalf("convert: %#v", resp)
+	}
+	deadline := time.After(3 * time.Second)
+	for {
+		for _, want := range []string{"a.webp", "sub/b.webp"} {
+			if _, err := os.Stat(filepath.Join(out, want)); err != nil {
+				goto retry
+			}
+		}
+		return
+	retry:
+		select {
+		case <-deadline:
+			t.Fatal("recursive outputs were not written")
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+}
+
+func TestServerConvertEmptyFolderIsBadRequest(t *testing.T) {
+	conn, cleanup := startTestServer(t, &testEngine{})
+	defer cleanup()
+	resp := sendRequest(t, conn, protocol.Request{ID: 1, Method: "convert", Params: mustJSON(map[string]any{
+		"files": []string{t.TempDir()}, "preset": "image-to-webp",
+	})})
+	if errValue, ok := resp["error"].(map[string]any); !ok || errValue["code"] != "bad_request" {
+		t.Fatalf("empty folder: %#v", resp)
+	}
+}

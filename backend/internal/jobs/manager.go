@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"file-converter/backend/internal/batch"
 	"file-converter/backend/internal/engine"
 	"file-converter/backend/internal/formats"
 	"file-converter/backend/internal/protocol"
@@ -45,6 +46,9 @@ type SubmitRequest struct {
 	OutputDir string
 	Conflict  protocol.ConflictPolicy
 	Options   protocol.ImageOptions
+	// Recursive makes folders in Files contribute every file below them
+	// instead of only their top-level files.
+	Recursive bool
 	Events    func(protocol.Event)
 }
 
@@ -67,6 +71,9 @@ type job struct {
 	req    SubmitRequest
 	ctx    context.Context
 	cancel context.CancelFunc
+	items  []batch.Item
+	// preSkip holds a reason for folder entries that can never be converted.
+	preSkip map[int]string
 
 	publicationMu sync.Mutex
 	published     bool
@@ -99,8 +106,28 @@ func (m *Manager) Submit(req SubmitRequest) (string, error) {
 		return "", fmt.Errorf("no files")
 	}
 	for _, file := range req.Files {
+		if info, err := os.Stat(file); err == nil && info.IsDir() && filepath.IsAbs(file) {
+			continue
+		}
 		if err := formats.ValidateInput(file); err != nil {
 			return "", err
+		}
+	}
+	items, err := batch.ExpandInputs(req.Files, req.Recursive)
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", formats.ErrInvalidInput, err)
+	}
+	if len(items) == 0 {
+		return "", fmt.Errorf("%w: no files to convert", formats.ErrInvalidInput)
+	}
+	preSkip := map[int]string{}
+	req.Files = make([]string, len(items))
+	for i, item := range items {
+		req.Files[i] = item.Path
+		if !item.Explicit {
+			if err := formats.ValidateInput(item.Path); err != nil {
+				preSkip[i] = err.Error()
+			}
 		}
 	}
 	targetPreset := strings.ToLower(req.Preset)
@@ -131,7 +158,10 @@ func (m *Manager) Submit(req SubmitRequest) (string, error) {
 	if formats.IsVideoFormat(targetFormat) {
 		// Media probing is repeated by the worker, but reject audio-to-video
 		// requests synchronously so the protocol returns a stable error.
-		for _, file := range req.Files {
+		for i, file := range req.Files {
+			if !items[i].Explicit {
+				continue
+			}
 			sourceFormat, detectErr := formats.Detect(file)
 			if detectErr != nil {
 				if mediaRouter, ok := m.router.(MediaSourceRouter); ok {
@@ -146,7 +176,7 @@ func (m *Manager) Submit(req SubmitRequest) (string, error) {
 	req.Preset = targetPreset
 	id := fmt.Sprintf("job-%d", m.next.Add(1))
 	ctx, cancel := context.WithCancel(context.Background())
-	j := &job{id: id, req: req, ctx: ctx, cancel: cancel}
+	j := &job{id: id, req: req, ctx: ctx, cancel: cancel, items: items, preSkip: preSkip}
 	m.mu.Lock()
 	m.jobs[id] = j
 	m.mu.Unlock()
@@ -369,11 +399,7 @@ func (m *Manager) run(j *job) {
 	m.mu.Unlock()
 }
 
-func (m *Manager) convertMany(j *job, index int, file protocol.FileJob, route registry.MultiOutputEngine, source string, sourceFormat, target formats.Format, ext string) fileResult {
-	outputDir := j.req.OutputDir
-	if outputDir == "" {
-		outputDir = filepath.Dir(source)
-	}
+func (m *Manager) convertMany(j *job, index int, file protocol.FileJob, route registry.MultiOutputEngine, source string, sourceFormat, target formats.Format, ext, outputDir string) fileResult {
 	if err := os.MkdirAll(outputDir, 0o700); err != nil {
 		file.State = "failed"
 		file.Error = &protocol.FileError{Code: "internal", Message: err.Error()}
@@ -503,6 +529,21 @@ func (m *Manager) convertFile(j *job, index int, source string, target formats.F
 		file.State = "cancelled"
 		return fileResult{index: index, file: file}
 	}
+	if reason, ok := j.preSkip[index]; ok {
+		file.State, file.Notice = "skipped", reason
+		return fileResult{index: index, file: file}
+	}
+	// Files found by scanning a folder were not asked for by name, so being
+	// unable to convert one is a skip, not a failure of the whole request.
+	unsupported := func(message string) fileResult {
+		if !j.items[index].Explicit {
+			file.State, file.Notice = "skipped", message
+		} else {
+			file.State = "failed"
+			file.Error = &protocol.FileError{Code: "unsupported", Message: message}
+		}
+		return fileResult{index: index, file: file}
+	}
 	sourceFormat, err := formats.Detect(source)
 	if err != nil {
 		if mediaRouter, ok := m.router.(MediaSourceRouter); ok {
@@ -511,17 +552,13 @@ func (m *Manager) convertFile(j *job, index int, source string, target formats.F
 		if err != nil {
 			if j.ctx.Err() != nil {
 				file.State = "cancelled"
-			} else {
-				file.State = "failed"
-				file.Error = &protocol.FileError{Code: "unsupported", Message: err.Error()}
+				return fileResult{index: index, file: file}
 			}
-			return fileResult{index: index, file: file}
+			return unsupported(err.Error())
 		}
 	}
 	if sourceFormat == target {
-		file.State = "failed"
-		file.Error = &protocol.FileError{Code: "unsupported", Message: "source and target formats are identical"}
-		return fileResult{index: index, file: file}
+		return unsupported("source and target formats are identical")
 	}
 	ext := string(target)
 	if target == formats.JPEG {
@@ -529,16 +566,18 @@ func (m *Manager) convertFile(j *job, index int, source string, target formats.F
 	}
 	route, err := m.router.Resolve(sourceFormat, target)
 	if err != nil {
-		file.State = "failed"
-		file.Error = &protocol.FileError{Code: "unsupported", Message: err.Error()}
-		return fileResult{index: index, file: file}
+		return unsupported(err.Error())
 	}
+	outputDir := j.items[index].OutputDir(j.req.OutputDir)
 	if multi, ok := route.(registry.MultiOutputEngine); ok {
-		return m.convertMany(j, index, file, multi, source, sourceFormat, target, ext)
+		if outputDir == "" {
+			outputDir = filepath.Dir(source)
+		}
+		return m.convertMany(j, index, file, multi, source, sourceFormat, target, ext, outputDir)
 	}
 	m.outputMu.Lock()
 	defer m.outputMu.Unlock()
-	plan, err := engine.PlanOutput(j.req.OutputDir, source, ext, j.req.Conflict)
+	plan, err := engine.PlanOutput(outputDir, source, ext, j.req.Conflict)
 	if err != nil {
 		file.State = "failed"
 		file.Error = &protocol.FileError{Code: "internal", Message: err.Error()}

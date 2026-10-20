@@ -28,6 +28,7 @@ type command struct {
 	job        string
 	jsonOutput bool
 	menu       bool
+	recursive  bool
 	menuAction string
 	menuArgs   []string
 }
@@ -48,6 +49,7 @@ type fileData struct {
 	Source string     `json:"source"`
 	State  string     `json:"state"`
 	Error  *fileError `json:"error,omitempty"`
+	Notice string     `json:"notice,omitempty"`
 }
 
 type fileError struct {
@@ -138,7 +140,7 @@ func parseArgs(args []string) (command, error) {
 				return command{}, err
 			}
 			cmd.preset, i = presetForTarget(value), next
-		case "--output-dir":
+		case "--output-dir", "--out-dir":
 			value, next, err := optionValue(args, i)
 			if err != nil {
 				return command{}, err
@@ -166,6 +168,8 @@ func parseArgs(args []string) (command, error) {
 				return command{}, err
 			}
 			cmd.background, i = value, next
+		case "--recursive":
+			cmd.recursive = true
 		case "--menu":
 			cmd.menu = true
 		case "--on-conflict":
@@ -207,6 +211,9 @@ func parseArgs(args []string) (command, error) {
 		if err := validateMenuArgs(cmd); err != nil {
 			return command{}, err
 		}
+	}
+	if cmd.recursive && cmd.name != "convert" {
+		return command{}, fmt.Errorf("--recursive requires convert")
 	}
 	if cmd.menu && cmd.name != "targets" {
 		return command{}, fmt.Errorf("--menu requires targets")
@@ -288,6 +295,7 @@ func commandRequest(cmd command) protocol.Request {
 		if cmd.menu {
 			params["menu"] = true
 		}
+		params["files"] = absolutePaths(cmd.files)
 		return protocol.Request{ID: 1, Method: "targets", Params: raw(params)}
 	case "menu":
 		params := map[string]any{"action": cmd.menuAction}
@@ -303,7 +311,10 @@ func commandRequest(cmd command) protocol.Request {
 	case "cancel":
 		return protocol.Request{ID: 1, Method: "cancel", Params: raw(map[string]any{"job": cmd.job})}
 	default:
-		params := map[string]any{"files": cmd.files, "preset": cmd.preset, "output_dir": cmd.outputDir, "on_conflict": cmd.conflict}
+		params := map[string]any{"files": absolutePaths(cmd.files), "preset": cmd.preset, "output_dir": absolutePath(cmd.outputDir), "on_conflict": cmd.conflict}
+		if cmd.recursive {
+			params["recursive"] = true
+		}
 		if cmd.quality != nil {
 			params["quality"] = *cmd.quality
 		}
@@ -409,13 +420,35 @@ func formatHumanEvent(message wireEvent) string {
 	for _, file := range message.Data.Files {
 		if file.Error != nil {
 			line += fmt.Sprintf("\n  %s: %s", file.Source, file.Error.Message)
+		} else if file.State == "skipped" && file.Notice != "" {
+			line += fmt.Sprintf("\n  skipped %s: %s", file.Source, file.Notice)
 		}
 	}
 	return line
 }
 
+// absolutePath resolves a command-line path against the working directory; the
+// daemon only accepts absolute paths. Empty and unresolvable paths pass through.
+func absolutePath(path string) string {
+	if path == "" {
+		return path
+	}
+	if abs, err := filepath.Abs(path); err == nil {
+		return abs
+	}
+	return path
+}
+
+func absolutePaths(paths []string) []string {
+	out := make([]string, len(paths))
+	for i, path := range paths {
+		out[i] = absolutePath(path)
+	}
+	return out
+}
+
 func raw(value any) json.RawMessage { data, _ := json.Marshal(value); return data }
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: fcctl hello | engines [--json] | targets FILE... [--menu] [--json] | menu show | menu set CATEGORY FORMAT... | menu reset [CATEGORY] | convert FILE... (--to png|jpeg|webp|jxl|avif|gif|bmp|tiff|ico|heic | --preset PRESET) [--quality 1-100] [--max-size PX] [--background COLOR] [--output-dir DIR] [--on-conflict POLICY] [--json] | cancel JOB [--json]")
+	fmt.Fprintln(os.Stderr, "usage: fcctl hello | engines [--json] | targets FILE... [--menu] [--json] | menu show | menu set CATEGORY FORMAT... | menu reset [CATEGORY] | convert FILE... (--to png|jpeg|webp|jxl|avif|gif|bmp|tiff|ico|heic | --preset PRESET) [--quality 1-100] [--max-size PX] [--background COLOR] [--out-dir DIR] [--recursive] [--on-conflict POLICY] [--json] | cancel JOB [--json]")
 }
 func fatal(err error) { fmt.Fprintln(os.Stderr, err); os.Exit(1) }

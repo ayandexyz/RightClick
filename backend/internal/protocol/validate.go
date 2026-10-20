@@ -170,6 +170,7 @@ func validateConvert(params json.RawMessage) (string, string) {
 		Quality    *int     `json:"quality,omitempty"`
 		MaxSize    *int     `json:"max_size,omitempty"`
 		Background string   `json:"background,omitempty"`
+		Recursive  bool     `json:"recursive,omitempty"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return "bad_request", "invalid convert params"
