@@ -46,7 +46,9 @@ PDF inputs are rasterized with Poppler's `pdftocairo` at 150 DPI, and every page
 | JPEG | `pdf-to-jpeg` |
 | WebP | `pdf-to-webp` |
 
-`pdftocairo` is required for all PDF conversions. ImageMagick is used only for `pdf-to-webp`, where the rendered PNG pages are converted to WebP; PNG and JPEG outputs come straight from `pdftocairo`. Page selection and page-range options are not supported, so a document always produces one output per page. Converting to PDF, video, audio, or SVG is unsupported.
+`pdftocairo` is required for all PDF conversions. ImageMagick is used only for `pdf-to-webp`, where the rendered PNG pages are converted to WebP; PNG and JPEG outputs come straight from `pdftocairo`. Converting to PDF, video, audio, or SVG is unsupported.
+
+Structural PDF operations (merge, extract, delete, rotate, reverse) are linked in from [pdfcpu](https://github.com/pdfcpu/pdfcpu), pinned at **v0.12.0**, so they need no external binary.
 
 ### Video conversions
 
