@@ -61,6 +61,22 @@ func TestPlanOutputConflictPolicies(t *testing.T) {
 	}
 }
 
+func TestJXLCommandUsesExplicitFormatSpecifiers(t *testing.T) {
+	var gotArgs []string
+	e := NewImageMagick(func(_ context.Context, _ string, args []string) error {
+		gotArgs = args
+		return nil
+	})
+	e.executable = "magick"
+	if err := e.Convert(context.Background(), "/tmp/photo.png", formats.PNG, "/tmp/out.jxl", formats.JXL); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(gotArgs, " ")
+	if !strings.Contains(joined, "png:/tmp/photo.png") || !strings.Contains(joined, "jxl:/tmp/out.jxl") {
+		t.Fatalf("missing JPEG XL format specifiers: %v", gotArgs)
+	}
+}
+
 func TestWebPCommandUsesFirstFrameInInputSpecifier(t *testing.T) {
 	var gotArgs []string
 	e := NewImageMagick(func(_ context.Context, _ string, args []string) error {

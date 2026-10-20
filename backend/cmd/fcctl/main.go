@@ -189,6 +189,8 @@ func presetForTarget(target string) string {
 		return "image-to-jpeg"
 	case "webp":
 		return "image-to-webp"
+	case "jxl":
+		return "image-to-jxl"
 	default:
 		return ""
 	}
@@ -253,6 +255,6 @@ func formatHumanEvent(message wireEvent) string {
 
 func raw(value any) json.RawMessage { data, _ := json.Marshal(value); return data }
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: fcctl hello | targets FILE... [--json] | convert FILE... (--to png|jpeg|webp | --preset PRESET) [--output-dir DIR] [--on-conflict POLICY] [--json] | cancel JOB [--json]")
+	fmt.Fprintln(os.Stderr, "usage: fcctl hello | targets FILE... [--json] | convert FILE... (--to png|jpeg|webp|jxl | --preset PRESET) [--output-dir DIR] [--on-conflict POLICY] [--json] | cancel JOB [--json]")
 }
 func fatal(err error) { fmt.Fprintln(os.Stderr, err); os.Exit(1) }

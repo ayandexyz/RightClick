@@ -30,7 +30,7 @@ func (e *ImageMagick) Supports(source, target formats.Format) bool {
 }
 
 func isImageFormat(format formats.Format) bool {
-	return format == formats.PNG || format == formats.JPEG || format == formats.WebP
+	return format == formats.PNG || format == formats.JPEG || format == formats.WebP || format == formats.JXL
 }
 
 func (e *ImageMagick) Available() (string, error) {
@@ -97,7 +97,7 @@ func PlanOutput(dir, source string, targetExt string, conflict protocol.Conflict
 	if unsafeBase(filepath.Base(source)) {
 		return OutputPlan{}, fmt.Errorf("unsafe image path")
 	}
-	if targetExt != "png" && targetExt != "jpg" && targetExt != "webp" {
+	if targetExt != "png" && targetExt != "jpg" && targetExt != "webp" && targetExt != "jxl" {
 		return OutputPlan{}, fmt.Errorf("unsupported target extension: %s", targetExt)
 	}
 	if dir == "" {

@@ -236,7 +236,7 @@ func TestSupportedPresets(t *testing.T) {
 	}
 
 	// Check that common formats are present and have proper Target structure
-	required := []string{"image-to-png", "image-to-jpeg", "image-to-webp"}
+	required := []string{"image-to-png", "image-to-jpeg", "image-to-webp", "image-to-jxl"}
 	for _, r := range required {
 		found := false
 		for _, p := range presets {

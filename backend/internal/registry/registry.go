@@ -59,7 +59,7 @@ func (r *Registry) TargetsForFiles(paths []string) ([]protocol.Target, error) {
 			return nil, err
 		}
 		available := make(map[formats.Format]bool)
-		for _, target := range []formats.Format{formats.PNG, formats.JPEG, formats.WebP} {
+		for _, target := range []formats.Format{formats.PNG, formats.JPEG, formats.WebP, formats.JXL} {
 			if target != source {
 				if _, err := r.Resolve(source, target); err == nil {
 					available[target] = true
@@ -89,7 +89,7 @@ func (r *Registry) TargetsForFiles(paths []string) ([]protocol.Target, error) {
 func (r *Registry) Targets(source formats.Format) []formats.Format {
 	seen := make(map[formats.Format]bool)
 	out := make([]formats.Format, 0, 3)
-	for _, target := range []formats.Format{formats.PNG, formats.JPEG, formats.WebP} {
+	for _, target := range []formats.Format{formats.PNG, formats.JPEG, formats.WebP, formats.JXL} {
 		if target == source || seen[target] {
 			continue
 		}

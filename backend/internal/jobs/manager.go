@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -80,7 +81,7 @@ func (m *Manager) Submit(req SubmitRequest) (string, error) {
 			return "", err
 		}
 	}
-	targetPreset := req.Preset
+	targetPreset := strings.ToLower(req.Preset)
 	switch targetPreset {
 	case "png":
 		targetPreset = "image-to-png"
@@ -88,6 +89,8 @@ func (m *Manager) Submit(req SubmitRequest) (string, error) {
 		targetPreset = "image-to-jpeg"
 	case "webp":
 		targetPreset = "image-to-webp"
+	case "jxl":
+		targetPreset = "image-to-jxl"
 	}
 	if _, ok := formats.PresetFormat(targetPreset); !ok {
 		return "", fmt.Errorf("unsupported preset")

@@ -75,6 +75,21 @@ func TestManagerConvertsAndEmitsFinished(t *testing.T) {
 	}
 }
 
+func TestManagerAcceptsCaseInsensitivePreset(t *testing.T) {
+	fake := &fakeConverter{}
+	events := make(chan protocol.Event, 16)
+	m := NewManager(fake)
+	defer m.Close()
+	id, err := m.Submit(SubmitRequest{Files: []string{imageFixture(t)}, Preset: "IMAGE-TO-JPEG", OutputDir: t.TempDir(), Conflict: protocol.ConflictRename, Events: func(e protocol.Event) { events <- e }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := waitJob(t, events)
+	if job.ID != id || job.State != "completed" {
+		t.Fatalf("unexpected job: %+v", job)
+	}
+}
+
 func TestManagerCancellationRemovesTemporaryOutput(t *testing.T) {
 	fake := &fakeConverter{block: true}
 	events := make(chan protocol.Event, 16)

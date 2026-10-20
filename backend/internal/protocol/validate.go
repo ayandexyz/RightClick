@@ -11,6 +11,7 @@ var supportedPresets = []Target{
 	{Preset: "image-to-png", Label: "PNG Image", Format: "png", Category: "image", Enabled: true},
 	{Preset: "image-to-jpeg", Label: "JPEG Image", Format: "jpeg", Category: "image", Enabled: true},
 	{Preset: "image-to-webp", Label: "WebP Image", Format: "webp", Category: "image", Enabled: true},
+	{Preset: "image-to-jxl", Label: "JPEG XL Image", Format: "jxl", Category: "image", Enabled: true},
 }
 
 // SupportedPresets returns the image conversion targets supported by this slice.

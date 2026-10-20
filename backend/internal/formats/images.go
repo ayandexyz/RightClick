@@ -15,6 +15,7 @@ const (
 	PNG  Format = "png"
 	JPEG Format = "jpeg"
 	WebP Format = "webp"
+	JXL  Format = "jxl"
 )
 
 var ErrUnsupported = errors.New("unsupported image format")
@@ -79,6 +80,12 @@ func Detect(path string) (Format, error) {
 	if n >= 12 && string(header[:4]) == "RIFF" && string(header[8:12]) == "WEBP" {
 		return WebP, nil
 	}
+	if n >= 2 && header[0] == 0xff && header[1] == 0x0a {
+		return JXL, nil
+	}
+	if n >= 12 && string(header[:12]) == "\x00\x00\x00\x0cJXL \x0d\x0a\x87\x0a" {
+		return JXL, nil
+	}
 	return "", ErrUnsupported
 }
 
@@ -90,6 +97,8 @@ func PresetFormat(preset string) (Format, bool) {
 		return JPEG, true
 	case "image-to-webp":
 		return WebP, true
+	case "image-to-jxl":
+		return JXL, true
 	default:
 		return "", false
 	}

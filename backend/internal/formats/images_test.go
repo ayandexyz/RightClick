@@ -11,6 +11,7 @@ var fixtures = map[string][]byte{
 	"png":  append([]byte("\x89PNG\r\n\x1a\n"), make([]byte, 8)...),
 	"jpeg": {0xff, 0xd8, 0xff, 0xe0, 0x00},
 	"webp": append([]byte("RIFF\x00\x00\x00\x00WEBP"), 0, 0, 0, 0),
+	"jxl":  {0xff, 0x0a},
 }
 
 func fixture(t *testing.T, kind string) string {
@@ -23,7 +24,7 @@ func fixture(t *testing.T, kind string) string {
 }
 
 func TestDetectUsesContent(t *testing.T) {
-	for kind, want := range map[string]Format{"png": PNG, "jpeg": JPEG, "webp": WebP} {
+	for kind, want := range map[string]Format{"png": PNG, "jpeg": JPEG, "webp": WebP, "jxl": JXL} {
 		if got, err := Detect(fixture(t, kind)); err != nil || got != want {
 			t.Fatalf("%s: got %q, %v", kind, got, err)
 		}
@@ -50,9 +51,9 @@ func TestTargetsAreOrderedAndExcludeInputFormats(t *testing.T) {
 		files []string
 		want  []string
 	}{
-		{"png", []string{png}, []string{"image-to-jpeg", "image-to-webp"}},
-		{"mixed", []string{png, jpeg}, []string{"image-to-webp"}},
-		{"all", []string{png, jpeg, webp}, nil},
+		{"png", []string{png}, []string{"image-to-jpeg", "image-to-webp", "image-to-jxl"}},
+		{"mixed", []string{png, jpeg}, []string{"image-to-webp", "image-to-jxl"}},
+		{"all", []string{png, jpeg, webp}, []string{"image-to-jxl"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := Targets(tc.files)
