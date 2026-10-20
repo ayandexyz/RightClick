@@ -2,8 +2,10 @@ package jobs
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -18,6 +20,79 @@ type fakeConverter struct {
 	mu    sync.Mutex
 	calls int
 	block bool
+	fail  bool
+}
+
+type fakeMultiConverter struct {
+	pages         int
+	fail          bool
+	outsidePath   string
+	rendered      chan struct{}
+	started       chan<- struct{}
+	release       <-chan struct{}
+	destinationCh chan string
+	outputMode    string
+	cancel        context.CancelFunc
+}
+
+func (f *fakeMultiConverter) ID() string                 { return "pdf" }
+func (f *fakeMultiConverter) PDFRasterizer()             {}
+func (f *fakeMultiConverter) Available() (string, error) { return "pdf", nil }
+func (f *fakeMultiConverter) Supports(source, target formats.Format) bool {
+	return source == formats.PDF && (target == formats.PNG || target == formats.JPEG || target == formats.WebP)
+}
+func (f *fakeMultiConverter) Convert(context.Context, string, formats.Format, string, formats.Format, protocol.ImageOptions) error {
+	return nil
+}
+func (f *fakeMultiConverter) ConvertMany(ctx context.Context, _ string, _ formats.Format, destination string, target formats.Format, _ protocol.ImageOptions) ([]string, error) {
+	if f.destinationCh != nil {
+		f.destinationCh <- destination
+	}
+	if f.rendered != nil {
+		select {
+		case <-f.rendered:
+		default:
+			close(f.rendered)
+		}
+	}
+	if f.started != nil {
+		f.started <- struct{}{}
+	}
+	if f.release != nil {
+		select {
+		case <-f.release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	if f.fail {
+		return nil, context.Canceled
+	}
+	paths := make([]string, f.pages)
+	for i := range paths {
+		paths[i] = filepath.Join(destination, fmt.Sprintf("page-%d.%s", i+1, target))
+		if err := os.WriteFile(paths[i], []byte(fmt.Sprintf("page %d", i+1)), 0o600); err != nil {
+			return nil, err
+		}
+	}
+	if f.outputMode == "symlink" {
+		link := filepath.Join(destination, "page-link.png")
+		if err := os.Symlink(paths[0], link); err != nil {
+			return nil, err
+		}
+		return []string{link}, nil
+	}
+	if f.outputMode == "directory" {
+		dir := filepath.Join(destination, "page-dir.png")
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			return nil, err
+		}
+		return []string{dir}, nil
+	}
+	if f.outsidePath != "" {
+		return append(paths, f.outsidePath), nil
+	}
+	return paths, nil
 }
 
 type fakeSVGConverter struct {
@@ -100,10 +175,14 @@ func (f *fakeMediaEngine) Convert(ctx context.Context, _ string, _ formats.Forma
 func (f *fakeConverter) Convert(ctx context.Context, _ string, _ formats.Format, destination string, _ formats.Format, _ protocol.ImageOptions) error {
 	f.mu.Lock()
 	f.calls++
+	fail := f.fail
 	f.mu.Unlock()
 	if f.block {
 		<-ctx.Done()
 		return ctx.Err()
+	}
+	if fail {
+		return fmt.Errorf("conversion failure")
 	}
 	return os.WriteFile(destination, []byte("converted"), 0o600)
 }
@@ -142,6 +221,745 @@ func waitJob(t *testing.T, events <-chan protocol.Event) protocol.Job {
 			t.Fatal("timed out waiting for job")
 			return protocol.Job{}
 		}
+	}
+}
+
+func TestManagerCommitsMultiPageOutputsInEngineOrder(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "document.pdf")
+	if err := os.WriteFile(source, []byte("%PDF-1.7"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output := t.TempDir()
+	r := registry.New()
+	r.Register(&fakeMultiConverter{pages: 2})
+	m := NewManagerWithRegistry(r)
+	defer m.Close()
+	events := make(chan protocol.Event, 16)
+	id, err := m.Submit(SubmitRequest{Files: []string{source}, Preset: "pdf-to-png", OutputDir: output, Conflict: protocol.ConflictRename, Events: func(e protocol.Event) { events <- e }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := waitJob(t, events)
+	if job.ID != id || job.State != "completed" || job.Files[0].State != "done" {
+		t.Fatalf("unexpected job: %+v", job)
+	}
+	want := []string{filepath.Join(output, "document-1.png"), filepath.Join(output, "document-2.png")}
+	if !reflect.DeepEqual(job.Files[0].Outputs, want) {
+		t.Fatalf("outputs = %v, want %v", job.Files[0].Outputs, want)
+	}
+	for _, path := range want {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("missing output %q: %v", path, err)
+		}
+	}
+	entries, err := os.ReadDir(output)
+	if err != nil || len(entries) != 2 {
+		t.Fatalf("output directory entries = %v, err = %v", entries, err)
+	}
+}
+
+func TestManagerReservesRenameDestinationsForDuplicateStems(t *testing.T) {
+	dir := t.TempDir()
+	firstDir := filepath.Join(dir, "first")
+	secondDir := filepath.Join(dir, "second")
+	if err := os.MkdirAll(firstDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(secondDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	first := filepath.Join(firstDir, "document.pdf")
+	second := filepath.Join(secondDir, "document.pdf")
+	for _, source := range []string{first, second} {
+		if err := os.WriteFile(source, []byte("%PDF-1.7"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	output := t.TempDir()
+	r := registry.New()
+	r.Register(&fakeMultiConverter{pages: 1})
+	m := NewManagerWithRegistry(r)
+	defer m.Close()
+	events := make(chan protocol.Event, 16)
+	if _, err := m.Submit(SubmitRequest{Files: []string{first, second}, Preset: "pdf-to-png", OutputDir: output, Conflict: protocol.ConflictRename, Events: func(e protocol.Event) { events <- e }}); err != nil {
+		t.Fatal(err)
+	}
+	job := waitJob(t, events)
+	if job.State != "completed" {
+		t.Fatalf("job = %+v", job)
+	}
+	want := []string{filepath.Join(output, "document-1.png"), filepath.Join(output, "document-1 (1).png")}
+	var got []string
+	for _, file := range job.Files {
+		if file.State != "done" || len(file.Outputs) != 1 {
+			t.Fatalf("file = %+v", file)
+		}
+		got = append(got, file.Outputs[0])
+	}
+	if !reflect.DeepEqual(got, want) && !reflect.DeepEqual(got, []string{want[1], want[0]}) {
+		t.Fatalf("outputs = %v, want %v in either completion order", got, want)
+	}
+	entries, err := os.ReadDir(output)
+	if err != nil || len(entries) != 2 {
+		t.Fatalf("output entries = %v, err = %v", entries, err)
+	}
+}
+
+func TestManagerReservesSingleOutputRenameDestinationsDuringConcurrentConversion(t *testing.T) {
+	dir := t.TempDir()
+	firstDir := filepath.Join(dir, "first")
+	secondDir := filepath.Join(dir, "second")
+	for _, sourceDir := range []string{firstDir, secondDir} {
+		if err := os.MkdirAll(sourceDir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first := filepath.Join(firstDir, "image.png")
+	second := filepath.Join(secondDir, "image.png")
+	for _, source := range []string{first, second} {
+		if err := os.WriteFile(source, []byte("\x89PNG\r\n\x1a\n00000000"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	output := t.TempDir()
+	m := NewManager(&fakeConverter{})
+	defer m.Close()
+	events := make(chan protocol.Event, 16)
+	if _, err := m.Submit(SubmitRequest{Files: []string{first, second}, Preset: "image-to-jpeg", OutputDir: output, Conflict: protocol.ConflictRename, Events: func(e protocol.Event) { events <- e }}); err != nil {
+		t.Fatal(err)
+	}
+	job := waitJob(t, events)
+	want := []string{filepath.Join(output, "image.jpg"), filepath.Join(output, "image (1).jpg")}
+	var got []string
+	for _, file := range job.Files {
+		got = append(got, file.Outputs...)
+	}
+	if !reflect.DeepEqual(got, want) && !reflect.DeepEqual(got, []string{want[1], want[0]}) {
+		t.Fatalf("outputs = %v, want %v in either completion order", got, want)
+	}
+}
+
+func TestManagerCancelDefersPendingRollbackToJobCleanup(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "input.png")
+	if err := os.WriteFile(source, []byte("\x89PNG\r\n\x1a\n00000000"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := engine.PlanOutput(dir, source, "jpg", protocol.ConflictRename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(plan.Temp, []byte("converted"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := plan.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(&fakeConverter{})
+	defer m.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	j := &job{id: "job-pending", ctx: ctx, cancel: cancel, pending: []engine.OutputPlan{plan}}
+	m.mu.Lock()
+	m.jobs[j.id] = j
+	m.mu.Unlock()
+	if err := m.Cancel(j.id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(plan.Destination); err != nil {
+		t.Fatalf("Cancel rolled back pending output before workers stopped: %v", err)
+	}
+	plan.Rollback()
+	m.mu.Lock()
+	delete(m.jobs, j.id)
+	m.mu.Unlock()
+}
+
+func TestManagerAllowsMultiPageConversionsToOverlapBeforePublication(t *testing.T) {
+	dir := t.TempDir()
+	firstDir := filepath.Join(dir, "first")
+	secondDir := filepath.Join(dir, "second")
+	for _, sourceDir := range []string{firstDir, secondDir} {
+		if err := os.MkdirAll(sourceDir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first := filepath.Join(firstDir, "document.pdf")
+	second := filepath.Join(secondDir, "document.pdf")
+	for _, source := range []string{first, second} {
+		if err := os.WriteFile(source, []byte("%PDF-1.7"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	output := t.TempDir()
+	started := make(chan struct{}, 2)
+	release := make(chan struct{})
+	r := registry.New()
+	r.Register(&fakeMultiConverter{pages: 1, started: started, release: release})
+	m := NewManagerWithRegistry(r)
+	defer m.Close()
+	events := make(chan protocol.Event, 16)
+	if _, err := m.Submit(SubmitRequest{Files: []string{first, second}, Preset: "pdf-to-png", OutputDir: output, Conflict: protocol.ConflictRename, Events: func(e protocol.Event) { events <- e }}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		select {
+		case <-started:
+		case <-time.After(3 * time.Second):
+			t.Fatal("multi-page conversions did not overlap during rendering")
+		}
+	}
+	close(release)
+	job := waitJob(t, events)
+	if job.State != "completed" {
+		t.Fatalf("job = %+v", job)
+	}
+}
+
+func TestManagerFinalizesSingleOutputOverwriteBackupOnSuccess(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "input.png")
+	if err := os.WriteFile(source, []byte("\x89PNG\r\n\x1a\n00000000"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(dir, "missing-output")
+	if err := os.Mkdir(output, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(output, "input.jpg")
+	if err := os.WriteFile(destination, []byte("original"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(&fakeConverter{})
+	defer m.Close()
+	events := make(chan protocol.Event, 8)
+	if _, err := m.Submit(SubmitRequest{Files: []string{source}, Preset: "image-to-jpeg", OutputDir: output, Conflict: protocol.ConflictOverwrite, Events: func(e protocol.Event) { events <- e }}); err != nil {
+		t.Fatal(err)
+	}
+	job := waitJob(t, events)
+	if job.Files[0].State != "done" {
+		t.Fatalf("job = %+v error = %+v", job, job.Files[0].Error)
+	}
+	data, err := os.ReadFile(destination)
+	if err != nil || string(data) != "converted" {
+		t.Fatalf("destination = %q, err = %v", data, err)
+	}
+	entries, err := os.ReadDir(output)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("output artifacts = %v, err = %v", entries, err)
+	}
+}
+
+func TestManagerRestoresSingleOutputOverwriteBackupOnConversionFailure(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "input.png")
+	if err := os.WriteFile(source, []byte("\x89PNG\r\n\x1a\n00000000"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(dir, "output")
+	if err := os.Mkdir(output, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(output, "input.jpg")
+	if err := os.WriteFile(destination, []byte("original"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(&fakeConverter{fail: true})
+	defer m.Close()
+	events := make(chan protocol.Event, 8)
+	if _, err := m.Submit(SubmitRequest{Files: []string{source}, Preset: "image-to-jpeg", OutputDir: output, Conflict: protocol.ConflictOverwrite, Events: func(e protocol.Event) { events <- e }}); err != nil {
+		t.Fatal(err)
+	}
+	job := waitJob(t, events)
+	if job.Files[0].State != "failed" {
+		t.Fatalf("job = %+v", job)
+	}
+	data, err := os.ReadFile(destination)
+	if err != nil || string(data) != "original" {
+		t.Fatalf("destination = %q, err = %v", data, err)
+	}
+	entries, err := os.ReadDir(output)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("output artifacts = %v, err = %v", entries, err)
+	}
+}
+
+func TestManagerCreatesMissingMultiOutputDirectoryBeforeRender(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "document.pdf")
+	if err := os.WriteFile(source, []byte("%PDF-1.7"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(dir, "nested", "output")
+	r := registry.New()
+	r.Register(&fakeMultiConverter{pages: 1})
+	m := NewManagerWithRegistry(r)
+	defer m.Close()
+	events := make(chan protocol.Event, 8)
+	if _, err := m.Submit(SubmitRequest{Files: []string{source}, Preset: "pdf-to-png", OutputDir: output, Conflict: protocol.ConflictRename, Events: func(e protocol.Event) { events <- e }}); err != nil {
+		t.Fatal(err)
+	}
+	job := waitJob(t, events)
+	if job.Files[0].State != "done" || len(job.Files[0].Outputs) != 1 {
+		t.Fatalf("job = %+v", job)
+	}
+}
+
+func TestManagerUsesSourceDirectoryWhenOutputDirIsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "document.pdf")
+	if err := os.WriteFile(source, []byte("%PDF-1.7"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := registry.New()
+	r.Register(&fakeMultiConverter{pages: 1})
+	m := NewManagerWithRegistry(r)
+	defer m.Close()
+	events := make(chan protocol.Event, 8)
+	if _, err := m.Submit(SubmitRequest{Files: []string{source}, Preset: "pdf-to-png", Conflict: protocol.ConflictRename, Events: func(e protocol.Event) { events <- e }}); err != nil {
+		t.Fatal(err)
+	}
+	job := waitJob(t, events)
+	if job.Files[0].State != "done" || filepath.Dir(job.Files[0].Outputs[0]) != dir {
+		t.Fatalf("job = %+v", job)
+	}
+}
+
+func TestManagerCancelsDuringCommitAndPublishesNoOutputs(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "document.pdf")
+	if err := os.WriteFile(source, []byte("%PDF-1.7"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output := t.TempDir()
+	original := commitOutput
+	defer func() { commitOutput = original }()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	commitOutput = func(_ context.Context, plan engine.OutputPlan) error {
+		select {
+		case <-started:
+		default:
+			close(started)
+		}
+		<-release
+		_, err := plan.Commit()
+		return err
+	}
+	r := registry.New()
+	r.Register(&fakeMultiConverter{pages: 2})
+	m := NewManagerWithRegistry(r)
+	defer m.Close()
+	events := make(chan protocol.Event, 8)
+	id, err := m.Submit(SubmitRequest{Files: []string{source}, Preset: "pdf-to-png", OutputDir: output, Conflict: protocol.ConflictRename, Events: func(e protocol.Event) { events <- e }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	if err := m.Cancel(id); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	job := waitJob(t, events)
+	if job.State != "cancelled" || job.Files[0].State != "cancelled" || len(job.Files[0].Outputs) != 0 {
+		t.Fatalf("job = %+v", job)
+	}
+	entries, _ := os.ReadDir(output)
+	if len(entries) != 0 {
+		t.Fatalf("published outputs = %v", entries)
+	}
+}
+
+func TestManagerCancellationBeforePublicationRollsBackAllOutputs(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "document.pdf")
+	if err := os.WriteFile(source, []byte("%PDF-1.7"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output := t.TempDir()
+	original := beforePublish
+	defer func() { beforePublish = original }()
+	ready := make(chan struct{})
+	release := make(chan struct{})
+	beforePublish = func() {
+		select {
+		case <-ready:
+		default:
+			close(ready)
+		}
+		<-release
+	}
+	r := registry.New()
+	r.Register(&fakeMultiConverter{pages: 2})
+	m := NewManagerWithRegistry(r)
+	defer m.Close()
+	events := make(chan protocol.Event, 8)
+	id, err := m.Submit(SubmitRequest{Files: []string{source}, Preset: "pdf-to-png", OutputDir: output, Conflict: protocol.ConflictRename, Events: func(e protocol.Event) { events <- e }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-ready
+	if err := m.Cancel(id); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	job := waitJob(t, events)
+	if job.State != "cancelled" || job.Files[0].State != "cancelled" || len(job.Files[0].Outputs) != 0 {
+		t.Fatalf("job = %+v", job)
+	}
+	entries, err := os.ReadDir(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("published outputs = %v", entries)
+	}
+}
+
+func TestManagerCancellationBeforeOverallPublicationCancelsAllFiles(t *testing.T) {
+	dir := t.TempDir()
+	first := filepath.Join(dir, "first.pdf")
+	second := filepath.Join(dir, "second.pdf")
+	for _, source := range []string{first, second} {
+		if err := os.WriteFile(source, []byte("%PDF-1.7"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	output := t.TempDir()
+	original := beforePublish
+	defer func() { beforePublish = original }()
+	ready := make(chan struct{})
+	release := make(chan struct{})
+	beforePublish = func() {
+		select {
+		case <-ready:
+		default:
+			close(ready)
+		}
+		<-release
+	}
+	r := registry.New()
+	r.Register(&fakeMultiConverter{pages: 1})
+	m := NewManagerWithRegistry(r)
+	defer m.Close()
+	events := make(chan protocol.Event, 16)
+	id, err := m.Submit(SubmitRequest{Files: []string{first, second}, Preset: "pdf-to-png", OutputDir: output, Conflict: protocol.ConflictRename, Events: func(e protocol.Event) { events <- e }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-ready
+	if err := m.Cancel(id); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	job := waitJob(t, events)
+	if job.State != "cancelled" {
+		t.Fatalf("job = %+v", job)
+	}
+	for _, file := range job.Files {
+		if file.State != "cancelled" || len(file.Outputs) != 0 {
+			t.Fatalf("file = %+v", file)
+		}
+	}
+	entries, err := os.ReadDir(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("published outputs = %v", entries)
+	}
+}
+
+func TestManagerRestoresOverwriteDestinationWhenCancelledAfterPlanning(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "document.pdf")
+	if err := os.WriteFile(source, []byte("%PDF-1.7"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output := t.TempDir()
+	existing := filepath.Join(output, "document-1.png")
+	if err := os.WriteFile(existing, []byte("original"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	originalPlan := planOutputPath
+	defer func() { planOutputPath = originalPlan }()
+	planningPage2 := make(chan struct{})
+	release := make(chan struct{})
+	planOutputPath = func(dir, source, ext string, page int, conflict protocol.ConflictPolicy) (engine.OutputPlan, error) {
+		plan, err := engine.PlanOutputPath(dir, source, ext, page, conflict)
+		if page == 2 {
+			close(planningPage2)
+			<-release
+		}
+		return plan, err
+	}
+	r := registry.New()
+	r.Register(&fakeMultiConverter{pages: 2})
+	m := NewManagerWithRegistry(r)
+	defer m.Close()
+	events := make(chan protocol.Event, 8)
+	id, err := m.Submit(SubmitRequest{Files: []string{source}, Preset: "pdf-to-png", OutputDir: output, Conflict: protocol.ConflictOverwrite, Events: func(e protocol.Event) { events <- e }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-planningPage2
+	if err := m.Cancel(id); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	job := waitJob(t, events)
+	if job.State != "cancelled" || job.Files[0].State != "cancelled" || len(job.Files[0].Outputs) != 0 {
+		t.Fatalf("job = %+v", job)
+	}
+	data, err := os.ReadFile(existing)
+	if err != nil || string(data) != "original" {
+		t.Fatalf("overwrite destination = %q, err = %v", data, err)
+	}
+	entries, err := os.ReadDir(output)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("output artifacts = %v, err = %v", entries, err)
+	}
+}
+
+func TestManagerDoesNotPublishMultiPageOutputsAfterCancellation(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "document.pdf")
+	if err := os.WriteFile(source, []byte("%PDF-1.7"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output := t.TempDir()
+	rendered := make(chan struct{})
+	release := make(chan struct{})
+	r := registry.New()
+	r.Register(&fakeMultiConverter{pages: 2, rendered: rendered, release: release})
+	m := NewManagerWithRegistry(r)
+	defer m.Close()
+	events := make(chan protocol.Event, 8)
+	id, err := m.Submit(SubmitRequest{Files: []string{source}, Preset: "pdf-to-png", OutputDir: output, Conflict: protocol.ConflictRename, Events: func(e protocol.Event) { events <- e }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-rendered
+	if err := m.Cancel(id); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	job := waitJob(t, events)
+	if job.State != "cancelled" || len(job.Files[0].Outputs) != 0 {
+		t.Fatalf("job = %+v", job)
+	}
+	entries, _ := os.ReadDir(output)
+	if len(entries) != 0 {
+		t.Fatalf("partial outputs = %v", entries)
+	}
+}
+
+func TestManagerRollsBackCommittedPagesWhenLaterCommitFails(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "document.pdf")
+	if err := os.WriteFile(source, []byte("%PDF-1.7"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output := t.TempDir()
+	originalCommit := commitOutput
+	defer func() { commitOutput = originalCommit }()
+	calls := 0
+	commitOutput = func(ctx context.Context, plan engine.OutputPlan) error {
+		calls++
+		if calls == 2 {
+			return fmt.Errorf("commit failure")
+		}
+		return originalCommit(ctx, plan)
+	}
+	r := registry.New()
+	r.Register(&fakeMultiConverter{pages: 2})
+	m := NewManagerWithRegistry(r)
+	defer m.Close()
+	events := make(chan protocol.Event, 8)
+	if _, err := m.Submit(SubmitRequest{Files: []string{source}, Preset: "pdf-to-png", OutputDir: output, Conflict: protocol.ConflictOverwrite, Events: func(e protocol.Event) { events <- e }}); err != nil {
+		t.Fatal(err)
+	}
+	job := waitJob(t, events)
+	if job.Files[0].State != "failed" || len(job.Files[0].Outputs) != 0 {
+		t.Fatalf("job = %+v", job)
+	}
+	if _, err := os.Stat(filepath.Join(output, "document-1.png")); !os.IsNotExist(err) {
+		t.Fatalf("rolled back output exists: %v", err)
+	}
+}
+
+func TestManagerPreservesSkippedPageWhenLaterCommitFails(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "document.pdf")
+	if err := os.WriteFile(source, []byte("%PDF-1.7"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output := t.TempDir()
+	skippedPath := filepath.Join(output, "document-1.png")
+	if err := os.WriteFile(skippedPath, []byte("existing"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	originalCommit := commitOutput
+	defer func() { commitOutput = originalCommit }()
+	commitOutput = func(ctx context.Context, plan engine.OutputPlan) error {
+		return fmt.Errorf("commit failure")
+	}
+	r := registry.New()
+	r.Register(&fakeMultiConverter{pages: 2})
+	m := NewManagerWithRegistry(r)
+	defer m.Close()
+	events := make(chan protocol.Event, 8)
+	if _, err := m.Submit(SubmitRequest{Files: []string{source}, Preset: "pdf-to-png", OutputDir: output, Conflict: protocol.ConflictSkip, Events: func(e protocol.Event) { events <- e }}); err != nil {
+		t.Fatal(err)
+	}
+	job := waitJob(t, events)
+	if job.Files[0].State != "failed" || len(job.Files[0].Outputs) != 0 {
+		t.Fatalf("job = %+v", job)
+	}
+	data, err := os.ReadFile(skippedPath)
+	if err != nil || string(data) != "existing" {
+		t.Fatalf("skipped output = %q, err = %v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(output, "document-2.png")); !os.IsNotExist(err) {
+		t.Fatalf("later output exists: %v", err)
+	}
+}
+
+func TestManagerRestoresOverwrittenPagesWhenLaterCommitFails(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "document.pdf")
+	if err := os.WriteFile(source, []byte("%PDF-1.7"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output := t.TempDir()
+	originalPath := filepath.Join(output, "document-1.png")
+	if err := os.WriteFile(originalPath, []byte("original"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	originalCommit := commitOutput
+	defer func() { commitOutput = originalCommit }()
+	calls := 0
+	commitOutput = func(ctx context.Context, plan engine.OutputPlan) error {
+		calls++
+		if calls == 2 {
+			return fmt.Errorf("commit failure")
+		}
+		return originalCommit(ctx, plan)
+	}
+	r := registry.New()
+	r.Register(&fakeMultiConverter{pages: 2})
+	m := NewManagerWithRegistry(r)
+	defer m.Close()
+	events := make(chan protocol.Event, 8)
+	if _, err := m.Submit(SubmitRequest{Files: []string{source}, Preset: "pdf-to-png", OutputDir: output, Conflict: protocol.ConflictOverwrite, Events: func(e protocol.Event) { events <- e }}); err != nil {
+		t.Fatal(err)
+	}
+	job := waitJob(t, events)
+	if job.Files[0].State != "failed" || len(job.Files[0].Outputs) != 0 {
+		t.Fatalf("job = %+v", job)
+	}
+	data, err := os.ReadFile(originalPath)
+	if err != nil || string(data) != "original" {
+		t.Fatalf("original output = %q, err = %v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(output, "document-2.png")); !os.IsNotExist(err) {
+		t.Fatalf("later output exists: %v", err)
+	}
+}
+
+func TestManagerRejectsSymlinkAndNonRegularPageOutputs(t *testing.T) {
+	for _, name := range []string{"symlink", "directory"} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			source := filepath.Join(dir, "document.pdf")
+			if err := os.WriteFile(source, []byte("%PDF-1.7"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			outside := filepath.Join(dir, "outside.png")
+			if err := os.WriteFile(outside, []byte("x"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			converter := &fakeMultiConverter{pages: 1, outputMode: name}
+			if name == "symlink" {
+				converter.outsidePath = outside
+			}
+			r := registry.New()
+			r.Register(converter)
+			m := NewManagerWithRegistry(r)
+			defer m.Close()
+			events := make(chan protocol.Event, 8)
+			if _, err := m.Submit(SubmitRequest{Files: []string{source}, Preset: "pdf-to-png", OutputDir: t.TempDir(), Conflict: protocol.ConflictRename, Events: func(e protocol.Event) { events <- e }}); err != nil {
+				t.Fatal(err)
+			}
+			job := waitJob(t, events)
+			if job.Files[0].State != "failed" {
+				t.Fatalf("job = %+v", job)
+			}
+		})
+	}
+}
+
+func TestManagerCleansEarlierPlansWhenLaterPagePlanningFails(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "document.pdf")
+	if err := os.WriteFile(source, []byte("%PDF-1.7"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output := t.TempDir()
+	original := planOutputPath
+	defer func() { planOutputPath = original }()
+	calls := 0
+	planOutputPath = func(dir, source, ext string, page int, conflict protocol.ConflictPolicy) (engine.OutputPlan, error) {
+		calls++
+		if page == 2 {
+			return engine.OutputPlan{}, fmt.Errorf("planning failure")
+		}
+		return engine.PlanOutputPath(dir, source, ext, page, conflict)
+	}
+	r := registry.New()
+	r.Register(&fakeMultiConverter{pages: 2})
+	m := NewManagerWithRegistry(r)
+	defer m.Close()
+	events := make(chan protocol.Event, 8)
+	if _, err := m.Submit(SubmitRequest{Files: []string{source}, Preset: "pdf-to-png", OutputDir: output, Conflict: protocol.ConflictRename, Events: func(e protocol.Event) { events <- e }}); err != nil {
+		t.Fatal(err)
+	}
+	job := waitJob(t, events)
+	if calls != 2 || job.Files[0].State != "failed" || len(job.Files[0].Outputs) != 0 {
+		t.Fatalf("calls=%d job=%+v", calls, job)
+	}
+	entries, err := os.ReadDir(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("planning temp files remain: %v", entries)
+	}
+}
+
+func TestManagerDoesNotCommitPartialMultiPageOutputs(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "document.pdf")
+	if err := os.WriteFile(source, []byte("%PDF-1.7"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output := t.TempDir()
+	r := registry.New()
+	r.Register(&fakeMultiConverter{fail: true})
+	m := NewManagerWithRegistry(r)
+	defer m.Close()
+	events := make(chan protocol.Event, 16)
+	_, err := m.Submit(SubmitRequest{Files: []string{source}, Preset: "pdf-to-png", OutputDir: output, Conflict: protocol.ConflictRename, Events: func(e protocol.Event) { events <- e }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := waitJob(t, events)
+	if job.State != "failed" || job.Files[0].State != "failed" || len(job.Files[0].Outputs) != 0 {
+		t.Fatalf("unexpected job: %+v", job)
+	}
+	entries, err := os.ReadDir(output)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("output directory entries = %v, err = %v", entries, err)
 	}
 }
 

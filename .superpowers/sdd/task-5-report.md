@@ -1,43 +1,28 @@
-# Task 5 implementation report
+# Task 5 Report: Nautilus integration and documentation
 
-## Scope
+## Status
 
-Task 5 wires FFmpeg into the daemon-facing engine registry and preserves protocol v1 and ImageMagick behavior.
-
-## Changes
-
-- `backend/cmd/fcd/main.go`
-  - Creates and independently probes ImageMagick and FFmpeg.
-  - Registers both engines even when either probe is unavailable.
-  - An unavailable FFmpeg installation no longer blocks daemon startup or image conversion setup.
-  - The registry remains the source of engine availability for `hello` and route selection.
-
-- `backend/internal/jobs/manager.go`
-  - Resolves canonical presets through the existing format mapping.
-  - Rejects manually submitted audio-to-video conversions synchronously with an `unsupported` error before creating a job.
-  - Preserves same-format rejection and the existing worker/atomic output lifecycle.
-
-- `backend/internal/server/server_test.go`
-  - Added a registry-backed server fixture with independent fake image and media engines.
-  - Verifies `hello` exposes both engine IDs.
-  - Verifies audio target discovery exposes all valid audio outputs and excludes the same-format output and all video outputs.
-  - Verifies manually requested audio-to-video conversion returns stable `unsupported` behavior.
-
-The existing registry, canonical media preset table, FFmpeg engine, ImageMagick fallback, target filtering, protocol v1 response shape, and validation behavior were already present and remain intact.
+Implemented. Sub-agent dispatch hit a usage limit partway through, so this task was completed directly.
 
 ## TDD evidence
 
-The new server test was first run before the job-level rejection was added and failed because the request incorrectly created a job. After the minimal manager change, the focused test passed.
+- RED: `python3 -m unittest frontends/omarchy/tests/test_extension_menu.py` failed with `IndexError: list index out of range` in `test_pdf_selection_exposes_enabled_pdf_targets`, because `application/pdf` was rejected by `SUPPORTED_MIME_TYPES` and no menu was built.
+- GREEN: after adding the PDF MIME types, `python3 -m unittest discover -s frontends/omarchy/tests` reports `Ran 20 tests ... OK`.
 
-## Verification
+## Scope delivered
 
-- `cd backend && go test ./internal/server ./cmd/fcd ./internal/protocol -v` - PASS
-- `cd backend && go test ./...` - PASS
-- `cd backend && go vet ./...` - PASS
-- `git diff --check` - PASS
+- `frontends/omarchy/nautilus/file_converter.py`: added `application/pdf` and `application/x-pdf` to `SUPPORTED_MIME_TYPES`.
+- `frontends/omarchy/tests/test_extension_menu.py`: added `test_pdf_selection_exposes_enabled_pdf_targets`, asserting the three labels `PDF to PNG`, `PDF to JPEG`, `PDF to WebP` appear and a disabled target is dropped. The labels come from the daemon, so the test pins the frontend side of the contract.
+- `README.md`: added a "PDF conversions" section covering Poppler `pdftocairo`, 150 DPI, numbered all-page outputs, the preset table, ImageMagick's WebP-only role, and the absence of page/range options.
+- `docs/PROTOCOL.md`: documented the three PDF presets and their requirements next to the SVG and media preset paragraphs. The request shape was not changed.
 
-## Concerns / notes
+## Self-review
 
-- FFmpeg availability is probed independently and cached by the engine. The registry still reports availability dynamically through `Available()`.
-- Media source probing remains FFprobe-backed and target discovery continues to use the registry, so unavailable FFmpeg produces no media routes while ImageMagick routes remain available.
-- No protocol version or wire-format changes were introduced.
+- Changes are confined to the four files named in the task.
+- The new test mirrors the existing SVG test and fails before the MIME change.
+- Documentation states 150 DPI, one numbered output per page, `pdftocairo` for all three presets, and ImageMagick only for WebP, matching the engine implementation in `backend/internal/engine/pdf.go`.
+- `git diff --check` passed.
+
+## Concerns
+
+- None. The label strings are supplied by the daemon's `targets` response; the frontend does not define them, so this test documents expected daemon labels rather than frontend-generated text.

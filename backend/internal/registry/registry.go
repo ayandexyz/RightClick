@@ -17,6 +17,16 @@ type Engine interface {
 	Convert(context.Context, string, formats.Format, string, formats.Format, protocol.ImageOptions) error
 }
 
+type MultiOutputEngine interface {
+	Engine
+	ConvertMany(context.Context, string, formats.Format, string, formats.Format, protocol.ImageOptions) ([]string, error)
+}
+
+type PDFRasterizer interface {
+	Engine
+	PDFRasterizer()
+}
+
 type Registry struct {
 	engines []Engine
 }
@@ -41,8 +51,16 @@ func (r *Registry) Register(engine Engine) {
 }
 
 func (r *Registry) Resolve(source, target formats.Format) (Engine, error) {
+	if target == formats.PDF || (source == formats.PDF && !isPDFRasterTarget(target)) {
+		return nil, fmt.Errorf("no engine supports %s to %s", source, target)
+	}
 	var unavailable error
 	for _, engine := range r.engines {
+		if source == formats.PDF {
+			if _, ok := engine.(PDFRasterizer); !ok {
+				continue
+			}
+		}
 		_, err := engine.Available()
 		if err != nil {
 			if unavailable == nil {
@@ -186,6 +204,10 @@ func (r *Registry) mediaSource(ctx context.Context, path string) (formats.Format
 		}
 	}
 	return "", formats.ErrUnsupported
+}
+
+func isPDFRasterTarget(target formats.Format) bool {
+	return target == formats.PNG || target == formats.JPEG || target == formats.WebP
 }
 
 func sourceCandidateFormats() []formats.Format {

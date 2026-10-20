@@ -3,6 +3,8 @@ package jobs
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -18,6 +20,16 @@ import (
 type Converter interface {
 	Convert(context.Context, string, formats.Format, string, formats.Format, protocol.ImageOptions) error
 }
+
+var planOutputPath = engine.PlanOutputPath
+var commitOutput = func(ctx context.Context, plan engine.OutputPlan) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	_, err := plan.Commit()
+	return err
+}
+var beforePublish = func() {}
 
 type Router interface {
 	Resolve(source, target formats.Format) (registry.Engine, error)
@@ -39,6 +51,7 @@ type SubmitRequest struct {
 type Manager struct {
 	router      Router
 	mu          sync.Mutex
+	outputMu    sync.Mutex
 	subscribers map[uint64]func(protocol.Event)
 	next        atomic.Uint64
 	nextSub     atomic.Uint64
@@ -54,6 +67,10 @@ type job struct {
 	req    SubmitRequest
 	ctx    context.Context
 	cancel context.CancelFunc
+
+	publicationMu sync.Mutex
+	published     bool
+	pending       []engine.OutputPlan
 }
 
 func NewManager(converter Converter) *Manager {
@@ -144,7 +161,13 @@ func (m *Manager) Cancel(id string) error {
 	if !ok {
 		return fmt.Errorf("job not found")
 	}
+	j.publicationMu.Lock()
+	if j.published {
+		j.publicationMu.Unlock()
+		return nil
+	}
 	j.cancel()
+	j.publicationMu.Unlock()
 	return nil
 }
 
@@ -295,10 +318,27 @@ func (m *Manager) run(j *job) {
 			emitter.emit("job.updated", false)
 		}
 	}
+	beforePublish()
+	j.publicationMu.Lock()
+	if j.ctx.Err() != nil {
+		for i := len(j.pending) - 1; i >= 0; i-- {
+			j.pending[i].Rollback()
+		}
+		j.pending = nil
+	} else {
+		j.published = true
+		for _, plan := range j.pending {
+			plan.Finalize()
+		}
+		j.pending = nil
+	}
+	j.publicationMu.Unlock()
 	if j.ctx.Err() != nil {
 		for i := range files {
-			if files[i].State == "pending" || files[i].State == "running" {
+			if files[i].State == "pending" || files[i].State == "running" || files[i].State == "done" || files[i].State == "skipped" {
 				files[i].State = "cancelled"
+				files[i].Progress = 0
+				files[i].Outputs = nil
 			}
 		}
 		emitter.files = files
@@ -327,6 +367,134 @@ func (m *Manager) run(j *job) {
 	m.mu.Lock()
 	delete(m.jobs, j.id)
 	m.mu.Unlock()
+}
+
+func (m *Manager) convertMany(j *job, index int, file protocol.FileJob, route registry.MultiOutputEngine, source string, sourceFormat, target formats.Format, ext string) fileResult {
+	outputDir := j.req.OutputDir
+	if outputDir == "" {
+		outputDir = filepath.Dir(source)
+	}
+	if err := os.MkdirAll(outputDir, 0o700); err != nil {
+		file.State = "failed"
+		file.Error = &protocol.FileError{Code: "internal", Message: err.Error()}
+		return fileResult{index: index, file: file}
+	}
+	renderDir, err := os.MkdirTemp(outputDir, ".file-converter-render-")
+	if err != nil {
+		file.State = "failed"
+		file.Error = &protocol.FileError{Code: "internal", Message: err.Error()}
+		return fileResult{index: index, file: file}
+	}
+	defer os.RemoveAll(renderDir)
+	pages, err := route.ConvertMany(j.ctx, source, sourceFormat, renderDir, target, j.req.Options)
+	if err != nil {
+		if j.ctx.Err() != nil {
+			file.State = "cancelled"
+		} else {
+			file.State = "failed"
+			file.Error = &protocol.FileError{Code: "internal", Message: err.Error()}
+		}
+		return fileResult{index: index, file: file}
+	}
+	if len(pages) == 0 {
+		file.State = "failed"
+		file.Error = &protocol.FileError{Code: "internal", Message: "multi-page engine returned no outputs"}
+		return fileResult{index: index, file: file}
+	}
+	if j.ctx.Err() != nil {
+		file.State = "cancelled"
+		return fileResult{index: index, file: file}
+	}
+	plans := make([]engine.OutputPlan, len(pages))
+	removePlans := func() {
+		for i := len(plans) - 1; i >= 0; i-- {
+			plans[i].Rollback()
+		}
+	}
+	m.outputMu.Lock()
+	defer m.outputMu.Unlock()
+	for i, page := range pages {
+		clean := filepath.Clean(page)
+		info, statErr := os.Lstat(clean)
+		if statErr != nil || filepath.Dir(clean) != filepath.Clean(renderDir) || filepath.Ext(clean) != "."+ext || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+			removePlans()
+			file.State = "failed"
+			file.Error = &protocol.FileError{Code: "internal", Message: "multi-page engine returned unsafe output"}
+			return fileResult{index: index, file: file}
+		}
+		plans[i], err = planOutputPath(outputDir, source, ext, i+1, j.req.Conflict)
+		if err != nil {
+			removePlans()
+			file.State = "failed"
+			file.Error = &protocol.FileError{Code: "internal", Message: err.Error()}
+			return fileResult{index: index, file: file}
+		}
+	}
+	if j.ctx.Err() != nil {
+		removePlans()
+		file.State = "cancelled"
+		return fileResult{index: index, file: file}
+	}
+	for i, plan := range plans {
+		if plan.Skipped() {
+			continue
+		}
+		if err := os.Rename(pages[i], plan.Temp); err != nil {
+			removePlans()
+			file.State = "failed"
+			file.Error = &protocol.FileError{Code: "internal", Message: err.Error()}
+			return fileResult{index: index, file: file}
+		}
+	}
+	if j.ctx.Err() != nil {
+		removePlans()
+		file.State = "cancelled"
+		return fileResult{index: index, file: file}
+	}
+	for _, plan := range plans {
+		if !plan.Skipped() {
+			if err := commitOutput(j.ctx, plan); err != nil {
+				removePlans()
+				file.Outputs = nil
+				if j.ctx.Err() != nil {
+					file.State = "cancelled"
+				} else {
+					file.State = "failed"
+					file.Error = &protocol.FileError{Code: "internal", Message: err.Error()}
+				}
+				return fileResult{index: index, file: file}
+			}
+			file.Outputs = append(file.Outputs, plan.Destination)
+			if j.ctx.Err() != nil {
+				removePlans()
+				file.Outputs = nil
+				file.State = "cancelled"
+				return fileResult{index: index, file: file}
+			}
+		}
+	}
+	if j.ctx.Err() != nil {
+		removePlans()
+		file.Outputs = nil
+		file.State = "cancelled"
+		return fileResult{index: index, file: file}
+	}
+	j.publicationMu.Lock()
+	if j.ctx.Err() != nil {
+		j.publicationMu.Unlock()
+		removePlans()
+		file.Outputs = nil
+		file.State = "cancelled"
+		return fileResult{index: index, file: file}
+	}
+	j.pending = append(j.pending, plans...)
+	j.publicationMu.Unlock()
+	if len(file.Outputs) == 0 {
+		file.State = "skipped"
+	} else {
+		file.State, file.Progress = "done", 1
+	}
+	return fileResult{index: index, file: file}
 }
 
 func (m *Manager) convertFile(j *job, index int, source string, target formats.Format) fileResult {
@@ -365,6 +533,11 @@ func (m *Manager) convertFile(j *job, index int, source string, target formats.F
 		file.Error = &protocol.FileError{Code: "unsupported", Message: err.Error()}
 		return fileResult{index: index, file: file}
 	}
+	if multi, ok := route.(registry.MultiOutputEngine); ok {
+		return m.convertMany(j, index, file, multi, source, sourceFormat, target, ext)
+	}
+	m.outputMu.Lock()
+	defer m.outputMu.Unlock()
 	plan, err := engine.PlanOutput(j.req.OutputDir, source, ext, j.req.Conflict)
 	if err != nil {
 		file.State = "failed"
@@ -377,7 +550,7 @@ func (m *Manager) convertFile(j *job, index int, source string, target formats.F
 	}
 	err = route.Convert(j.ctx, source, sourceFormat, plan.Temp, target, j.req.Options)
 	if err != nil {
-		plan.RemoveTemp()
+		plan.Rollback()
 		if j.ctx.Err() != nil {
 			file.State = "cancelled"
 		} else {
@@ -386,13 +559,26 @@ func (m *Manager) convertFile(j *job, index int, source string, target formats.F
 		}
 		return fileResult{index: index, file: file}
 	}
+	if j.ctx.Err() != nil {
+		plan.Rollback()
+		file.State = "cancelled"
+		return fileResult{index: index, file: file}
+	}
+	j.publicationMu.Lock()
+	defer j.publicationMu.Unlock()
 	output, err := plan.Commit()
 	if err != nil {
-		plan.RemoveTemp()
+		plan.Rollback()
 		file.State = "failed"
 		file.Error = &protocol.FileError{Code: "internal", Message: err.Error()}
 		return fileResult{index: index, file: file}
 	}
+	if j.ctx.Err() != nil {
+		plan.Rollback()
+		file.State = "cancelled"
+		return fileResult{index: index, file: file}
+	}
+	j.pending = append(j.pending, plan)
 	file.State, file.Progress, file.Outputs = "done", 1, []string{output}
 	return fileResult{index: index, file: file}
 }

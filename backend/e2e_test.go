@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -191,6 +192,104 @@ func writeE2ESVG(t *testing.T, document string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+var pdfE2EPageNumbers = []string{"1", "2"}
+
+func writeE2EPDF(t *testing.T, pageCount int) string {
+	t.Helper()
+	var document strings.Builder
+	document.WriteString("%PDF-1.7\n")
+	kids := make([]string, pageCount)
+	for page := 1; page <= pageCount; page++ {
+		kids[page-1] = strconv.Itoa(page+2) + " 0 R"
+	}
+	document.WriteString("1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n")
+	document.WriteString("2 0 obj<</Type/Pages/Kids[" + strings.Join(kids, " ") + "]/Count " + strconv.Itoa(pageCount) + ">>endobj\n")
+	for page := 1; page <= pageCount; page++ {
+		document.WriteString(strconv.Itoa(page+2) + " 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 120 80]/Resources<<>>>>endobj\n")
+	}
+	document.WriteString("trailer<</Root 1 0 R>>\n")
+	path := filepath.Join(t.TempDir(), "input.pdf")
+	if err := os.WriteFile(path, []byte(document.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestE2EPDFFullConversion(t *testing.T) {
+	if _, err := exec.LookPath("pdftocairo"); err != nil {
+		t.Skipf("pdftocairo is not installed: %v", err)
+	}
+
+	conn, stream, cleanup := startE2EDaemon(t)
+	defer cleanup()
+	if hello := request(t, stream, map[string]any{
+		"id": 1, "method": "hello", "params": map[string]any{"client": "e2e", "protocol": 1},
+	}); hello["error"] != nil {
+		t.Fatalf("hello failed: %#v", hello)
+	}
+
+	input := writeE2EPDF(t, 2)
+	targets := request(t, stream, map[string]any{
+		"id": 2, "method": "targets", "params": map[string]any{"files": []string{input}},
+	})
+	if targets["error"] != nil {
+		t.Fatalf("PDF targets failed: %#v", targets)
+	}
+	assertTargetPresets(t, targets, []string{"pdf-to-png", "pdf-to-jpeg", "pdf-to-webp"})
+
+	outputDir := t.TempDir()
+	for _, test := range []struct {
+		id        int
+		preset    string
+		extension string
+	}{
+		{id: 3, preset: "pdf-to-png", extension: ".png"},
+		{id: 4, preset: "pdf-to-jpeg", extension: ".jpg"},
+		{id: 5, preset: "pdf-to-webp", extension: ".webp"},
+	} {
+		t.Run(test.preset, func(t *testing.T) {
+			if test.preset == "pdf-to-webp" && !imageMagickCanWrite(t, "webp") {
+				t.Skip("ImageMagick cannot write webp")
+			}
+			if err := writeMessage(conn, map[string]any{
+				"id": test.id, "method": "convert", "params": map[string]any{
+					"files": []string{input}, "preset": test.preset, "output_dir": outputDir,
+				},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			jobID, finished := waitForJob(t, stream, test.id, test.preset, 30*time.Second)
+			job, ok := finished["data"].(map[string]any)
+			if !ok || job["state"] != "completed" {
+				t.Fatalf("unexpected %s job: %#v", test.preset, finished)
+			}
+			if jobID == "" {
+				t.Fatalf("%s response did not include a job id: %#v", test.preset, finished)
+			}
+			files, _ := job["files"].([]any)
+			entry, _ := files[0].(map[string]any)
+			outputs, _ := entry["outputs"].([]any)
+			if len(outputs) != len(pdfE2EPageNumbers) {
+				t.Fatalf("%s outputs = %#v, want one per page", test.preset, entry["outputs"])
+			}
+			for index, page := range pdfE2EPageNumbers {
+				output, _ := outputs[index].(string)
+				want := filepath.Join(outputDir, "input-"+page+test.extension)
+				if output != want {
+					t.Fatalf("%s output %d = %q, want %q", test.preset, index+1, output, want)
+				}
+				info, err := os.Stat(want)
+				if err != nil {
+					t.Fatalf("expected %s output %s: %v", test.preset, want, err)
+				}
+				if info.Size() == 0 {
+					t.Fatalf("%s output %s is empty", test.preset, want)
+				}
+			}
+		})
+	}
 }
 
 func imageMagickCanWrite(t *testing.T, format string) bool {

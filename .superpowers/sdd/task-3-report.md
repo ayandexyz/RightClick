@@ -1,58 +1,53 @@
-# Task 3 Report: Generalize Registry Target Discovery and Engine Routing
+# Task 3 Report: Dedicated `pdftocairo` PDF Engine
 
 ## Status
 
-Implemented and committed as requested on current master after Tasks 1-2.
-
-## Scope delivered
-
-- Added optional `registry.MediaProber` support so media-aware engines can classify files without changing the existing `registry.Engine` contract.
-- `Registry.TargetsForFiles` now preserves existing content-based image detection and falls back to an available registered media prober for audio/video sources.
-- Media source formats are mapped from the validated file extension after probe classification.
-- Candidate routes continue to be resolved through registered, available engines and intersected across all selected files.
-- Audio sources advertise audio targets only. Video sources advertise video targets plus audio extraction targets. Mixed audio/video selections retain only their common audio targets.
-- The media preset set contains five video outputs and seven audio outputs before source-format exclusion; an audio source therefore exposes six audio targets because its own MP3 format is omitted.
-- Audio-source target discovery now explicitly skips video targets before consulting engine `Supports`, so an overly broad or unavailable FFmpeg-like capability cannot advertise audio-to-video routes.
-- Unavailable FFmpeg-like engines contribute no media routes while available ImageMagick image routes remain available.
-- Added ordered media format helpers in `formats` for registry source resolution.
-- Existing image-only fake engines and image discovery behavior remain compatible.
+Implemented the dedicated PDF rasterization engine and focused tests.
 
 ## TDD evidence
 
-Added registry tests for:
+- RED: `go test ./internal/engine -run PDF` failed to build with `undefined: NewPDF`, confirming the implementation was missing.
+- GREEN: `go test ./internal/engine -run PDF` passed after implementation.
+- Focused suite: `go test ./internal/engine` passed.
 
-- Audio discovery excluding video targets.
-- Video discovery including audio extraction.
-- Mixed audio/video intersection.
-- Unavailable media engine not hiding ImageMagick image targets.
-- Actual audio media classification with an unavailable FFmpeg-like engine, proving no media targets are contributed while image routes remain available.
+## Scope delivered
 
-The focused regression test was first run before the production change and failed with video presets present (`video-to-mp4`, `video-to-mov`, `video-to-webm`, `video-to-mkv`, `video-to-avi`). After the explicit source-classification guard was added, it passed along with the existing audio, video, and mixed-file tests.
+- Added PDF-to-PNG/JPEG/WebP support through `pdftocairo` at 150 DPI.
+- Validates absolute safe regular-file inputs, the `%PDF-` header, and the controlled temporary directory.
+- Passes source and output prefix as separate arguments, preserving spaces and shell metacharacters safely.
+- Discovers only `page-<number>` renderer outputs, orders them numerically, rejects empty or excessive output sets, and returns absolute paths.
+- Converts ordered PNG intermediates to WebP through `ImageMagick.Convert` and cleans generated intermediates or partial outputs on errors.
 
-## Verification
+## Self-review
 
-Passed:
+- Changes are confined to the requested engine implementation and tests.
+- Command arguments, format support, missing executable behavior, validation, numeric ordering, WebP conversion, empty output handling, and error cleanup are covered.
+- `git diff --check` passed; no unrelated behavior was changed.
 
-```text
-cd backend && go test ./internal/registry ./internal/formats ./internal/protocol
-go test ./...
-go vet ./...
-git diff --check
-```
+## Concerns
 
-## Files changed
+None.
 
-- `backend/internal/registry/registry.go`
-- `backend/internal/registry/registry_test.go`
+## Important findings fix evidence
 
-## Concerns / follow-up
+- RED: `go test ./internal/engine -run PDF -count=1` failed because a non-empty `.file-converter-render-*` directory was accepted and the injected renderer ran. A separate focused RED check failed because a mode `0755` render directory was accepted.
+- Temp-dir validation now accepts only absolute manager-shaped `.file-converter-render-*` directories that are real directories (not symlinks), mode `0700`, and empty before rendering. This establishes invocation ownership before output discovery or cleanup and preserves pre-existing files by rejecting the directory before invoking the renderer.
+- Removed mutable PDF caches: `Available` performs a local lookup, and each WebP conversion invocation uses a local ImageMagick instance. Concurrent conversions therefore do not mutate shared `PDF` state.
+- Added regression coverage for uncontrolled, symlink, non-private, and non-empty render directories; preservation of a pre-existing matching page file; the 1,000-page cap and cleanup; mid-sequence WebP cleanup; and concurrent WebP conversions under the race detector. Removed dead runner setup from the existing cleanup test.
+- GREEN verification:
+  - `go test ./internal/engine -run PDF -count=1` -> `ok file-converter/backend/internal/engine 0.009s`
+  - `go test -race ./internal/engine -run PDF -count=1` -> `ok file-converter/backend/internal/engine 1.033s`
+  - `go test ./internal/engine -count=1` -> `ok file-converter/backend/internal/engine 0.235s`
+  - `git diff --check` -> passed with no output.
 
-- Media classification currently uses the media engine probe for kind and the source extension for the concrete media format. This matches the staged Task 3 scope and avoids changing the existing engine contract.
-- No unrelated job, server, protocol, or FFmpeg changes were made.
+## Reachability follow-up
 
-## Fix evidence
-
-- Corrected the inaccurate “twelve audio targets” wording: there are seven audio output presets before source-format exclusion, and six targets for an MP3 source because `audio-to-mp3` is omitted as a same-format route.
-- Added `TestTargetsForFilesClassifiesAudioWithoutUnavailableMediaRoutes`, which uses a real `.mp3` fixture, an unavailable FFmpeg-like engine, an available broad media engine, and an available image engine. It verifies audio classification yields only audio targets and image classification still yields all image routes.
-- The regression test was observed failing before the fix and passing after it.
-- Final verification commands passed after the fix.
+- Independent review found the PDF engine was not registered by the daemon, so production requests could not reach `PDF.ConvertMany` despite the engine-level fixes.
+- RED: `go test ./cmd/fcd -run TestEngineRegistryIncludesPDF -count=1` failed with `daemon engine registry does not include pdf`.
+- Registered `engine.NewPDF(nil)` in `setupEngines` and added an application-registry regression test. This required a narrow exception to the original engine-file scope because the defect existed at the application composition root.
+- GREEN verification:
+  - `go test ./cmd/fcd -count=1` -> `ok file-converter/backend/cmd/fcd 0.112s`
+  - `go test ./internal/engine -run PDF -count=1` -> `ok file-converter/backend/internal/engine 0.009s`
+  - `go test -race ./internal/engine -run PDF -count=1` -> `ok file-converter/backend/internal/engine 1.035s`
+  - `go test ./... -count=1` -> all backend packages passed.
+  - `git diff --check` -> passed with no output.

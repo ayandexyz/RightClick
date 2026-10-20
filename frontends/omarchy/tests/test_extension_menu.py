@@ -104,6 +104,22 @@ class ExtensionMenuTests(unittest.TestCase):
             ["SVG to PNG", "SVG to JPEG", "SVG to WebP"],
         )
 
+    def test_pdf_selection_exposes_enabled_pdf_targets(self):
+        targets = [
+            types.SimpleNamespace(preset="pdf-to-png", label="PDF to PNG", enabled=True),
+            types.SimpleNamespace(preset="pdf-to-jpeg", label="PDF to JPEG", enabled=True),
+            types.SimpleNamespace(preset="pdf-to-webp", label="PDF to WebP", enabled=True),
+            types.SimpleNamespace(preset="image-to-png", label="PNG Image", enabled=False),
+        ]
+        with mock.patch.object(self.module, "FcClient") as client:
+            client.return_value.targets.return_value = targets
+            menu = self.module.FileConverterMenuProvider().get_file_items([FakeFile("/tmp/a.pdf", "application/pdf")])
+        self.assertEqual(menu[0].label, "Convert to")
+        self.assertEqual(
+            [item.label for item in menu[0].submenu.items],
+            ["PDF to PNG", "PDF to JPEG", "PDF to WebP"],
+        )
+
     def test_enabled_targets_are_ordered_and_disabled_dropped(self):
         targets = [
             types.SimpleNamespace(preset="image-to-webp", label="WebP", enabled=True),

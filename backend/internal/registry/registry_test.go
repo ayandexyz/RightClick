@@ -49,6 +49,55 @@ func TestResolveRejectsUnsupportedRoute(t *testing.T) {
 	}
 }
 
+func TestResolveRoutesPDFOnlyThroughPDFEngine(t *testing.T) {
+	r := New()
+	r.Register(anyFormatEngine{})
+	r.Register(pdfImageEngine{})
+
+	for _, target := range []formats.Format{formats.PNG, formats.JPEG, formats.WebP} {
+		got, err := r.Resolve(formats.PDF, target)
+		if err != nil {
+			t.Fatalf("Resolve(PDF, %s): %v", target, err)
+		}
+		if got.ID() != "pdf" {
+			t.Fatalf("Resolve(PDF, %s) selected %q, want pdf", target, got.ID())
+		}
+	}
+}
+
+func TestResolveDoesNotIdentifyPDFEngineByPublicID(t *testing.T) {
+	r := New()
+	r.Register(pdfIDEngine{})
+	r.Register(pdfImageEngine{})
+
+	got, err := r.Resolve(formats.PDF, formats.PNG)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got.(pdfImageEngine); !ok {
+		t.Fatalf("Resolve(PDF, PNG) selected %T, want dedicated PDF engine", got)
+	}
+}
+
+func TestResolveRejectsRoutesOutsidePDFRasterization(t *testing.T) {
+	r := New()
+	r.Register(anyFormatEngine{})
+	r.Register(pdfImageEngine{})
+
+	for _, route := range []struct {
+		source formats.Format
+		target formats.Format
+	}{
+		{formats.PNG, formats.PDF},
+		{formats.PDF, formats.MP4},
+		{formats.PDF, formats.SVG},
+	} {
+		if got, err := r.Resolve(route.source, route.target); err == nil {
+			t.Fatalf("Resolve(%s, %s) selected %q, want rejection", route.source, route.target, got.ID())
+		}
+	}
+}
+
 func TestTargetsUsesRegisteredCapabilities(t *testing.T) {
 	r := New()
 	r.Register(fakeEngine{id: "fake"})
@@ -83,6 +132,72 @@ func TestTargetsForPDFInputsExposeExactlyPDFPresets(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertPresets(t, got, []string{"pdf-to-png", "pdf-to-jpeg", "pdf-to-webp"})
+}
+
+func TestTargetsForFilesUnavailablePDFEngineDisablesOnlyPDFTargets(t *testing.T) {
+	dir := t.TempDir()
+	pdf := filepath.Join(dir, "document.pdf")
+	png := filepath.Join(dir, "photo.png")
+	if err := os.WriteFile(pdf, []byte("%PDF-1.7 fixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(png, []byte("\x89PNG\r\n\x1a\nfixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	r := New()
+	r.Register(unavailablePDFEngine{})
+	r.Register(allImageEngine{})
+
+	pdfTargets, err := r.TargetsForFiles([]string{pdf})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pdfTargets) != 0 {
+		t.Fatalf("PDF targets = %v, want none", pdfTargets)
+	}
+
+	imageTargets, err := r.TargetsForFiles([]string{png})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(imageTargets) == 0 {
+		t.Fatal("unavailable PDF engine disabled image targets")
+	}
+}
+
+func TestTargetsForFilesExcludesPDFTargetsForRasterSVGMediaAndMixedInputs(t *testing.T) {
+	dir := t.TempDir()
+	paths := []string{
+		filepath.Join(dir, "photo.png"), filepath.Join(dir, "vector.svg"), filepath.Join(dir, "audio.mp3"), filepath.Join(dir, "document.pdf"),
+	}
+	if err := os.WriteFile(paths[0], []byte("\x89PNG\r\n\x1a\nfixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths[1], []byte(`<svg xmlns="http://www.w3.org/2000/svg"/>`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths[2], []byte("media fixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths[3], []byte("%PDF-1.7 fixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, files := range [][]string{{paths[0]}, {paths[1]}, {paths[2]}, {paths[3], paths[0]}} {
+		r := New()
+		r.Register(pdfImageEngine{})
+		r.Register(allImageEngine{})
+		r.Register(mediaEngine{kind: engine.MediaAudio})
+		got, err := r.TargetsForFiles(files)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, target := range got {
+			if strings.HasPrefix(target.Preset, "pdf-to-") {
+				t.Fatalf("files %v exposed PDF target %q", files, target.Preset)
+			}
+		}
+	}
 }
 
 func TestTargetsForFilesIncludesRegisteredMediaRoutes(t *testing.T) {
@@ -364,15 +479,26 @@ func (anyFormatEngine) Convert(context.Context, string, formats.Format, string, 
 	return nil
 }
 
+type pdfIDEngine struct{ anyFormatEngine }
+
+func (pdfIDEngine) ID() string { return "pdf" }
+
 type pdfImageEngine struct{}
 
-func (pdfImageEngine) ID() string                 { return "pdf-images" }
-func (pdfImageEngine) Available() (string, error) { return "pdf-images", nil }
+func (pdfImageEngine) ID() string                 { return "pdf" }
+func (pdfImageEngine) PDFRasterizer()             {}
+func (pdfImageEngine) Available() (string, error) { return "pdf", nil }
 func (pdfImageEngine) Supports(source, target formats.Format) bool {
 	return formats.IsPDFFormat(source) && (target == formats.PNG || target == formats.JPEG || target == formats.WebP)
 }
 func (pdfImageEngine) Convert(context.Context, string, formats.Format, string, formats.Format, protocol.ImageOptions) error {
 	return nil
+}
+
+type unavailablePDFEngine struct{ pdfImageEngine }
+
+func (unavailablePDFEngine) Available() (string, error) {
+	return "", errors.New("pdftocairo not found")
 }
 
 type allImageEngine struct{}

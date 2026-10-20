@@ -9,6 +9,7 @@ import (
 )
 
 var fixtures = map[string][]byte{
+	"pdf":     []byte("%PDF-1.7\n"),
 	"png":     append([]byte("\x89PNG\r\n\x1a\n"), make([]byte, 8)...),
 	"jpeg":    {0xff, 0xd8, 0xff, 0xe0, 0x00},
 	"webp":    append([]byte("RIFF\x00\x00\x00\x00WEBP"), 0, 0, 0, 0),
@@ -31,7 +32,7 @@ func fixture(t *testing.T, kind string) string {
 }
 
 func TestDetectUsesContent(t *testing.T) {
-	for kind, want := range map[string]Format{"png": PNG, "jpeg": JPEG, "webp": WebP, "jxl": JXL} {
+	for kind, want := range map[string]Format{"pdf": PDF, "png": PNG, "jpeg": JPEG, "webp": WebP, "jxl": JXL} {
 		if got, err := Detect(fixture(t, kind)); err != nil || got != want {
 			t.Fatalf("%s: got %q, %v", kind, got, err)
 		}
@@ -108,6 +109,37 @@ func TestDetectRejectsMalformedSVG(t *testing.T) {
 	}
 	if _, err := Detect(path); err != ErrUnsupported {
 		t.Fatalf("Detect() error = %v, want ErrUnsupported", err)
+	}
+}
+
+func TestPDFFormatDetectionAndClassification(t *testing.T) {
+	if got, err := Detect(fixture(t, "pdf")); err != nil || got != PDF {
+		t.Fatalf("Detect(pdf) = %q, %v; want PDF", got, err)
+	}
+	arbitrary := filepath.Join(t.TempDir(), "document.pdf")
+	if err := os.WriteFile(arbitrary, []byte("not a PDF"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := Detect(arbitrary); err != ErrUnsupported || got != "" {
+		t.Fatalf("Detect(arbitrary .pdf) = %q, %v; want unsupported", got, err)
+	}
+	if got, ok := FormatFromExtension("document.PDF"); !ok || got != PDF {
+		t.Fatalf("FormatFromExtension(pdf) = %q, %v; want PDF, true", got, ok)
+	}
+	if IsImageFormat(PDF) || !IsPDFFormat(PDF) {
+		t.Fatal("PDF classification is incorrect")
+	}
+	for _, tc := range []struct {
+		preset string
+		want   Format
+	}{
+		{"pdf-to-png", PNG},
+		{"pdf-to-jpeg", JPEG},
+		{"pdf-to-webp", WebP},
+	} {
+		if got, ok := PresetFormat(tc.preset); !ok || got != tc.want {
+			t.Fatalf("PresetFormat(%q) = %q, %v; want %q, true", tc.preset, got, ok, tc.want)
+		}
 	}
 }
 
