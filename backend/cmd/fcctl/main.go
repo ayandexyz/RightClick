@@ -43,6 +43,7 @@ type command struct {
 	// than by the daemon, because the CLI reports the pages it asked for.
 	pdfThumbs bool
 	pdfWidth  int
+	pdfEdit   string
 	// cacheSub is "clear" for the cache command; other cache subcommands are
 	// rejected rather than ignored.
 	cacheSub string
@@ -325,6 +326,12 @@ func parsePDFArgs(args []string) (command, error) {
 				return command{}, err
 			}
 			cmd.pdfPages, i = value, next
+		case "--edit":
+			value, next, err := optionValue(rest, i)
+			if err != nil {
+				return command{}, err
+			}
+			cmd.pdfEdit, i = value, next
 		case "--width":
 			value, next, err := optionValue(rest, i)
 			if err != nil {
@@ -378,6 +385,17 @@ func parsePDFArgs(args []string) (command, error) {
 			return command{}, fmt.Errorf("--pages: %w", err)
 		}
 		return cmd, nil
+	}
+	if cmd.op == "pdf-edit" {
+		if len(cmd.files) != 1 {
+			return command{}, fmt.Errorf("pdf edit takes exactly one file")
+		}
+		if cmd.pdfEdit == "" {
+			return command{}, fmt.Errorf("pdf edit requires --edit")
+		}
+		if _, err := parseEditSpec(cmd.pdfEdit); err != nil {
+			return command{}, fmt.Errorf("--edit: %w", err)
+		}
 	}
 	opDef, _ := pdfops.Lookup(cmd.op)
 	if len(cmd.files) == 0 {
@@ -488,7 +506,10 @@ func commandRequest(cmd command) protocol.Request {
 			"output_dir":  absolutePath(cmd.outputDir),
 			"on_conflict": cmd.conflict,
 		}
-		if cmd.pdfPages != "" || cmd.pdfAngle != nil {
+		if cmd.pdfEdit != "" {
+			items, _ := parseEditSpec(cmd.pdfEdit)
+			params["params"] = map[string]any{"edit": items}
+		} else if cmd.pdfPages != "" || cmd.pdfAngle != nil {
 			operation := map[string]any{}
 			if cmd.pdfPages != "" {
 				operation["pages"] = cmd.pdfPages
@@ -793,6 +814,45 @@ func pdfShortNames() []string {
 		names = append(names, pdfShortName(op.ID))
 	}
 	return names
+}
+
+// parseEditSpec parses the compact CLI form: 3,1r90,b,3,4. A number is a
+// source page, rN is its clockwise rotation delta, and b is a blank page.
+func parseEditSpec(spec string) ([]protocol.PageItem, error) {
+	parts := strings.Split(spec, ",")
+	if len(parts) == 0 || (len(parts) == 1 && strings.TrimSpace(parts[0]) == "") {
+		return nil, fmt.Errorf("edit list cannot be empty")
+	}
+	items := make([]protocol.PageItem, 0, len(parts))
+	for _, raw := range parts {
+		token := strings.TrimSpace(raw)
+		if token == "b" {
+			items = append(items, protocol.PageItem{})
+			continue
+		}
+		rotate := 0
+		if n := strings.Index(token, "r"); n >= 0 {
+			value := token[n+1:]
+			parsed, err := strconv.Atoi(value)
+			if err != nil {
+				return nil, fmt.Errorf("%q has an invalid rotation", token)
+			}
+			rotate = parsed
+			token = token[:n]
+		}
+		src, err := strconv.Atoi(token)
+		if err != nil || src < 1 {
+			return nil, fmt.Errorf("%q must be a positive page number, b, or page rN", raw)
+		}
+		if rotate != 0 && rotate != 90 && rotate != 180 && rotate != 270 {
+			return nil, fmt.Errorf("rotation must be 90, 180 or 270")
+		}
+		items = append(items, protocol.PageItem{Src: src, Rotate: rotate})
+	}
+	if len(items) > 1000 {
+		return nil, fmt.Errorf("edit list may contain at most 1000 items")
+	}
+	return items, nil
 }
 
 // thumbsMaxPages is the page count the CLI parses a --pages spec against when

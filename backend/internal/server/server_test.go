@@ -20,9 +20,11 @@ import (
 	"file-converter/backend/internal/formats"
 	"file-converter/backend/internal/jobs"
 	"file-converter/backend/internal/pdfops"
+
 	"file-converter/backend/internal/protocol"
 	"file-converter/backend/internal/registry"
 	"file-converter/backend/internal/thumbs"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
 
 type testEngine struct {
@@ -600,6 +602,12 @@ func (s *stubPDFBackend) Rotate(_ context.Context, input, output string, _ []int
 }
 
 func (s *stubPDFBackend) ImportImages(_ context.Context, _ []string, _ string) error { return nil }
+func (s *stubPDFBackend) Assemble(_ context.Context, _ string, _ string, _ []pdfops.PageItem) error {
+	return nil
+}
+func (s *stubPDFBackend) InsertBlankPages(_ context.Context, _ string, _ string, _ []int, _ bool, _ *types.Dim) error {
+	return nil
+}
 
 func pdfFixture(t *testing.T, dir, name string) string {
 	t.Helper()

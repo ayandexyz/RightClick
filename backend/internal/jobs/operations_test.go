@@ -15,6 +15,8 @@ import (
 	"file-converter/backend/internal/pdfops"
 	"file-converter/backend/internal/protocol"
 	"file-converter/backend/internal/registry"
+
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
 
 // fakePDFBackend writes small PDF-shaped files and records what it was asked to
@@ -83,6 +85,20 @@ func (f *fakePDFBackend) Rotate(_ context.Context, input, output string, _ []int
 	if err, ok := f.fail[input]; ok && err != nil {
 		return err
 	}
+	f.destinations = append(f.destinations, output)
+	return writePDFStub(output)
+}
+
+func (f *fakePDFBackend) Assemble(_ context.Context, _ string, output string, _ []pdfops.PageItem) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.destinations = append(f.destinations, output)
+	return writePDFStub(output)
+}
+
+func (f *fakePDFBackend) InsertBlankPages(_ context.Context, _ string, output string, _ []int, _ bool, _ *types.Dim) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.destinations = append(f.destinations, output)
 	return writePDFStub(output)
 }

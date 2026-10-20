@@ -3,6 +3,8 @@ package pdfops
 import (
 	"context"
 	"fmt"
+
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
 
 // Params carries an operation's caller-supplied parameters. The zero value
@@ -11,6 +13,19 @@ import (
 type Params struct {
 	Pages string // page spec, "" means not provided
 	Angle int    // 0 means not provided
+	// Edit is the page list for pdf-edit. It is separate from Pages because an
+	// edit says what happens to every page, including blanks, rather than which
+	// pages of the source to use.
+	Edit []PageItem
+}
+
+// PageItem is one page of an edit: a source page in the original document, with
+// an optional clockwise rotation. Src 0 means a blank page, which is how a user
+// inserts one; Rotate is a delta from the page's current rotation, so 90 turns
+// a page that was already sideways a further quarter turn.
+type PageItem struct {
+	Src    int `json:"src"`
+	Rotate int `json:"rotate,omitempty"`
 }
 
 // Backend performs the PDF work. Only the structural operations ship in phase
@@ -26,6 +41,13 @@ type Backend interface {
 	Collect(ctx context.Context, input, output string, pages []int) error
 	Rotate(ctx context.Context, input, output string, pages []int, angle int) error
 	ImportImages(ctx context.Context, inputs []string, output string) error
+	// Assemble rewrites a document from an ordered list of page items, which
+	// covers reordering, deleting, duplicating, rotating and inserting blanks.
+	Assemble(ctx context.Context, input, output string, items []PageItem) error
+	// InsertBlankPages writes input to output with a blank page inserted beside
+	// each of the given pages. It is a step of Assemble rather than a separate
+	// operation, exposed so the pipeline can be asserted step by step.
+	InsertBlankPages(ctx context.Context, input, output string, after []int, before bool, dim *types.Dim) error
 }
 
 // Engine IDs name the external tool that performs an operation. They appear in
@@ -177,6 +199,11 @@ func (o Operation) Run(ctx context.Context, tb Toolbox, inputs []string, output 
 		return fmt.Errorf("%s works on one file at a time", o.ID)
 	}
 	input := inputs[0]
+	// pdf-edit is driven by its edit list, not by a page spec, so it runs even
+	// though no Pages were given.
+	if o.ID == "pdf-edit" {
+		return o.edit(ctx, b, input, output, p)
+	}
 	if !o.NeedsPages && p.Pages == "" {
 		switch {
 		case o.ID == "pdf-reverse":
@@ -216,6 +243,8 @@ func (o Operation) Run(ctx context.Context, tb Toolbox, inputs []string, output 
 			}
 		}
 		return b.Rotate(ctx, input, output, pages, o.angle(p))
+	case "pdf-edit":
+		return o.edit(ctx, b, input, output, p)
 	case "pdf-reverse":
 		return o.reverse(ctx, b, input, output)
 	default:
@@ -233,6 +262,37 @@ func (o Operation) angle(p Params) int {
 }
 
 // reverse collects the pages back to front.
+// edit runs pdf-edit. The page count is checked here rather than inside
+// Assemble because it is the only place that knows the real document length,
+// and the message it produces is what the user sees.
+func (o Operation) edit(ctx context.Context, b Backend, input, output string, p Params) error {
+	if len(p.Edit) == 0 {
+		return fmt.Errorf("%s needs an edit list", o.ID)
+	}
+	// The list is checked here as well as inside Assemble, so the user sees one
+	// clear error naming the offending item rather than a backend failure.
+	if err := validateItems(p.Edit); err != nil {
+		return err
+	}
+	real := 0
+	for _, item := range p.Edit {
+		if item.Src > 0 {
+			real++
+		}
+	}
+	if real == 0 {
+		return fmt.Errorf("%s would produce a document of only blank pages", o.ID)
+	}
+	pageCount, err := b.PageCount(ctx, input)
+	if err != nil {
+		return err
+	}
+	if err := checkItemsAgainstPageCount(p.Edit, pageCount); err != nil {
+		return err
+	}
+	return b.Assemble(ctx, input, output, p.Edit)
+}
+
 func (o Operation) reverse(ctx context.Context, b Backend, input, output string) error {
 	pageCount, err := b.PageCount(ctx, input)
 	if err != nil {

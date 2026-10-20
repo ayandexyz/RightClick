@@ -275,7 +275,7 @@ func (s *Server) handle(conn net.Conn) {
 			id, err := s.deps.Jobs.SubmitOperation(jobs.OperationRequest{
 				Op:        p.Op,
 				Files:     p.Files,
-				Params:    pdfops.Params{Pages: derefString(p.Params.Pages), Angle: derefInt(p.Params.Angle)},
+				Params:    pdfops.Params{Pages: derefString(p.Params.Pages), Angle: derefInt(p.Params.Angle), Edit: editItems(p.Params.Edit)},
 				OutputDir: p.OutputDir,
 				Conflict:  protocol.ConflictPolicy(p.Conflict),
 				Events:    writeEvent(write),
@@ -428,6 +428,20 @@ func derefString(value *string) string {
 		return ""
 	}
 	return *value
+}
+
+// editItems converts the wire page list into the operation's own type. A nil
+// list stays nil so an edit that omits it is reported as missing rather than as
+// an edit of zero pages.
+func editItems(items []protocol.PageItem) []pdfops.PageItem {
+	if items == nil {
+		return nil
+	}
+	out := make([]pdfops.PageItem, len(items))
+	for i, item := range items {
+		out[i] = pdfops.PageItem{Src: item.Src, Rotate: item.Rotate}
+	}
+	return out
 }
 
 func derefInt(value *int) int {

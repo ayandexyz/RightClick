@@ -331,6 +331,27 @@ func validateRunOperation(params json.RawMessage) (string, string) {
 	if p.OnConflict != "" && !isConflictPolicy(p.OnConflict) {
 		return "bad_request", fmt.Sprintf("invalid on_conflict: %s (must be rename, skip, or overwrite)", p.OnConflict)
 	}
+	if p.Op == "pdf-edit" {
+		if p.Params.Pages != nil || p.Params.Angle != nil {
+			return "bad_request", "pdf-edit does not accept pages or angle"
+		}
+		if len(p.Params.Edit) == 0 {
+			return "bad_request", "pdf-edit requires a non-empty edit list"
+		}
+		if len(p.Params.Edit) > 1000 {
+			return "bad_request", "pdf-edit allows at most 1000 items"
+		}
+		for i, item := range p.Params.Edit {
+			if item.Src < 0 {
+				return "bad_request", fmt.Sprintf("edit item %d has a negative source page", i+1)
+			}
+			switch item.Rotate {
+			case 0, 90, 180, 270:
+			default:
+				return "bad_request", fmt.Sprintf("edit item %d has an invalid rotation", i+1)
+			}
+		}
+	}
 	return "", ""
 }
 

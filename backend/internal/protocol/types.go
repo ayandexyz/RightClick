@@ -80,6 +80,17 @@ type Operation struct {
 type Params struct {
 	Pages *string `json:"pages,omitempty"`
 	Angle *int    `json:"angle,omitempty"`
+	// Edit is the page list for pdf-edit. It is optional in the wire type
+	// because an older client omits it entirely, and the operation reports
+	// that the list is missing rather than the request being malformed.
+	Edit []PageItem `json:"edit,omitempty"`
+}
+
+// PageItem is one page of an edit: a source page, and an optional clockwise
+// rotation delta. Src 0 means a blank page.
+type PageItem struct {
+	Src    int `json:"src"`
+	Rotate int `json:"rotate,omitempty"`
 }
 
 // Job represents the state of a conversion job.

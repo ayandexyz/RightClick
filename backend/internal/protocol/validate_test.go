@@ -578,3 +578,21 @@ func TestValidateCacheClear(t *testing.T) {
 		t.Fatalf("cache_clear with params = %q %q, want accepted", code, msg)
 	}
 }
+
+func TestValidatePDFEdit(t *testing.T) {
+	valid := `{"op":"pdf-edit","files":["/tmp/a.pdf"],"params":{"edit":[{"src":3},{"src":0},{"src":1,"rotate":90}]}}`
+	if code, msg := validateRunOperation(json.RawMessage(valid)); code != "" {
+		t.Fatalf("valid pdf-edit = %q %q", code, msg)
+	}
+	for _, tc := range []struct{ name, body string }{
+		{"missing edit", `{"op":"pdf-edit","files":["/tmp/a.pdf"],"params":{}}`},
+		{"negative source", `{"op":"pdf-edit","files":["/tmp/a.pdf"],"params":{"edit":[{"src":-1}]}}`},
+		{"bad rotation", `{"op":"pdf-edit","files":["/tmp/a.pdf"],"params":{"edit":[{"src":1,"rotate":45}]}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if code, _ := validateRunOperation(json.RawMessage(tc.body)); code != "bad_request" {
+				t.Fatalf("code = %q, want bad_request", code)
+			}
+		})
+	}
+}
