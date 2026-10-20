@@ -117,8 +117,8 @@ The complete wire contract is documented in [`docs/PROTOCOL.md`](docs/PROTOCOL.m
 ## Project layout
 
 ```
-frontends/omarchy   layer-shell overlay + Hyprland keybind + file-manager action
-frontends/ubuntu    GTK4/libadwaita + Nautilus action
+frontends/nautilus  Nautilus extension, fcd systemd unit, installer (Omarchy and Ubuntu)
+frontends/omarchy   Omarchy-only Quattro bar widget and progress panel
 frontends/windows   native Windows client
         │  NDJSON over Unix socket / named pipe   (docs/PROTOCOL.md)
 backend/            fcd daemon and fcctl development client

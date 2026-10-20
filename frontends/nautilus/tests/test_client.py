@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-sys.path.insert(0, str(Path(__file__).parents[1] / "nautilus"))
+sys.path.insert(0, str(Path(__file__).parents[1]))
 from fc_client.client import FcClient, DaemonUnavailable, ProtocolError, RequestError
 
 

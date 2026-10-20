@@ -17,10 +17,10 @@ def main():
         subprocess.run(["go", "build", "-o", str(binary), "./cmd/fcd"], cwd=BACKEND, check=True)
         extension_dir = Path.home() / ".local/share/nautilus-python/extensions"
         extension_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(FRONTEND / "nautilus/file_converter.py", extension_dir / "file_converter.py")
+        shutil.copy2(FRONTEND / "file_converter.py", extension_dir / "file_converter.py")
         package = extension_dir / "fc_client"
         shutil.rmtree(package, ignore_errors=True)
-        shutil.copytree(FRONTEND / "nautilus/fc_client", package)
+        shutil.copytree(FRONTEND / "fc_client", package)
         bin_dir = Path.home() / ".local/bin"
         bin_dir.mkdir(parents=True, exist_ok=True)
         # Copy beside the target and rename: a running fcd keeps its old inode, so this works while the service runs.

@@ -59,7 +59,7 @@ class ExtensionMenuTests(unittest.TestCase):
         setattr(repository, "Nautilus", types.SimpleNamespace(Menu=Menu, MenuItem=MenuItem, MenuProvider=FakeMenuProvider))
         sys.modules["gi"] = gi
         sys.modules["gi.repository"] = repository
-        path = Path(__file__).parents[1] / "nautilus/file_converter.py"
+        path = Path(__file__).parents[1] / "file_converter.py"
         spec = importlib.util.spec_from_file_location("file_converter", path)
         assert spec is not None and spec.loader is not None
         cls.module = importlib.util.module_from_spec(spec)

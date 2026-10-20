@@ -2,7 +2,7 @@
 
 This hosted Omarchy `service` + `bar-widget` observes conversion events from the
 user's `fcd` Unix socket and shows active progress in the topbar. It requires
-Python 3 and the file-converter backend installed by `frontends/omarchy/install.sh`.
+Python 3 and the file-converter backend installed by `frontends/nautilus/install.sh`.
 
 Install the backend first, then add this directory as an Omarchy plugin:
 
