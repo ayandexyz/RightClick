@@ -131,3 +131,34 @@ passed with no output
 
 - The cancellation regression test uses the existing Linux process-group execution style and shell utilities, matching the repository's current ImageMagick process test. It is intentionally scoped to the FFmpeg runner's cancellation contract.
 - No speculative route or source behavior was added: coverage now exercises the already-declared five video and seven audio formats, while audio-to-video routes remain rejected.
+
+## Cancellation Test Hardening Evidence
+
+Strengthened `backend/internal/engine/process_test.go` so the FFmpeg cancellation test starts a sleeping child, records its PID, and asserts that the recorded child PID no longer exists after cancellation. The completion-marker assertion remains, so the test no longer passes merely because only the parent exits.
+
+Exact verification evidence:
+
+```text
+$ cd /home/ayan-de/Projects/omarchy-projects/file-converter/backend && go test ./internal/engine -run Cancellation -v -count=1
+=== RUN   TestFFmpegCancellationKillsProcessGroupAndReturnsContextCanceled
+--- PASS: TestFFmpegCancellationKillsProcessGroupAndReturnsContextCanceled (0.11s)
+=== RUN   TestImageMagickCancellationKillsProcessGroup
+--- PASS: TestImageMagickCancellationKillsProcessGroup (0.11s)
+PASS
+ok  	file-converter/backend/internal/engine	0.223s
+
+$ cd /home/ayan-de/Projects/omarchy-projects/file-converter/backend && go test ./...
+ok  	file-converter/backend	(cached)
+ok  	file-converter/backend/cmd/fcctl	(cached)
+ok  	file-converter/backend/cmd/fcd	(cached)
+ok  	file-converter/backend/internal/engine	0.225s
+ok  	file-converter/backend/internal/formats	(cached)
+ok  	file-converter/backend/internal/jobs	(cached)
+ok  	file-converter/backend/internal/protocol	(cached)
+ok  	file-converter/backend/internal/registry	(cached)
+ok  	file-converter/backend/internal/server	(cached)
+ok  	file-converter/backend/internal/transport	(cached)
+
+$ cd /home/ayan-de/Projects/omarchy-projects/file-converter && git diff --check
+(no output; exit status 0)
+```
