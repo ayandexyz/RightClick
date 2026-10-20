@@ -58,13 +58,16 @@ ok for all backend packages
 
 `git diff --check` passed.
 
-## Files changed
+## Files changed for the complete Task 2 implementation
 
 - `backend/internal/engine/ffmpeg.go`
 - `backend/internal/engine/ffmpeg_test.go`
+- `backend/internal/formats/images.go`
 - `backend/cmd/fcd/main.go`
 - `backend/cmd/fcd/main_test.go`
 - `.superpowers/sdd/task-2-report.md`
+
+The daemon files were changed in the earlier registration commit (`3498ac9`), not in the review-fix commit (`23a8752`). The review-fix commit changed `ffmpeg.go`, `ffmpeg_test.go`, `formats/images.go`, and this report. This distinction is intentional so the report does not attribute daemon changes to the later fix commit.
 
 ## Concerns / boundaries
 
