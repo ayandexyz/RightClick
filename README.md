@@ -11,7 +11,7 @@ The Linux Go backend supports image conversion plus FFmpeg-backed video and audi
 - `fcctl` is a small NDJSON development client.
 ### Image conversions
 
-Image conversions use ImageMagick. The available output targets are:
+Raster image conversions use ImageMagick. The available output targets are:
 
 | Output format | Preset |
 | --- | --- |
@@ -25,6 +25,16 @@ Image conversions use ImageMagick. The available output targets are:
 | TIFF | `image-to-tiff` |
 | ICO | `image-to-ico` |
 | HEIC | `image-to-heic` |
+
+SVG inputs use the dedicated `rsvg-convert` renderer and can be rasterized to PNG, JPEG, or WebP. JPEG and WebP outputs use ImageMagick for the final format conversion:
+
+| Output format | Preset |
+| --- | --- |
+| PNG | `svg-to-png` |
+| JPEG | `svg-to-jpeg` |
+| WebP | `svg-to-webp` |
+
+The SVG renderer requires `rsvg-convert`. ImageMagick is additionally required for `svg-to-jpeg` and `svg-to-webp`. Raster-to-SVG conversion is unsupported. SVG input is validated locally and external resources, including file, HTTP/HTTPS, data, and traversal-like references, are rejected.
 
 ### Video conversions
 
@@ -64,7 +74,7 @@ Audio conversions use FFmpeg. Video inputs may extract audio using FFmpeg's `-vn
 - ImageMagick performs conversion. The daemon never uploads files or uses a network service.
 - Output files are created through temporary files and committed with an atomic rename.
 
-ImageMagick is required at runtime. The backend looks for `magick` first and then `convert`.
+ImageMagick is required at runtime for raster image conversion and SVG JPEG/WebP output. The backend looks for `magick` first and then `convert`. SVG rasterization requires `rsvg-convert`.
 
 ## Build and run
 

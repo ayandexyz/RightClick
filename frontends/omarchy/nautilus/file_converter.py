@@ -16,6 +16,8 @@ if os.environ.get("FC_DEBUG") == "1":
 
 SUPPORTED_MIME_TYPES = {
     "image/png", "image/jpeg", "image/webp", "image/jxl", "image/avif",
+    "image/svg+xml", "image/svg", "image/svg-xml", "image/x-svg+xml",
+    "image/vnd.adobe.svg+xml",
     "image/gif", "image/bmp", "image/x-ms-bmp", "image/tiff",
     "image/vnd.microsoft.icon", "image/x-icon", "image/heic", "image/heif",
     "video/mp4", "video/quicktime", "video/webm", "video/x-matroska",
