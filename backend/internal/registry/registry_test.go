@@ -58,6 +58,26 @@ func TestTargetsUsesRegisteredCapabilities(t *testing.T) {
 	}
 }
 
+func TestTargetsForFilesIncludesRegisteredMediaRoutes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "photo.png")
+	if err := os.WriteFile(path, []byte("\x89PNG\r\n\x1a\nfixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	r := New()
+	r.Register(imageAndMediaEngine{})
+	got, err := r.TargetsForFiles([]string{path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range got {
+		if target.Category == "video" || target.Category == "audio" {
+			return
+		}
+	}
+	t.Fatalf("got %v, want at least one registered media target", got)
+}
+
 func TestTargetsForFilesUsesIntersection(t *testing.T) {
 	dir := t.TempDir()
 	png := filepath.Join(dir, "photo.png")
@@ -90,12 +110,23 @@ func TestTargetsForFilesUsesIntersection(t *testing.T) {
 	}
 }
 
+type imageAndMediaEngine struct{}
+
+func (imageAndMediaEngine) ID() string                 { return "image-and-media" }
+func (imageAndMediaEngine) Available() (string, error) { return "image-and-media", nil }
+func (imageAndMediaEngine) Supports(source, target formats.Format) bool {
+	return source != target
+}
+func (imageAndMediaEngine) Convert(context.Context, string, formats.Format, string, formats.Format, protocol.ImageOptions) error {
+	return nil
+}
+
 type allImageEngine struct{}
 
 func (allImageEngine) ID() string                 { return "all-images" }
 func (allImageEngine) Available() (string, error) { return "all-images", nil }
 func (allImageEngine) Supports(source, target formats.Format) bool {
-	return source != target
+	return formats.IsImageFormat(source) && formats.IsImageFormat(target) && source != target
 }
 func (allImageEngine) Convert(context.Context, string, formats.Format, string, formats.Format, protocol.ImageOptions) error {
 	return nil

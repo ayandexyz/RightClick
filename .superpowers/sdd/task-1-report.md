@@ -75,4 +75,9 @@ ok   file-converter/backend/internal/transport
 ## Concerns / follow-up
 
 - Media detection and conversion engine support remain outside Task 1. The new constants and presets provide the protocol and registry-facing format vocabulary for later staged tasks.
-- Existing registry target resolution remains image-engine-specific, as required by the limited scope of this task.
+- Registry target enumeration now includes all registered image and media formats, and uses the shared classification helpers when building its candidate list. Actual media engine availability and probing remain part of later staged tasks.
+- The registry regression test uses a capability-complete fake engine to prove media targets are reachable through the registry-backed targets path without changing the existing engine contract.
+
+## Follow-up correction
+
+A verifier identified that the initial implementation left the registry's candidate list image-only. This was corrected in the follow-up commit by replacing the hard-coded image list with an ordered all-format list filtered through `IsImageFormat`, `IsVideoFormat`, and `IsAudioFormat`, plus a regression test for registry-backed media target discovery.

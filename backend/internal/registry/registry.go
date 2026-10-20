@@ -69,7 +69,7 @@ func (r *Registry) TargetsForFiles(paths []string) ([]protocol.Target, error) {
 			return nil, err
 		}
 		available := make(map[formats.Format]bool)
-		for _, target := range allImageFormats() {
+		for _, target := range allSupportedFormats() {
 			if target != source {
 				if _, err := r.Resolve(source, target); err == nil {
 					available[target] = true
@@ -96,14 +96,25 @@ func (r *Registry) TargetsForFiles(paths []string) ([]protocol.Target, error) {
 	return out, nil
 }
 
-func allImageFormats() []formats.Format {
-	return []formats.Format{formats.PNG, formats.JPEG, formats.WebP, formats.JXL, formats.AVIF, formats.GIF, formats.BMP, formats.TIFF, formats.ICO, formats.HEIC}
+func allSupportedFormats() []formats.Format {
+	candidates := []formats.Format{
+		formats.PNG, formats.JPEG, formats.WebP, formats.JXL, formats.AVIF, formats.GIF, formats.BMP, formats.TIFF, formats.ICO, formats.HEIC,
+		formats.MP4, formats.MOV, formats.WebM, formats.MKV, formats.AVI,
+		formats.MP3, formats.WAV, formats.FLAC, formats.AAC, formats.M4A, formats.OGG, formats.Opus,
+	}
+	out := make([]formats.Format, 0, len(candidates))
+	for _, format := range candidates {
+		if formats.IsImageFormat(format) || formats.IsVideoFormat(format) || formats.IsAudioFormat(format) {
+			out = append(out, format)
+		}
+	}
+	return out
 }
 
 func (r *Registry) Targets(source formats.Format) []formats.Format {
 	seen := make(map[formats.Format]bool)
-	out := make([]formats.Format, 0, len(allImageFormats()))
-	for _, target := range allImageFormats() {
+	out := make([]formats.Format, 0, len(allSupportedFormats()))
+	for _, target := range allSupportedFormats() {
 		if target == source || seen[target] {
 			continue
 		}
