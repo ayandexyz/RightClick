@@ -2,8 +2,10 @@ package jobs
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -18,6 +20,37 @@ type fakeConverter struct {
 	mu    sync.Mutex
 	calls int
 	block bool
+}
+
+type fakeMultiConverter struct {
+	pages       int
+	fail        bool
+	outsidePath string
+}
+
+func (f *fakeMultiConverter) ID() string                 { return "pdf" }
+func (f *fakeMultiConverter) Available() (string, error) { return "pdf", nil }
+func (f *fakeMultiConverter) Supports(source, target formats.Format) bool {
+	return source == formats.PDF && (target == formats.PNG || target == formats.JPEG || target == formats.WebP)
+}
+func (f *fakeMultiConverter) Convert(context.Context, string, formats.Format, string, formats.Format, protocol.ImageOptions) error {
+	return nil
+}
+func (f *fakeMultiConverter) ConvertMany(_ context.Context, _ string, _ formats.Format, destination string, target formats.Format, _ protocol.ImageOptions) ([]string, error) {
+	if f.fail {
+		return nil, context.Canceled
+	}
+	paths := make([]string, f.pages)
+	for i := range paths {
+		paths[i] = filepath.Join(destination, fmt.Sprintf("page-%d.%s", i+1, target))
+		if err := os.WriteFile(paths[i], []byte(fmt.Sprintf("page %d", i+1)), 0o600); err != nil {
+			return nil, err
+		}
+	}
+	if f.outsidePath != "" {
+		return append(paths, f.outsidePath), nil
+	}
+	return paths, nil
 }
 
 type fakeSVGConverter struct {
@@ -142,6 +175,67 @@ func waitJob(t *testing.T, events <-chan protocol.Event) protocol.Job {
 			t.Fatal("timed out waiting for job")
 			return protocol.Job{}
 		}
+	}
+}
+
+func TestManagerCommitsMultiPageOutputsInEngineOrder(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "document.pdf")
+	if err := os.WriteFile(source, []byte("%PDF-1.7"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output := t.TempDir()
+	r := registry.New()
+	r.Register(&fakeMultiConverter{pages: 2})
+	m := NewManagerWithRegistry(r)
+	defer m.Close()
+	events := make(chan protocol.Event, 16)
+	id, err := m.Submit(SubmitRequest{Files: []string{source}, Preset: "pdf-to-png", OutputDir: output, Conflict: protocol.ConflictRename, Events: func(e protocol.Event) { events <- e }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := waitJob(t, events)
+	if job.ID != id || job.State != "completed" || job.Files[0].State != "done" {
+		t.Fatalf("unexpected job: %+v", job)
+	}
+	want := []string{filepath.Join(output, "document-1.png"), filepath.Join(output, "document-2.png")}
+	if !reflect.DeepEqual(job.Files[0].Outputs, want) {
+		t.Fatalf("outputs = %v, want %v", job.Files[0].Outputs, want)
+	}
+	for _, path := range want {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("missing output %q: %v", path, err)
+		}
+	}
+	entries, err := os.ReadDir(output)
+	if err != nil || len(entries) != 2 {
+		t.Fatalf("output directory entries = %v, err = %v", entries, err)
+	}
+}
+
+func TestManagerDoesNotCommitPartialMultiPageOutputs(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "document.pdf")
+	if err := os.WriteFile(source, []byte("%PDF-1.7"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output := t.TempDir()
+	r := registry.New()
+	r.Register(&fakeMultiConverter{fail: true})
+	m := NewManagerWithRegistry(r)
+	defer m.Close()
+	events := make(chan protocol.Event, 16)
+	_, err := m.Submit(SubmitRequest{Files: []string{source}, Preset: "pdf-to-png", OutputDir: output, Conflict: protocol.ConflictRename, Events: func(e protocol.Event) { events <- e }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := waitJob(t, events)
+	if job.State != "failed" || job.Files[0].State != "failed" || len(job.Files[0].Outputs) != 0 {
+		t.Fatalf("unexpected job: %+v", job)
+	}
+	entries, err := os.ReadDir(output)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("output directory entries = %v, err = %v", entries, err)
 	}
 }
 

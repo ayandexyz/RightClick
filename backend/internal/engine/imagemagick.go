@@ -203,6 +203,17 @@ type OutputPlan struct {
 }
 
 func PlanOutput(dir, source string, targetExt string, conflict protocol.ConflictPolicy) (OutputPlan, error) {
+	return planOutput(dir, source, targetExt, "", conflict)
+}
+
+func PlanOutputPath(dir, source string, targetExt string, page int, conflict protocol.ConflictPolicy) (OutputPlan, error) {
+	if page < 1 {
+		return OutputPlan{}, fmt.Errorf("page number must be positive")
+	}
+	return planOutput(dir, source, targetExt, "-"+strconv.Itoa(page), conflict)
+}
+
+func planOutput(dir, source string, targetExt, suffix string, conflict protocol.ConflictPolicy) (OutputPlan, error) {
 	if !filepath.IsAbs(source) {
 		return OutputPlan{}, fmt.Errorf("source path must be absolute")
 	}
@@ -221,7 +232,7 @@ func PlanOutput(dir, source string, targetExt string, conflict protocol.Conflict
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return OutputPlan{}, err
 	}
-	base := strings.TrimSuffix(filepath.Base(source), filepath.Ext(source)) + "." + targetExt
+	base := strings.TrimSuffix(filepath.Base(source), filepath.Ext(source)) + suffix + "." + targetExt
 	destination := filepath.Join(dir, base)
 	if filepath.Clean(destination) == filepath.Clean(source) {
 		return OutputPlan{}, fmt.Errorf("output would overwrite source")

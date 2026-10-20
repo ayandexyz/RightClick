@@ -17,6 +17,11 @@ type Engine interface {
 	Convert(context.Context, string, formats.Format, string, formats.Format, protocol.ImageOptions) error
 }
 
+type MultiOutputEngine interface {
+	Engine
+	ConvertMany(context.Context, string, formats.Format, string, formats.Format, protocol.ImageOptions) ([]string, error)
+}
+
 type Registry struct {
 	engines []Engine
 }

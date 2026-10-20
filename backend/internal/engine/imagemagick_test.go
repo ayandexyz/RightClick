@@ -30,6 +30,68 @@ func TestPlanOutput(t *testing.T) {
 	}
 }
 
+func TestPlanOutputForPageUsesPageNumberAndConflictPolicy(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "document.pdf")
+	if err := os.WriteFile(source, []byte("%PDF-1.7"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "document-1.png"), []byte("existing"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	plan, err := PlanOutputPath(dir, source, "png", 1, protocol.ConflictRename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer plan.RemoveTemp()
+	if filepath.Base(plan.Destination) != "document-1 (1).png" {
+		t.Fatalf("destination = %q", plan.Destination)
+	}
+
+	second, err := PlanOutputPath(dir, source, "png", 2, protocol.ConflictRename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.RemoveTemp()
+	if filepath.Base(second.Destination) != "document-2.png" {
+		t.Fatalf("destination = %q", second.Destination)
+	}
+}
+
+func TestPlanOutputPathSkipsExistingPage(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "document.pdf")
+	if err := os.WriteFile(source, []byte("%PDF-1.7"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "document-1.png"), []byte("existing"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := PlanOutputPath(dir, source, "png", 1, protocol.ConflictSkip)
+	if err != nil || !plan.Skipped() {
+		t.Fatalf("plan = %+v, err = %v", plan, err)
+	}
+}
+
+func TestPlanOutputPathRejectsUnsafeStemsAndSourceOverwrite(t *testing.T) {
+	dir := t.TempDir()
+	unsafe := filepath.Join(dir, "bad[1].pdf")
+	if err := os.WriteFile(unsafe, []byte("%PDF-1.7"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PlanOutputPath(dir, unsafe, "png", 1, protocol.ConflictRename); err == nil {
+		t.Fatal("unsafe stem accepted")
+	}
+	source := filepath.Join(dir, "document.png")
+	if err := os.WriteFile(source, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PlanOutput(dir, source, "png", protocol.ConflictRename); err == nil {
+		t.Fatal("source overwrite accepted")
+	}
+}
+
 func TestPlanOutputAcceptsMediaExtensions(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "input.source")
