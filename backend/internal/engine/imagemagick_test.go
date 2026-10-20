@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"file-converter/backend/internal/formats"
+	"file-converter/backend/internal/protocol"
 )
 
 func TestPlanOutput(t *testing.T) {
@@ -68,7 +69,7 @@ func TestJXLCommandUsesExplicitFormatSpecifiers(t *testing.T) {
 		return nil
 	})
 	e.executable = "magick"
-	if err := e.Convert(context.Background(), "/tmp/photo.png", formats.PNG, "/tmp/out.jxl", formats.JXL); err != nil {
+	if err := e.Convert(context.Background(), "/tmp/photo.png", formats.PNG, "/tmp/out.jxl", formats.JXL, protocol.ImageOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	joined := strings.Join(gotArgs, " ")
@@ -84,7 +85,7 @@ func TestWebPCommandUsesFirstFrameInInputSpecifier(t *testing.T) {
 		return nil
 	})
 	e.executable = "magick"
-	if err := e.Convert(context.Background(), "/tmp/animation.webp", formats.WebP, "/tmp/out.jpg", formats.JPEG); err != nil {
+	if err := e.Convert(context.Background(), "/tmp/animation.webp", formats.WebP, "/tmp/out.jpg", formats.JPEG, protocol.ImageOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if len(gotArgs) < 2 {
@@ -104,6 +105,37 @@ func TestWebPCommandUsesFirstFrameInInputSpecifier(t *testing.T) {
 	}
 }
 
+func TestCommandOptionsOrderAndTargetBehavior(t *testing.T) {
+	quality, maxSize := 82, 2048
+	var gotArgs []string
+	e := NewImageMagick(func(_ context.Context, _ string, args []string) error {
+		gotArgs = args
+		return nil
+	})
+	e.executable = "magick"
+	if err := e.Convert(context.Background(), "/tmp/photo.png", formats.PNG, "/tmp/out.jpg", formats.JPEG, protocol.ImageOptions{Quality: &quality, MaxSize: &maxSize, Background: "#abc"}); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(gotArgs, " ")
+	for _, want := range []string{"-resize 2048x2048>", "-background #abc", "-alpha remove", "-alpha off", "-quality 82", "jpeg:/tmp/out.jpg"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("missing %q in %v", want, gotArgs)
+		}
+	}
+	if strings.Index(joined, "-resize") > strings.Index(joined, "-quality") || strings.Index(joined, "-quality") > strings.Index(joined, "jpeg:/tmp/out.jpg") {
+		t.Fatalf("options are out of order: %v", gotArgs)
+	}
+
+	gotArgs = nil
+	if err := e.Convert(context.Background(), "/tmp/photo.png", formats.PNG, "/tmp/out.png", formats.PNG, protocol.ImageOptions{Quality: &quality, MaxSize: &maxSize, Background: "black"}); err != nil {
+		t.Fatal(err)
+	}
+	joined = strings.Join(gotArgs, " ")
+	if strings.Contains(joined, "-quality") || strings.Contains(joined, "-background") || strings.Contains(joined, "-alpha") {
+		t.Fatalf("PNG should ignore lossy/background options: %v", gotArgs)
+	}
+}
+
 func TestCommandConstruction(t *testing.T) {
 	var gotExe string
 	var gotArgs []string
@@ -111,7 +143,7 @@ func TestCommandConstruction(t *testing.T) {
 	e.executable = "magick"
 	source := "/tmp/photo.png"
 	destination := "/tmp/out.jpg"
-	if err := e.Convert(context.Background(), source, formats.PNG, destination, formats.JPEG); err != nil {
+	if err := e.Convert(context.Background(), source, formats.PNG, destination, formats.JPEG, protocol.ImageOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if gotExe != "magick" || !strings.Contains(strings.Join(gotArgs, " "), "png:/tmp/photo.png") {

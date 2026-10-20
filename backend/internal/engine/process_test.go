@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"file-converter/backend/internal/formats"
+	"file-converter/backend/internal/protocol"
 )
 
 func TestImageMagickCancellationKillsProcessGroup(t *testing.T) {
@@ -33,7 +34,7 @@ func TestImageMagickCancellationKillsProcessGroup(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- engine.Convert(ctx, "/tmp/source.png", formats.PNG, "/tmp/destination.jpg", formats.JPEG)
+		done <- engine.Convert(ctx, "/tmp/source.png", formats.PNG, "/tmp/destination.jpg", formats.JPEG, protocol.ImageOptions{})
 	}()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {

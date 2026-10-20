@@ -18,7 +18,7 @@ type fakeConverter struct {
 	block bool
 }
 
-func (f *fakeConverter) Convert(ctx context.Context, _ string, _ formats.Format, destination string, _ formats.Format) error {
+func (f *fakeConverter) Convert(ctx context.Context, _ string, _ formats.Format, destination string, _ formats.Format, _ protocol.ImageOptions) error {
 	f.mu.Lock()
 	f.calls++
 	f.mu.Unlock()

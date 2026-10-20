@@ -2,6 +2,12 @@ package protocol
 
 import "encoding/json"
 
+type ImageOptions struct {
+	Quality    *int
+	MaxSize    *int
+	Background string
+}
+
 type ConflictPolicy string
 
 const (

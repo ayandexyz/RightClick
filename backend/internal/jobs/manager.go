@@ -16,7 +16,7 @@ import (
 )
 
 type Converter interface {
-	Convert(context.Context, string, formats.Format, string, formats.Format) error
+	Convert(context.Context, string, formats.Format, string, formats.Format, protocol.ImageOptions) error
 }
 
 type Router interface {
@@ -28,6 +28,7 @@ type SubmitRequest struct {
 	Preset    string
 	OutputDir string
 	Conflict  protocol.ConflictPolicy
+	Options   protocol.ImageOptions
 	Events    func(protocol.Event)
 }
 
@@ -68,8 +69,8 @@ type converterEngine struct{ converter Converter }
 func (e converterEngine) ID() string                                   { return "converter" }
 func (e converterEngine) Available() (string, error)                   { return "converter", nil }
 func (e converterEngine) Supports(formats.Format, formats.Format) bool { return true }
-func (e converterEngine) Convert(ctx context.Context, source string, sourceFormat formats.Format, destination string, target formats.Format) error {
-	return e.converter.Convert(ctx, source, sourceFormat, destination, target)
+func (e converterEngine) Convert(ctx context.Context, source string, sourceFormat formats.Format, destination string, target formats.Format, options protocol.ImageOptions) error {
+	return e.converter.Convert(ctx, source, sourceFormat, destination, target, options)
 }
 
 func (m *Manager) Submit(req SubmitRequest) (string, error) {
@@ -326,7 +327,7 @@ func (m *Manager) convertFile(j *job, index int, source string, target formats.F
 	}
 	route, err := m.router.Resolve(sourceFormat, target)
 	if err == nil {
-		err = route.Convert(j.ctx, source, sourceFormat, plan.Temp, target)
+		err = route.Convert(j.ctx, source, sourceFormat, plan.Temp, target, j.req.Options)
 	}
 	if err != nil {
 		plan.RemoveTemp()

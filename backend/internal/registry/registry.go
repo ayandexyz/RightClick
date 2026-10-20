@@ -12,7 +12,7 @@ type Engine interface {
 	ID() string
 	Available() (string, error)
 	Supports(source, target formats.Format) bool
-	Convert(context.Context, string, formats.Format, string, formats.Format) error
+	Convert(context.Context, string, formats.Format, string, formats.Format, protocol.ImageOptions) error
 }
 
 type Registry struct {

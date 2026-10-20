@@ -46,7 +46,7 @@ func (e *ImageMagick) Available() (string, error) {
 	return "", fmt.Errorf("imagemagick not found")
 }
 
-func (e *ImageMagick) Convert(ctx context.Context, source string, sourceFormat formats.Format, destination string, target formats.Format) error {
+func (e *ImageMagick) Convert(ctx context.Context, source string, sourceFormat formats.Format, destination string, target formats.Format, options protocol.ImageOptions) error {
 	executable, err := e.Available()
 	if err != nil {
 		return err
@@ -58,11 +58,19 @@ func (e *ImageMagick) Convert(ctx context.Context, source string, sourceFormat f
 	if sourceFormat == formats.WebP {
 		input += "[0]"
 	}
-	args := []string{"-limit", "memory", "512MiB", "-limit", "map", "1GiB", "-limit", "disk", "2GiB", "-limit", "time", "300", input}
+	args := []string{"-limit", "memory", "512MiB", "-limit", "map", "1GiB", "-limit", "disk", "2GiB", "-limit", "time", "300", input, "-auto-orient"}
+	if options.MaxSize != nil {
+		args = append(args, "-resize", fmt.Sprintf("%dx%d>", *options.MaxSize, *options.MaxSize))
+	}
 	if target == formats.JPEG {
-		args = append(args, "-auto-orient", "-background", "white", "-alpha", "remove", "-alpha", "off")
-	} else {
-		args = append(args, "-auto-orient")
+		background := options.Background
+		if background == "" {
+			background = "white"
+		}
+		args = append(args, "-background", background, "-alpha", "remove", "-alpha", "off")
+	}
+	if options.Quality != nil && target != formats.PNG {
+		args = append(args, "-quality", strconv.Itoa(*options.Quality))
 	}
 	args = append(args, string(target)+":"+destination)
 	if e.runner != nil {

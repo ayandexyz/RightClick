@@ -16,14 +16,18 @@ import (
 	"file-converter/backend/internal/registry"
 )
 
-type testEngine struct{ block bool }
+type testEngine struct {
+	block   bool
+	options protocol.ImageOptions
+}
 
 func (e *testEngine) ID() string                 { return "test" }
 func (e *testEngine) Available() (string, error) { return "test", nil }
 func (e *testEngine) Supports(source, target formats.Format) bool {
 	return source != target && source != "" && target != ""
 }
-func (e *testEngine) Convert(ctx context.Context, _ string, _ formats.Format, destination string, _ formats.Format) error {
+func (e *testEngine) Convert(ctx context.Context, _ string, _ formats.Format, destination string, _ formats.Format, options protocol.ImageOptions) error {
+	e.options = options
 	if e.block {
 		<-ctx.Done()
 		return ctx.Err()
@@ -256,6 +260,26 @@ func writeRequest(conn net.Conn, req protocol.Request) error {
 	}
 	_, err = conn.Write(data)
 	return err
+}
+
+func TestServerNormalizesBackgroundOption(t *testing.T) {
+	engine := &testEngine{}
+	conn, cleanup := startTestServer(t, engine)
+	defer cleanup()
+	input := imageFixture(t)
+	outputDir := t.TempDir()
+	response := sendRequest(t, conn, protocol.Request{ID: 1, Method: "convert", Params: json.RawMessage(`{"files":["` + input + `"],"preset":"image-to-jpeg","output_dir":"` + outputDir + `","background":"#AbC"}`)})
+	if response["error"] != nil {
+		t.Fatalf("convert response: %#v", response)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if engine.options.Background == "#abc" {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("background was not normalized: %#v", engine.options)
 }
 
 func TestServerConvertReturnsJobAndFinishedEvent(t *testing.T) {

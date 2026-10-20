@@ -4,8 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
+
+var backgroundPattern = regexp.MustCompile(`^(white|black|transparent|#[0-9a-f]{3}|#[0-9a-f]{6}|#[0-9a-f]{8})$`)
+
+const maxImageOption = 32768
 
 var supportedPresets = []Target{
 	{Preset: "image-to-png", Label: "PNG Image", Format: "png", Category: "image", Enabled: true},
@@ -101,6 +106,9 @@ func validateConvert(params json.RawMessage) (string, string) {
 		Preset     string   `json:"preset"`
 		OutputDir  string   `json:"output_dir,omitempty"`
 		OnConflict string   `json:"on_conflict,omitempty"`
+		Quality    *int     `json:"quality,omitempty"`
+		MaxSize    *int     `json:"max_size,omitempty"`
+		Background string   `json:"background,omitempty"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return "bad_request", "invalid convert params"
@@ -125,6 +133,21 @@ func validateConvert(params json.RawMessage) (string, string) {
 	if p.OnConflict != "" {
 		if p.OnConflict != "rename" && p.OnConflict != "skip" && p.OnConflict != "overwrite" {
 			return "bad_request", fmt.Sprintf("invalid on_conflict: %s (must be rename, skip, or overwrite)", p.OnConflict)
+		}
+	}
+	if p.Quality != nil && (*p.Quality < 1 || *p.Quality > 100) {
+		return "bad_request", "quality must be between 1 and 100"
+	}
+	if p.MaxSize != nil && (*p.MaxSize < 1 || *p.MaxSize > maxImageOption) {
+		return "bad_request", fmt.Sprintf("max_size must be between 1 and %d", maxImageOption)
+	}
+	if p.Background != "" {
+		background := strings.ToLower(p.Background)
+		if !backgroundPattern.MatchString(background) {
+			return "bad_request", "background must be white, black, transparent, or a 3/4/6/8-digit hex color"
+		}
+		if strings.EqualFold(p.Preset, "image-to-jpeg") && (background == "transparent" || len(background) == 5 || len(background) == 9) {
+			return "bad_request", "transparent background is not supported for JPEG"
 		}
 	}
 	return "", ""

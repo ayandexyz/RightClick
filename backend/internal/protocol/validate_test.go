@@ -138,6 +138,41 @@ func TestValidateRequest(t *testing.T) {
 			wantMsg:  "invalid on_conflict",
 		},
 		{
+			name:     "convert invalid quality",
+			req:      Request{ID: 3, Method: "convert", Params: mustMarshal(map[string]interface{}{"files": []string{absolutePath("/tmp/test.png")}, "preset": "image-to-jpeg", "quality": 101})},
+			wantCode: "bad_request",
+			wantMsg:  "quality must be between",
+		},
+		{
+			name:     "convert invalid max size",
+			req:      Request{ID: 3, Method: "convert", Params: mustMarshal(map[string]interface{}{"files": []string{absolutePath("/tmp/test.png")}, "preset": "image-to-jpeg", "max_size": 0})},
+			wantCode: "bad_request",
+			wantMsg:  "max_size must be between",
+		},
+		{
+			name:     "convert invalid background",
+			req:      Request{ID: 3, Method: "convert", Params: mustMarshal(map[string]interface{}{"files": []string{absolutePath("/tmp/test.png")}, "preset": "image-to-jpeg", "background": "@file"})},
+			wantCode: "bad_request",
+			wantMsg:  "background must be",
+		},
+		{
+			name:     "convert rejects rgba shorthand background",
+			req:      Request{ID: 3, Method: "convert", Params: mustMarshal(map[string]interface{}{"files": []string{absolutePath("/tmp/test.png")}, "preset": "image-to-png", "background": "#abcd"})},
+			wantCode: "bad_request",
+			wantMsg:  "background must be",
+		},
+		{
+			name:     "convert transparent jpeg background rejected",
+			req:      Request{ID: 3, Method: "convert", Params: mustMarshal(map[string]interface{}{"files": []string{absolutePath("/tmp/test.png")}, "preset": "image-to-jpeg", "background": "transparent"})},
+			wantCode: "bad_request",
+			wantMsg:  "transparent background",
+		},
+		{
+			name:    "convert valid options",
+			req:     Request{ID: 3, Method: "convert", Params: mustMarshal(map[string]interface{}{"files": []string{absolutePath("/tmp/test.png")}, "preset": "image-to-png", "quality": 100, "max_size": 32768, "background": "#AbC"})},
+			wantNil: true,
+		},
+		{
 			name: "convert valid conflict policies",
 			req: Request{
 				ID:     3,

@@ -20,7 +20,7 @@ func (f fakeEngine) Available() (string, error) { return "/fake", nil }
 func (f fakeEngine) Supports(source, target formats.Format) bool {
 	return source == formats.PNG && target == formats.WebP
 }
-func (f fakeEngine) Convert(context.Context, string, formats.Format, string, formats.Format) error {
+func (f fakeEngine) Convert(context.Context, string, formats.Format, string, formats.Format, protocol.ImageOptions) error {
 	return nil
 }
 
@@ -89,6 +89,6 @@ func (allImageEngine) Available() (string, error) { return "all-images", nil }
 func (allImageEngine) Supports(source, target formats.Format) bool {
 	return source != target
 }
-func (allImageEngine) Convert(context.Context, string, formats.Format, string, formats.Format) error {
+func (allImageEngine) Convert(context.Context, string, formats.Format, string, formats.Format, protocol.ImageOptions) error {
 	return nil
 }

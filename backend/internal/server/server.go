@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -142,10 +143,13 @@ func (s *Server) handle(conn net.Conn) {
 			}
 		case "convert":
 			var p struct {
-				Files     []string `json:"files"`
-				Preset    string   `json:"preset"`
-				OutputDir string   `json:"output_dir"`
-				Conflict  string   `json:"on_conflict"`
+				Files      []string `json:"files"`
+				Preset     string   `json:"preset"`
+				OutputDir  string   `json:"output_dir"`
+				Conflict   string   `json:"on_conflict"`
+				Quality    *int     `json:"quality,omitempty"`
+				MaxSize    *int     `json:"max_size,omitempty"`
+				Background string   `json:"background,omitempty"`
 			}
 			if json.Unmarshal(req.Params, &p) != nil {
 				if writeError(write, req.ID, "bad_request", "invalid convert params") != nil {
@@ -156,7 +160,7 @@ func (s *Server) handle(conn net.Conn) {
 			if p.Conflict == "" {
 				p.Conflict = "rename"
 			}
-			id, err := s.deps.Jobs.Submit(jobs.SubmitRequest{Files: p.Files, Preset: p.Preset, OutputDir: p.OutputDir, Conflict: protocol.ConflictPolicy(p.Conflict), Events: writeEvent(write)})
+			id, err := s.deps.Jobs.Submit(jobs.SubmitRequest{Files: p.Files, Preset: p.Preset, OutputDir: p.OutputDir, Conflict: protocol.ConflictPolicy(p.Conflict), Options: protocol.ImageOptions{Quality: p.Quality, MaxSize: p.MaxSize, Background: strings.ToLower(p.Background)}, Events: writeEvent(write)})
 			if err != nil {
 				code := "unsupported"
 				if errors.Is(err, formats.ErrInvalidInput) {
