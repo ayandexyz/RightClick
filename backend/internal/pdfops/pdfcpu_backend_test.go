@@ -293,3 +293,71 @@ func pageRotation(t *testing.T, path string, page int) int {
 	t.Fatalf("pdfinfo reported no rotation for page %d of %s:\n%s", page, path, out)
 	return 0
 }
+
+// A file pdfcpu cannot read is reported as damaged, not as an unexplained
+// failure: clients choose a different screen for the two. The cases are the
+// real shapes damage takes, because pdfcpu words each one differently.
+func TestPDFCPUPageCountClassifiesUnreadableFilesAsInvalid(t *testing.T) {
+	dir := t.TempDir()
+	good := writeFixture(t, dir, "good.pdf", 3)
+	body, err := os.ReadFile(good)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string][]byte{
+		"truncated":   body[:len(body)/2],
+		"header only": []byte("%PDF-1.7\n"),
+		"garbage":     []byte("%PDF-1.7\nthis is not a PDF at all\n"),
+		"zero filled": append([]byte("%PDF-1.7\n"), make([]byte, 512)...),
+	}
+	backend := NewPDFCPUBackend()
+	for name, content := range cases {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(dir, name+".pdf")
+			if err := os.WriteFile(path, content, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := backend.PageCount(context.Background(), path)
+			if err == nil {
+				t.Skip("pdfcpu repaired this file; nothing to classify")
+			}
+			if !errors.Is(err, ErrInvalidPDF) {
+				t.Fatalf("err = %v, want ErrInvalidPDF", err)
+			}
+			if ErrorCode(err) != "invalid_pdf" {
+				t.Fatalf("ErrorCode = %q, want invalid_pdf", ErrorCode(err))
+			}
+			if err.Error() != ErrInvalidPDF.Error() {
+				t.Fatalf("message = %q, want the short user-facing sentence", err.Error())
+			}
+		})
+	}
+}
+
+// A request that is cancelled is not a verdict on the file.
+func TestPDFCPUPageCountCancellationIsNotInvalid(t *testing.T) {
+	dir := t.TempDir()
+	path := writeFixture(t, dir, "good.pdf", 2)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := NewPDFCPUBackend().PageCount(ctx, path)
+	if !errors.Is(err, context.Canceled) || errors.Is(err, ErrInvalidPDF) {
+		t.Fatalf("err = %v, want context.Canceled and not ErrInvalidPDF", err)
+	}
+}
+
+// A locked file stays locked: it must not be reclassified as damaged.
+func TestPDFCPUPageCountKeepsLockedDistinctFromInvalid(t *testing.T) {
+	dir := t.TempDir()
+	path := writeFixture(t, dir, "plain.pdf", 2)
+	locked := filepath.Join(dir, "locked.pdf")
+	conf := model.NewDefaultConfiguration()
+	conf.UserPW, conf.OwnerPW = "secret", "owner"
+	if err := api.EncryptFile(path, locked, conf); err != nil {
+		t.Skipf("pdfcpu could not encrypt a fixture: %v", err)
+	}
+	_, err := NewPDFCPUBackend().PageCount(context.Background(), locked)
+	if !errors.Is(err, ErrPasswordRequired) || errors.Is(err, ErrInvalidPDF) {
+		t.Fatalf("err = %v, want ErrPasswordRequired only", err)
+	}
+}

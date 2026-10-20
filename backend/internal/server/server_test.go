@@ -1381,3 +1381,65 @@ func TestServerCacheClearRemovesThumbnails(t *testing.T) {
 		t.Fatalf("second clear removed %d, want 0", removed)
 	}
 }
+
+// The stub-based tests above inject ErrInvalidPDF, which is exactly how the real
+// backend failing to produce it went unnoticed. These drive the real pdfcpu
+// backend over the socket with files that are damaged in different ways.
+func TestServerReportsDamagedPDFsWithTheRealBackend(t *testing.T) {
+	tmp := t.TempDir()
+	damaged := map[string][]byte{
+		"truncated.pdf": []byte("%PDF-1.7\n1 0 obj\n<< /Type /Catalog >>\nendobj\n"),
+		"garbage.pdf":   []byte("%PDF-1.4\ngarbage\n"),
+		"zeros.pdf":     append([]byte("%PDF-1.7\n"), make([]byte, 512)...),
+	}
+	info := pdfops.NewInfo(nil, pdfops.NewPDFCPUBackend())
+	conn, reader, cleanup := startInfoServer(t, info)
+	defer cleanup()
+	for name, content := range damaged {
+		path := filepath.Join(tmp, name)
+		if err := os.WriteFile(path, content, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		t.Run(name, func(t *testing.T) {
+			resp := exchange(t, conn, reader, protocol.Request{ID: 1, Method: "pdf_info", Params: mustJSON(map[string]any{"file": path})})
+			errValue, ok := resp["error"].(map[string]any)
+			if !ok {
+				t.Fatalf("pdf_info = %#v, want an error", resp)
+			}
+			if errValue["code"] != "invalid_pdf" {
+				t.Fatalf("code = %v (%v), want invalid_pdf", errValue["code"], errValue["message"])
+			}
+		})
+	}
+}
+
+func TestServerThumbnailsReportDamagedPDFsWithTheRealBackend(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "damaged.pdf")
+	if err := os.WriteFile(path, []byte("%PDF-1.4\ngarbage\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("unix", filepath.Join(t.TempDir(), "fcd.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := jobs.NewManagerWithRegistry(registry.New())
+	defer manager.Close()
+	srv := New(Dependencies{
+		Jobs: manager, Registry: registry.New(), Version: "test",
+		PDFInfo: pdfops.NewInfo(nil, pdfops.NewPDFCPUBackend()),
+		Thumbs:  thumbs.NewCache(filepath.Join(t.TempDir(), "thumbs"), thumbs.Limits{}, &stubThumbRenderer{}),
+	})
+	go func() { _ = srv.Serve(listener) }()
+	conn, err := net.Dial("unix", listener.Addr().String())
+	if err != nil {
+		listener.Close()
+		t.Fatal(err)
+	}
+	defer func() { conn.Close(); _ = listener.Close() }()
+	reader := bufio.NewReader(conn)
+	resp := exchange(t, conn, reader, protocol.Request{ID: 1, Method: "pdf_thumbnails", Params: mustJSON(map[string]any{"file": path, "pages": []int{1}})})
+	errValue, ok := resp["error"].(map[string]any)
+	if !ok || errValue["code"] != "invalid_pdf" {
+		t.Fatalf("pdf_thumbnails = %#v, want code invalid_pdf", resp)
+	}
+}

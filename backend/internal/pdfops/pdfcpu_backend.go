@@ -82,9 +82,32 @@ func (b *PDFCPU) PageCount(ctx context.Context, path string) (int, error) {
 		count, err = api.PageCountFile(path)
 		return err
 	}); err != nil {
-		return 0, err
+		return 0, classifyUnreadable(ctx, err)
 	}
 	return count, nil
+}
+
+// invalidPDFError is ErrInvalidPDF carrying pdfcpu's own explanation. Its text
+// stays the short sentence a user can read; the cause is reachable through
+// errors.Is and errors.As for anyone debugging.
+type invalidPDFError struct{ cause error }
+
+func (e *invalidPDFError) Error() string   { return ErrInvalidPDF.Error() }
+func (e *invalidPDFError) Unwrap() []error { return []error{ErrInvalidPDF, e.cause} }
+
+// classifyUnreadable decides what a failed read of a PDF means. A locked file
+// and a cancelled request keep their own identity; any other failure to read
+// the document, whatever pdfcpu's wording, is a damaged file. Clients depend on
+// the distinction: an editor shows a different screen for "damaged" than for
+// "something went wrong".
+func classifyUnreadable(ctx context.Context, err error) error {
+	if err == nil || errors.Is(err, ErrPasswordRequired) || ctx.Err() != nil {
+		return err
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	return &invalidPDFError{cause: err}
 }
 
 func (b *PDFCPU) Merge(ctx context.Context, inputs []string, output string) error {
