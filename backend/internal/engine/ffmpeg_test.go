@@ -184,7 +184,7 @@ func TestFFmpegConvertBuildsEveryRequiredRoute(t *testing.T) {
 				if formats.IsAudioFormat(target) {
 					want = append(want, "-vn")
 				}
-				want = append(want, "-f", string(target))
+				want = append(want, "-f", muxerName(target))
 				want = append(want, targetDefaults(target)...)
 				want = append(want, output)
 				if !reflect.DeepEqual(got, want) {
@@ -278,4 +278,41 @@ func containsArg(args []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// ffmpeg names some muxers differently from our format ids; passing the format id to -f fails for them.
+func TestFFmpegUsesRealMuxerNames(t *testing.T) {
+	cases := map[formats.Format]string{
+		formats.MKV: "matroska", formats.AAC: "adts", formats.M4A: "ipod", formats.ALAC: "ipod", formats.WMA: "asf",
+		formats.MP4: "mp4", formats.WebM: "webm", formats.MP3: "mp3", formats.OGG: "ogg", formats.Opus: "opus",
+	}
+	for target, want := range cases {
+		var got []string
+		f := NewFFmpeg(func(_ context.Context, _ string, args []string) error { got = args; return nil }, nil)
+		source := formats.MP4
+		if err := f.Convert(context.Background(), "/tmp/in.mp4", source, "/tmp/out."+string(target), target, protocol.ImageOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		format := ""
+		for i, arg := range got {
+			if arg == "-f" && i+1 < len(got) {
+				format = got[i+1]
+			}
+		}
+		if format != want {
+			t.Errorf("%s: -f %q, want %q (args %v)", target, format, want, got)
+		}
+	}
+}
+
+func TestFFmpegALACUsesALACCodec(t *testing.T) {
+	var got []string
+	f := NewFFmpeg(func(_ context.Context, _ string, args []string) error { got = args; return nil }, nil)
+	if err := f.Convert(context.Background(), "/tmp/in.mp4", formats.MP4, "/tmp/out.alac", formats.ALAC, protocol.ImageOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(got, " ")
+	if !strings.Contains(joined, "-c:a alac") {
+		t.Fatalf("args = %v, want -c:a alac", got)
+	}
 }

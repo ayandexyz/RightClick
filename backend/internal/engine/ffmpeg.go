@@ -138,7 +138,7 @@ func (e *FFmpeg) Convert(ctx context.Context, source string, sourceFormat format
 	if formats.IsAudioFormat(target) {
 		args = append(args, "-vn")
 	}
-	args = append(args, "-f", string(target))
+	args = append(args, "-f", muxerName(target))
 	args = append(args, targetDefaults(target)...)
 	args = append(args, destination)
 	if e.runner != nil {
@@ -204,10 +204,28 @@ func runCommand(ctx context.Context, executable string, args []string) error {
 	}
 }
 
+// muxerName maps a format id to the muxer ffmpeg knows it by; most share a name.
+func muxerName(target formats.Format) string {
+	switch target {
+	case formats.MKV:
+		return "matroska"
+	case formats.AAC:
+		return "adts"
+	case formats.M4A, formats.ALAC:
+		return "ipod"
+	case formats.WMA:
+		return "asf"
+	default:
+		return string(target)
+	}
+}
+
 func targetDefaults(target formats.Format) []string {
 	switch target {
 	case formats.AMR:
 		return []string{"-ar", "8000", "-ac", "1"}
+	case formats.ALAC:
+		return []string{"-c:a", "alac"}
 	case formats.WebM:
 		return []string{"-c:v", "libvpx-vp9", "-c:a", "libopus"}
 	case formats.MP4, formats.MOV, formats.MKV, formats.AVI:
