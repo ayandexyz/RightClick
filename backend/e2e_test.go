@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -119,6 +120,161 @@ func TestDaemonEndToEndImageConversion(t *testing.T) {
 	if !bytes.HasPrefix(mustRead(t, output), []byte{0xff, 0xd8, 0xff}) {
 		t.Fatalf("output is not a JPEG")
 	}
+}
+
+func TestE2EFFmpegMediaConversion(t *testing.T) {
+	for _, dependency := range []string{"ffmpeg", "ffprobe"} {
+		if _, err := exec.LookPath(dependency); err != nil {
+			t.Skipf("%s is not installed", dependency)
+		}
+	}
+
+	mediaDir := t.TempDir()
+	video := filepath.Join(mediaDir, "fixture.mkv")
+	generate := exec.Command("ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=black:s=16x16:r=1", "-f", "lavfi", "-i", "sine=frequency=1000:sample_rate=8000", "-t", "1", "-c:v", "libx264", "-c:a", "aac", video)
+	if output, err := generate.CombinedOutput(); err != nil {
+		t.Fatalf("generate media fixture: %v\\n%s", err, output)
+	}
+
+	conn, reader, cleanup := startE2EDaemon(t)
+	defer cleanup()
+	if hello := request(t, conn, reader, map[string]any{
+		"id": 1, "method": "hello", "params": map[string]any{"client": "e2e", "protocol": 1},
+	}); hello["error"] != nil {
+		t.Fatalf("hello failed: %#v", hello)
+	}
+
+	targets := request(t, conn, reader, map[string]any{
+		"id": 2, "method": "targets", "params": map[string]any{"files": []string{video}},
+	})
+	if targets["error"] != nil {
+		t.Fatalf("video targets failed: %#v", targets)
+	}
+	assertTargetPresets(t, targets, append([]string{"video-to-mp4", "video-to-mov", "video-to-webm", "video-to-avi"}, audioPresetsForE2E()...))
+
+	outputDir := t.TempDir()
+	convertAndAssertOutput(t, conn, reader, 3, video, "video-to-mp4", outputDir, ".mp4")
+	mp3 := convertAndAssertOutput(t, conn, reader, 4, video, "audio-to-mp3", outputDir, ".mp3")
+
+	audioTargets := request(t, conn, reader, map[string]any{
+		"id": 5, "method": "targets", "params": map[string]any{"files": []string{mp3}},
+	})
+	if audioTargets["error"] != nil {
+		t.Fatalf("audio targets failed: %#v", audioTargets)
+	}
+	assertTargetPresets(t, audioTargets, []string{
+		"audio-to-wav", "audio-to-flac", "audio-to-aac", "audio-to-m4a", "audio-to-ogg", "audio-to-opus",
+		"audio-to-aiff", "audio-to-alac", "audio-to-ac3", "audio-to-amr", "audio-to-wma",
+	})
+	for _, target := range targetPresets(audioTargets) {
+		if strings.HasPrefix(target, "video-to-") {
+			t.Fatalf("audio targets included video preset %q", target)
+		}
+	}
+}
+
+func startE2EDaemon(t *testing.T) (net.Conn, *bufio.Reader, func()) {
+	t.Helper()
+	runtimeDir := t.TempDir()
+	socket := filepath.Join(runtimeDir, "file-converter", "fcd.sock")
+	binary := filepath.Join(t.TempDir(), "fcd")
+	build := exec.Command("go", "build", "-o", binary, "./cmd/fcd")
+	build.Dir = "."
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build fcd: %v\\n%s", err, output)
+	}
+	daemon := exec.Command(binary, "serve", "--idle-exit", "0")
+	daemon.Env = append(os.Environ(), "XDG_RUNTIME_DIR="+runtimeDir)
+	if err := daemon.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waitForSocket(t, socket)
+	conn, err := net.DialTimeout("unix", socket, time.Second)
+	if err != nil {
+		daemon.Process.Kill()
+		daemon.Wait()
+		t.Fatal(err)
+	}
+	return conn, bufio.NewReader(conn), func() {
+		_ = conn.Close()
+		_ = daemon.Process.Kill()
+		_, _ = daemon.Process.Wait()
+	}
+}
+
+func convertAndAssertOutput(t *testing.T, conn net.Conn, reader *bufio.Reader, id int, input, preset, outputDir, extension string) string {
+	t.Helper()
+	if err := writeMessage(conn, map[string]any{
+		"id": id, "method": "convert", "params": map[string]any{
+			"files": []string{input}, "preset": preset, "output_dir": outputDir,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.After(30 * time.Second)
+	for {
+		select {
+		case <-deadline:
+			t.Fatalf("timed out waiting for %s", preset)
+		default:
+		}
+		message, err := readMessage(reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if message["error"] != nil {
+			t.Fatalf("%s failed: %#v", preset, message)
+		}
+		if message["event"] != "job.finished" {
+			continue
+		}
+		job, ok := message["data"].(map[string]any)
+		if !ok || job["state"] != "completed" {
+			t.Fatalf("unexpected %s job: %#v", preset, message)
+		}
+		output := filepath.Join(outputDir, strings.TrimSuffix(filepath.Base(input), filepath.Ext(input))+extension)
+		if _, err := os.Stat(output); err != nil {
+			t.Fatalf("expected %s output %s: %v", preset, output, err)
+		}
+		return output
+	}
+}
+
+func assertTargetPresets(t *testing.T, message wireMessage, want []string) {
+	t.Helper()
+	got := targetPresets(message)
+	if len(got) != len(want) {
+		t.Fatalf("target presets = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("target presets = %v, want %v", got, want)
+		}
+	}
+}
+
+func targetPresets(message wireMessage) []string {
+	result, ok := message["result"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	items, ok := result["targets"].([]any)
+	if !ok {
+		return nil
+	}
+	presets := make([]string, 0, len(items))
+	for _, item := range items {
+		if target, ok := item.(map[string]any); ok {
+			if preset, ok := target["preset"].(string); ok {
+				presets = append(presets, preset)
+			}
+		}
+	}
+	return presets
+}
+
+func audioPresetsForE2E() []string {
+	return []string{"audio-to-mp3", "audio-to-wav", "audio-to-flac", "audio-to-aac", "audio-to-m4a", "audio-to-ogg", "audio-to-opus", "audio-to-aiff", "audio-to-alac", "audio-to-ac3", "audio-to-amr", "audio-to-wma"}
 }
 
 func request(t *testing.T, conn net.Conn, reader *bufio.Reader, value map[string]any) wireMessage {

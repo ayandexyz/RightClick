@@ -5,12 +5,12 @@ One backend, a native frontend per platform.
 
 ## Backend status
 
-The Linux Go backend supports image conversion plus FFmpeg-backed video and audio conversion. Image targets are filtered by the installed ImageMagick build; media targets require both `ffmpeg` and `ffprobe`:
+The Linux Go backend supports image conversion plus FFmpeg-backed video and audio conversion. Image targets are filtered by the installed ImageMagick build; media targets require both `ffmpeg` and `ffprobe`. These engines are independent: missing FFmpeg/ffprobe does not disable ImageMagick image conversion, and missing ImageMagick does not disable media conversion:
 
 - `fcd` serves protocol v1 over `$XDG_RUNTIME_DIR/file-converter/fcd.sock`.
 - `fcctl` is a small NDJSON development client.
 - Supported image presets are `image-to-png`, `image-to-jpeg`, `image-to-webp`, `image-to-jxl`, `image-to-avif`, `image-to-gif`, `image-to-bmp`, `image-to-tiff`, `image-to-ico`, and `image-to-heic`.
-- Media presets include five video outputs (`mp4`, `mov`, `webm`, `mkv`, `avi`) and twelve audio outputs (`mp3`, `wav`, `flac`, `aac`, `m4a`, `ogg`, `opus`, `aiff`, `alac`, `ac3`, `amr`, `wma`). Video inputs may extract audio; audio-to-video targets are not advertised.
+- Media presets are exactly five video outputs (`video-to-mp4`, `video-to-mov`, `video-to-webm`, `video-to-mkv`, `video-to-avi`) and twelve audio outputs (`audio-to-mp3`, `audio-to-wav`, `audio-to-flac`, `audio-to-aac`, `audio-to-m4a`, `audio-to-ogg`, `audio-to-opus`, `audio-to-aiff`, `audio-to-alac`, `audio-to-ac3`, `audio-to-amr`, `audio-to-wma`). `ffprobe` classifies sources from their stream contents, with video taking precedence when both audio and video streams exist. Video inputs may extract audio using FFmpeg's `-vn` option; audio sources never advertise video targets.
 - ICO output is capped at 256×256; GIF/WebP animation is preserved when supported.
 - Inputs are absolute regular files and formats are detected from file content.
 - ImageMagick performs conversion. The daemon never uploads files or uses a network service.
