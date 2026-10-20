@@ -2,7 +2,7 @@ import json
 import os
 import socket
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 class FcError(Exception):
@@ -35,6 +35,15 @@ class Target:
 
 
 @dataclass
+class PdfInfo:
+    """What the daemon knows about a PDF: its page count and, when it could
+    read them, each page's size in points and rotation."""
+
+    pages: int
+    sizes: list = field(default_factory=list)  # [{"w": float, "h": float, "rot": int}]
+
+
+@dataclass
 class Operation:
     """One PDF tool the daemon offers for the current selection."""
 
@@ -48,8 +57,11 @@ class Operation:
 
 
 class FcClient:
-    def __init__(self, path, connect_timeout=0.3, request_timeout=0.5, convert_timeout=2.0, silence_timeout=60.0):
+    def __init__(self, path, connect_timeout=0.3, request_timeout=0.5, convert_timeout=2.0, silence_timeout=60.0, info_timeout=20.0):
         self.path = path
+        # Reading a large document's structure can take seconds, unlike the
+        # menu queries the short request timeout is sized for.
+        self.info_timeout = info_timeout
         self.connect_timeout = connect_timeout
         self.request_timeout = request_timeout
         self.convert_timeout = convert_timeout
@@ -157,6 +169,19 @@ class FcClient:
                 result = self._request(sock, file, "operations", {"files": paths}, deadline=deadline)
         fields = ("id", "label", "group", "mode", "engine", "enabled", "reason")
         return [Operation(**{key: operation.get(key, "") for key in fields}) for operation in result.get("operations", [])]
+
+    def pdf_info(self, path):
+        """Page count and sizes of one PDF.
+
+        Raises RequestError with code ``password_required`` for a locked file
+        and ``invalid_pdf`` for a damaged one, so callers can tell the user
+        which.
+        """
+        with self._connect() as sock:
+            with sock.makefile("rwb") as file:
+                self._hello(sock, file)
+                result = self._request(sock, file, "pdf_info", {"file": path}, timeout=self.info_timeout)
+        return PdfInfo(pages=int(result.get("pages", 0)), sizes=list(result.get("sizes") or []))
 
     def run_operation(self, paths, op, params=None):
         """Run one PDF operation and yield job events until it finishes."""
