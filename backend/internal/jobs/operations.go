@@ -87,6 +87,16 @@ func (m *Manager) SubmitOperation(req OperationRequest) (string, error) {
 		return "", fmt.Errorf("%w: %v", formats.ErrInvalidInput, err)
 	}
 	for _, file := range req.Files {
+		if op.InputKind() == pdfops.InputImage {
+			// Image inputs are checked by content, the way the conversion path does.
+			if err := formats.ValidateInput(file); err != nil {
+				return "", err
+			}
+			if format, err := formats.Detect(file); err != nil || !formats.IsImageFormat(format) {
+				return "", fmt.Errorf("%w: %s is not an image", formats.ErrInvalidInput, filepath.Base(file))
+			}
+			continue
+		}
 		if err := pdfValidateInput(file); err != nil {
 			return "", err
 		}
@@ -203,12 +213,16 @@ func (m *Manager) mergeOperation(j *job, op pdfops.Operation) []protocol.FileJob
 	}
 	// Attribute an unreadable input to that file alone, so a single damaged or
 	// locked file does not fail the whole selection with no explanation.
-	if err := m.firstUnreadableInput(j); err != nil {
-		var input *pdfops.InputError
-		if errors.As(err, &input) {
-			return mergeInputFailure(files, input, operationErrorCode(input.Err))
+	// Image inputs are not PDFs, so a PDF page-count probe says nothing about
+	// them; they were validated by content at submit time.
+	if op.InputKind() == pdfops.InputPDF {
+		if err := m.firstUnreadableInput(j); err != nil {
+			var input *pdfops.InputError
+			if errors.As(err, &input) {
+				return mergeInputFailure(files, input, operationErrorCode(input.Err))
+			}
+			return failed(err)
 		}
-		return failed(err)
 	}
 	outputDir := j.op.OutputDir
 	if outputDir == "" {

@@ -772,12 +772,22 @@ func (m *Manager) failOperationFile(j *job, file protocol.FileJob, err error) pr
 		return file
 	}
 	code := operationErrorCode(err)
-	if code == "internal" && m.inputUnreadable(j, file.Source) {
+	if code == "internal" && m.sourceIsPDF(j) && m.inputUnreadable(j, file.Source) {
 		code = "invalid_pdf"
 	}
 	file.State = "failed"
 	file.Error = &protocol.FileError{Code: code, Message: err.Error()}
 	return file
+}
+
+// sourceIsPDF reports whether the job's inputs are PDFs; the readability probe
+// is a PDF page count and would wrongly condemn any other input kind.
+func (m *Manager) sourceIsPDF(j *job) bool {
+	if j.op == nil {
+		return true
+	}
+	op, ok := pdfops.Lookup(j.op.Op)
+	return !ok || op.InputKind() == pdfops.InputPDF
 }
 
 // inputUnreadable probes an input and reports whether it cannot be opened as a

@@ -27,6 +27,7 @@ type fakePDFBackend struct {
 	destinations []string
 	merged       [][]string
 	imported     []int
+	importErr    error
 }
 
 func newFakePDFBackend(pages int) *fakePDFBackend {
@@ -90,7 +91,7 @@ func (f *fakePDFBackend) ImportImages(_ context.Context, inputs []string, _ stri
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.imported = append(f.imported, len(inputs))
-	return nil
+	return f.importErr
 }
 
 func writePDFStub(path string) error {
@@ -822,4 +823,75 @@ func (r *recordTextRunner) run(_ context.Context, name string, args []string) er
 	}
 	r.args = args
 	return os.WriteFile(args[len(args)-1], []byte("hello"), 0o600)
+}
+
+// Image-input operations must validate their inputs as images, not as PDFs:
+// the PDF header check once ran on every operation and rejected all images.
+func TestSubmitOperationAcceptsImageInputs(t *testing.T) {
+	dir := t.TempDir()
+	var files []string
+	for _, name := range []string{"a.png", "b.png"} {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(pngBytes), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		files = append(files, path)
+	}
+	backend := newFakePDFBackend(1)
+	// A page-count probe fails on any image, as it does with the real backend;
+	// image operations must not depend on it.
+	for _, f := range files {
+		backend.fail[f] = errors.New("not a pdf")
+	}
+	m := newOperationManager(t, backend)
+	job := submitOp(t, m, OperationRequest{Op: "pdf-from-images", Files: files, Conflict: protocol.ConflictRename})
+	if job.State != "completed" {
+		t.Fatalf("state = %q, want completed: %+v", job.State, job.Files)
+	}
+	if len(backend.imported) != 1 || backend.imported[0] != 2 {
+		t.Fatalf("imported = %v, want one call with 2 images", backend.imported)
+	}
+}
+
+func TestSubmitOperationRejectsNonImagesForImageOperations(t *testing.T) {
+	dir := t.TempDir()
+	png := filepath.Join(dir, "a.png")
+	if err := os.WriteFile(png, []byte(pngBytes), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pdf := writePDFSource(t, dir, "b.pdf")
+	m := newOperationManager(t, newFakePDFBackend(1))
+	_, err := m.SubmitOperation(OperationRequest{Op: "pdf-from-images", Files: []string{png, pdf}})
+	if !errors.Is(err, formats.ErrInvalidInput) {
+		t.Fatalf("err = %v, want ErrInvalidInput for a PDF among the images", err)
+	}
+}
+
+// A genuine failure on readable images is the operation's own, never a
+// "damaged PDF": the PDF probe cannot judge an image.
+func TestImageOperationFailureIsNotReportedAsInvalidPDF(t *testing.T) {
+	dir := t.TempDir()
+	var files []string
+	for _, name := range []string{"a.png", "b.png"} {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(pngBytes), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		files = append(files, path)
+	}
+	backend := newFakePDFBackend(1)
+	backend.importErr = errors.New("unsupported colour model")
+	for _, f := range files {
+		backend.fail[f] = errors.New("not a pdf")
+	}
+	m := newOperationManager(t, backend)
+	job := submitOp(t, m, OperationRequest{Op: "pdf-from-images", Files: files, Conflict: protocol.ConflictRename})
+	if job.State != "failed" {
+		t.Fatalf("state = %q, want failed", job.State)
+	}
+	for _, file := range job.Files {
+		if file.Error != nil && file.Error.Code == "invalid_pdf" {
+			t.Fatalf("an image failure was reported as invalid_pdf: %+v", file)
+		}
+	}
 }
