@@ -73,3 +73,15 @@ Executed from `/tmp/file-converter-pdf/backend` unless noted:
 - `go vet ./...`: passed with no diagnostics.
 - `gofmt -l internal/engine/imagemagick.go internal/jobs/manager_test.go`: produced no output.
 - `git diff --check` from `/tmp/file-converter-pdf`: passed with no whitespace errors.
+
+## Remaining review issue fix
+- Reused the complete `OutputPlan.Rollback()` path for cancellation after planning and staging/commit-preparation failures, restoring overwrite backups while preserving skipped destinations and removing all temp/backup artifacts.
+- Added `TestManagerRestoresOverwriteDestinationWhenCancelledAfterPlanning`, which deterministically cancels while page 2 is being planned after page 1's overwrite destination has been backed up.
+
+## Review issue verification
+Executed from `/tmp/file-converter-pdf/backend` unless noted:
+- `go test ./internal/engine ./internal/jobs ./internal/registry`: passed.
+- `go test ./...`: passed; all backend packages passed.
+- `go vet ./...`: passed with no diagnostics.
+- `gofmt -w internal/jobs/manager.go internal/jobs/manager_test.go`: passed; `gofmt -l` produced no output.
+- `git diff --check` from `/tmp/file-converter-pdf`: passed with no whitespace errors.

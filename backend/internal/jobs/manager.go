@@ -395,9 +395,7 @@ func (m *Manager) convertMany(j *job, index int, file protocol.FileJob, route re
 		}
 	}
 	if j.ctx.Err() != nil {
-		for _, pending := range plans {
-			pending.RemoveTemp()
-		}
+		removePlans()
 		file.State = "cancelled"
 		return fileResult{index: index, file: file}
 	}
@@ -406,9 +404,7 @@ func (m *Manager) convertMany(j *job, index int, file protocol.FileJob, route re
 			continue
 		}
 		if err := os.Rename(pages[i], plan.Temp); err != nil {
-			for _, pending := range plans {
-				pending.RemoveTemp()
-			}
+			removePlans()
 			file.State = "failed"
 			file.Error = &protocol.FileError{Code: "internal", Message: err.Error()}
 			return fileResult{index: index, file: file}

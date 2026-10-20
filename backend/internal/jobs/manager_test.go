@@ -314,6 +314,57 @@ func TestManagerCancelsDuringCommitAndPublishesNoOutputs(t *testing.T) {
 	}
 }
 
+func TestManagerRestoresOverwriteDestinationWhenCancelledAfterPlanning(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "document.pdf")
+	if err := os.WriteFile(source, []byte("%PDF-1.7"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output := t.TempDir()
+	existing := filepath.Join(output, "document-1.png")
+	if err := os.WriteFile(existing, []byte("original"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	originalPlan := planOutputPath
+	defer func() { planOutputPath = originalPlan }()
+	planningPage2 := make(chan struct{})
+	release := make(chan struct{})
+	planOutputPath = func(dir, source, ext string, page int, conflict protocol.ConflictPolicy) (engine.OutputPlan, error) {
+		plan, err := engine.PlanOutputPath(dir, source, ext, page, conflict)
+		if page == 2 {
+			close(planningPage2)
+			<-release
+		}
+		return plan, err
+	}
+	r := registry.New()
+	r.Register(&fakeMultiConverter{pages: 2})
+	m := NewManagerWithRegistry(r)
+	defer m.Close()
+	events := make(chan protocol.Event, 8)
+	id, err := m.Submit(SubmitRequest{Files: []string{source}, Preset: "pdf-to-png", OutputDir: output, Conflict: protocol.ConflictOverwrite, Events: func(e protocol.Event) { events <- e }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-planningPage2
+	if err := m.Cancel(id); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	job := waitJob(t, events)
+	if job.State != "cancelled" || job.Files[0].State != "cancelled" || len(job.Files[0].Outputs) != 0 {
+		t.Fatalf("job = %+v", job)
+	}
+	data, err := os.ReadFile(existing)
+	if err != nil || string(data) != "original" {
+		t.Fatalf("overwrite destination = %q, err = %v", data, err)
+	}
+	entries, err := os.ReadDir(output)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("output artifacts = %v, err = %v", entries, err)
+	}
+}
+
 func TestManagerDoesNotPublishMultiPageOutputsAfterCancellation(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "document.pdf")
