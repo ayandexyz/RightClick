@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"file-converter/backend/internal/engine"
 	"file-converter/backend/internal/formats"
 	"file-converter/backend/internal/jobs"
+	"file-converter/backend/internal/pdfops"
 	"file-converter/backend/internal/protocol"
 	"file-converter/backend/internal/registry"
 )
@@ -555,4 +557,294 @@ func TestServerConvertEmptyFolderIsBadRequest(t *testing.T) {
 	if errValue, ok := resp["error"].(map[string]any); !ok || errValue["code"] != "bad_request" {
 		t.Fatalf("empty folder: %#v", resp)
 	}
+}
+
+// stubPDFBackend is a pdfops.Backend for server tests: it reports a fixed page
+// count and writes a stub file.
+type stubPDFBackend struct {
+	pages  int
+	avail  error
+	failed map[string]error
+}
+
+func (s *stubPDFBackend) ID() string       { return "stub-pdf" }
+func (s *stubPDFBackend) Available() error { return s.avail }
+func (s *stubPDFBackend) PageCount(context.Context, string) (int, error) {
+	return s.pages, nil
+}
+func (s *stubPDFBackend) Merge(_ context.Context, inputs []string, output string) error {
+	if err := s.failed[inputs[0]]; err != nil {
+		return err
+	}
+	return os.WriteFile(output, []byte("%PDF-1.7\nstub\n"), 0o600)
+}
+func (s *stubPDFBackend) Collect(_ context.Context, input, output string, _ []int) error {
+	if err := s.failed[input]; err != nil {
+		return err
+	}
+	return os.WriteFile(output, []byte("%PDF-1.7\nstub\n"), 0o600)
+}
+func (s *stubPDFBackend) Rotate(_ context.Context, input, output string, _ []int, _ int) error {
+	if err := s.failed[input]; err != nil {
+		return err
+	}
+	return os.WriteFile(output, []byte("%PDF-1.7\nstub\n"), 0o600)
+}
+
+func pdfFixture(t *testing.T, dir, name string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte("%PDF-1.7\nsource\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// startOperationServer starts a daemon with a PDF backend wired in and returns
+// a connection plus a reader that lives for the connection's lifetime.
+func startOperationServer(t *testing.T, backend pdfops.Backend) (net.Conn, *bufio.Reader, func()) {
+	t.Helper()
+	listener, err := net.Listen("unix", filepath.Join(t.TempDir(), "fcd.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := jobs.NewManagerWithRegistry(registry.New())
+	if backend != nil {
+		manager.SetPDFBackend(backend)
+	}
+	srv := New(Dependencies{Jobs: manager, Registry: registry.New(), Version: "test", PDFBackend: backend})
+	done := make(chan struct{})
+	go func() {
+		_ = srv.Serve(listener)
+		close(done)
+	}()
+	conn, err := net.Dial("unix", listener.Addr().String())
+	if err != nil {
+		listener.Close()
+		manager.Close()
+		t.Fatal(err)
+	}
+	reader := bufio.NewReader(conn)
+	cleanup := func() {
+		_ = conn.Close()
+		_ = listener.Close()
+		<-done
+		manager.Close()
+	}
+	return conn, reader, cleanup
+}
+
+// exchange writes a request and reads the next single message back.
+func exchange(t *testing.T, conn net.Conn, reader *bufio.Reader, req protocol.Request) map[string]any {
+	t.Helper()
+	data, err := protocol.EncodeMessage(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	line, err := reader.ReadBytes('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response map[string]any
+	if err := json.Unmarshal(line, &response); err != nil {
+		t.Fatal(err)
+	}
+	return response
+}
+
+func operationsFrom(t *testing.T, response map[string]any) []protocol.Operation {
+	t.Helper()
+	result, ok := response["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("operations response: %#v", response)
+	}
+	raw, ok := result["operations"].([]any)
+	if !ok {
+		t.Fatalf("operations list missing: %#v", result)
+	}
+	out := make([]protocol.Operation, 0, len(raw))
+	for _, item := range raw {
+		entry, _ := item.(map[string]any)
+		op := protocol.Operation{}
+		op.ID, _ = entry["id"].(string)
+		op.Label, _ = entry["label"].(string)
+		op.Group, _ = entry["group"].(string)
+		op.Mode, _ = entry["mode"].(string)
+		op.Enabled, _ = entry["enabled"].(bool)
+		op.Reason, _ = entry["reason"].(string)
+		out = append(out, op)
+	}
+	return out
+}
+
+func TestServerOperationsForOnePDF(t *testing.T) {
+	dir := t.TempDir()
+	conn, reader, cleanup := startOperationServer(t, &stubPDFBackend{pages: 4})
+	defer cleanup()
+
+	response := exchange(t, conn, reader, protocol.Request{ID: 1, Method: "operations", Params: json.RawMessage(`{"files":["` + pdfFixture(t, dir, "one.pdf") + `"]}`)})
+	ops := operationsFrom(t, response)
+	if len(ops) != 5 {
+		t.Fatalf("operations = %+v, want the five catalogue entries", ops)
+	}
+	byID := map[string]protocol.Operation{}
+	for _, op := range ops {
+		byID[op.ID] = op
+	}
+	merge := byID["pdf-merge"]
+	if merge.Enabled {
+		t.Fatal("merge must be disabled for a single file")
+	}
+	if merge.Reason != "needs at least 2 files" {
+		t.Fatalf("merge reason = %q", merge.Reason)
+	}
+	for _, id := range []string{"pdf-extract", "pdf-delete", "pdf-rotate", "pdf-reverse"} {
+		if !byID[id].Enabled {
+			t.Fatalf("%s should be enabled for one PDF: %+v", id, byID[id])
+		}
+	}
+}
+
+func TestServerOperationsEnablesMergeForTwoPDFs(t *testing.T) {
+	dir := t.TempDir()
+	first := pdfFixture(t, dir, "a.pdf")
+	second := pdfFixture(t, dir, "b.pdf")
+	conn, reader, cleanup := startOperationServer(t, &stubPDFBackend{pages: 4})
+	defer cleanup()
+
+	response := exchange(t, conn, reader, protocol.Request{ID: 1, Method: "operations", Params: json.RawMessage(`{"files":["` + first + `","` + second + `"]}`)})
+	for _, op := range operationsFrom(t, response) {
+		if op.ID == "pdf-merge" && !op.Enabled {
+			t.Fatalf("merge should be enabled for two PDFs: %+v", op)
+		}
+	}
+}
+
+func TestServerOperationsIsEmptyForNonPDFSelection(t *testing.T) {
+	dir := t.TempDir()
+	notPDF := filepath.Join(dir, "notes.txt")
+	if err := os.WriteFile(notPDF, []byte("hello"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	conn, reader, cleanup := startOperationServer(t, &stubPDFBackend{pages: 4})
+	defer cleanup()
+
+	response := exchange(t, conn, reader, protocol.Request{ID: 1, Method: "operations", Params: json.RawMessage(`{"files":["` + notPDF + `"]}`)})
+	if response["error"] != nil {
+		t.Fatalf("a non-PDF selection should not error: %#v", response)
+	}
+	if ops := operationsFrom(t, response); len(ops) != 0 {
+		t.Fatalf("operations = %+v, want none", ops)
+	}
+}
+
+func TestServerOperationsReportsUnavailableBackend(t *testing.T) {
+	dir := t.TempDir()
+	conn, reader, cleanup := startOperationServer(t, &stubPDFBackend{pages: 4, avail: errStubMissing})
+	defer cleanup()
+
+	response := exchange(t, conn, reader, protocol.Request{ID: 1, Method: "operations", Params: json.RawMessage(`{"files":["` + pdfFixture(t, dir, "a.pdf") + `"]}`)})
+	for _, op := range operationsFrom(t, response) {
+		if op.Enabled {
+			t.Fatalf("%s should be disabled without a backend: %+v", op.ID, op)
+		}
+	}
+}
+
+var errStubMissing = errors.New("missing backend")
+
+func TestServerRunOperationStartsAJob(t *testing.T) {
+	dir := t.TempDir()
+	source := pdfFixture(t, dir, "doc.pdf")
+	conn, reader, cleanup := startOperationServer(t, &stubPDFBackend{pages: 4})
+	defer cleanup()
+
+	params, err := json.Marshal(map[string]any{"files": []string{source}, "op": "pdf-rotate", "params": map[string]any{"angle": 90}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := exchange(t, conn, reader, protocol.Request{ID: 1, Method: "run_operation", Params: params})
+	result, ok := response["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("run_operation response: %#v", response)
+	}
+	if _, ok := result["job"].(string); !ok {
+		t.Fatalf("run_operation result: %#v", result)
+	}
+}
+
+func TestServerRunOperationRejectsBadParams(t *testing.T) {
+	dir := t.TempDir()
+	source := pdfFixture(t, dir, "doc.pdf")
+	conn, reader, cleanup := startOperationServer(t, &stubPDFBackend{pages: 4})
+	defer cleanup()
+
+	tests := []struct {
+		name   string
+		params string
+	}{
+		{name: "missing op", params: `{"files":["` + source + `"]}`},
+		{name: "unknown op", params: `{"op":"pdf-nope","files":["` + source + `"]}`},
+		{name: "missing pages", params: `{"op":"pdf-extract","files":["` + source + `"]}`},
+		{name: "bad angle", params: `{"op":"pdf-rotate","files":["` + source + `"],"params":{"angle":45}}`},
+		{name: "one file merge", params: `{"op":"pdf-merge","files":["` + source + `"]}`},
+	}
+	for i, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			response := exchange(t, conn, reader, protocol.Request{ID: i + 1, Method: "run_operation", Params: json.RawMessage(tc.params)})
+			errValue, ok := response["error"].(map[string]any)
+			if !ok {
+				t.Fatalf("expected an error, got %#v", response)
+			}
+			if errValue["code"] != "bad_request" {
+				t.Fatalf("code = %v, want bad_request", errValue["code"])
+			}
+		})
+	}
+}
+
+func TestServerRunOperationSurfacesPasswordRequired(t *testing.T) {
+	dir := t.TempDir()
+	source := pdfFixture(t, dir, "locked.pdf")
+	backend := &stubPDFBackend{pages: 4, failed: map[string]error{source: pdfops.ErrPasswordRequired}}
+	conn, reader, cleanup := startOperationServer(t, backend)
+	defer cleanup()
+
+	params, err := json.Marshal(map[string]any{"files": []string{source}, "op": "pdf-reverse"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := exchange(t, conn, reader, protocol.Request{ID: 1, Method: "run_operation", Params: params})
+	if response["error"] != nil {
+		t.Fatalf("run_operation response: %#v", response)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		line, err := reader.ReadBytes('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+		var message map[string]any
+		if err := json.Unmarshal(line, &message); err != nil {
+			t.Fatal(err)
+		}
+		if message["event"] != "job.finished" {
+			continue
+		}
+		data, _ := message["data"].(map[string]any)
+		files, _ := data["files"].([]any)
+		if len(files) == 0 {
+			t.Fatalf("job has no files: %#v", data)
+		}
+		first, _ := files[0].(map[string]any)
+		fileError, _ := first["error"].(map[string]any)
+		if fileError["code"] != "password_required" {
+			t.Fatalf("file error = %#v, want password_required", fileError)
+		}
+		return
+	}
+	t.Fatal("timed out waiting for job.finished")
 }

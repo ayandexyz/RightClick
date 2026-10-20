@@ -4,7 +4,10 @@ import (
 	"bufio"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -13,15 +16,17 @@ import (
 	"file-converter/backend/internal/formats"
 	"file-converter/backend/internal/jobs"
 	"file-converter/backend/internal/menu"
+	"file-converter/backend/internal/pdfops"
 	"file-converter/backend/internal/protocol"
 	"file-converter/backend/internal/registry"
 )
 
 type Dependencies struct {
-	Jobs     *jobs.Manager
-	Registry *registry.Registry
-	Engine   string
-	Version  string
+	Jobs       *jobs.Manager
+	Registry   *registry.Registry
+	Engine     string
+	Version    string
+	PDFBackend pdfops.Backend
 	// MenuPath overrides the menu policy file; empty uses menu.Path().
 	MenuPath string
 }
@@ -193,6 +198,48 @@ func (s *Server) handle(conn net.Conn) {
 			if write(protocol.Response{ID: req.ID, Result: map[string]string{"job": id}}) != nil {
 				return
 			}
+		case "operations":
+			if write(protocol.Response{ID: req.ID, Result: s.handleOperations(req.Params)}) != nil {
+				return
+			}
+		case "run_operation":
+			var p struct {
+				Op        string          `json:"op"`
+				Files     []string        `json:"files"`
+				Params    protocol.Params `json:"params"`
+				OutputDir string          `json:"output_dir"`
+				Conflict  string          `json:"on_conflict"`
+			}
+			if json.Unmarshal(req.Params, &p) != nil {
+				if writeError(write, req.ID, "bad_request", "invalid run_operation params") != nil {
+					return
+				}
+				continue
+			}
+			if p.Conflict == "" {
+				p.Conflict = string(protocol.ConflictRename)
+			}
+			id, err := s.deps.Jobs.SubmitOperation(jobs.OperationRequest{
+				Op:        p.Op,
+				Files:     p.Files,
+				Params:    pdfops.Params{Pages: derefString(p.Params.Pages), Angle: derefInt(p.Params.Angle)},
+				OutputDir: p.OutputDir,
+				Conflict:  protocol.ConflictPolicy(p.Conflict),
+				Events:    writeEvent(write),
+			})
+			if err != nil {
+				code := "unsupported"
+				if errors.Is(err, formats.ErrInvalidInput) {
+					code = "bad_request"
+				}
+				if writeError(write, req.ID, code, err.Error()) != nil {
+					return
+				}
+				continue
+			}
+			if write(protocol.Response{ID: req.ID, Result: map[string]string{"job": id}}) != nil {
+				return
+			}
 		case "subscribe":
 			// Never let a slow subscriber stall a job: queue events and drop them when it falls behind.
 			queue := make(chan protocol.Event, 256)
@@ -236,6 +283,84 @@ func (s *Server) handle(conn net.Conn) {
 		}
 	}
 }
+
+// handleOperations lists the PDF tools that apply to a selection. A selection
+// that is not all PDFs yields an empty list rather than an error, so a
+// right-click menu can call it unconditionally.
+func (s *Server) handleOperations(params json.RawMessage) map[string]any {
+	var p struct {
+		Files []string `json:"files"`
+	}
+	operations := []protocol.Operation{}
+	if json.Unmarshal(params, &p) != nil {
+		return map[string]any{"operations": operations}
+	}
+	for _, file := range p.Files {
+		if !isPDFFile(file) {
+			return map[string]any{"operations": operations}
+		}
+	}
+	if len(p.Files) == 0 {
+		return map[string]any{"operations": operations}
+	}
+	backendReason := ""
+	if s.deps.PDFBackend == nil {
+		backendReason = "no PDF backend is available"
+	} else if err := s.deps.PDFBackend.Available(); err != nil {
+		backendReason = err.Error()
+	}
+	for _, op := range pdfops.Catalogue() {
+		entry := protocol.Operation{ID: op.ID, Label: op.Label, Group: op.Group, Mode: op.Mode}
+		switch {
+		case backendReason != "":
+			entry.Reason = backendReason
+		case len(p.Files) < op.MinInputs:
+			entry.Reason = fmt.Sprintf("needs at least %d file", op.MinInputs)
+			if op.MinInputs > 1 {
+				entry.Reason = fmt.Sprintf("needs at least %d files", op.MinInputs)
+			}
+		case op.MaxInputs > 0 && len(p.Files) > op.MaxInputs:
+			entry.Reason = fmt.Sprintf("accepts at most %d files", op.MaxInputs)
+		default:
+			entry.Enabled = true
+		}
+		operations = append(operations, entry)
+	}
+	return map[string]any{"operations": operations}
+}
+
+// isPDFFile reports whether a path is an existing regular file with a PDF
+// header. It never fails a request: an unreadable path is simply not a PDF.
+func isPDFFile(path string) bool {
+	if err := formats.ValidateInput(path); err != nil {
+		return false
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+	header := make([]byte, 5)
+	if _, err := io.ReadFull(file, header); err != nil {
+		return false
+	}
+	return string(header) == "%PDF-"
+}
+
+func derefString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+func derefInt(value *int) int {
+	if value == nil {
+		return 0
+	}
+	return *value
+}
+
 func writeError(write func(any) error, id int, code, msg string) error {
 	return write(protocol.Error{ID: id, Error: protocol.ErrorValue{Code: code, Message: msg}})
 }
