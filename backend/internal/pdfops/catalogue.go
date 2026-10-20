@@ -16,4 +16,6 @@ var catalogue = []Operation{
 	{ID: "pdf-rotate-ccw", Label: "Rotate 90° anticlockwise", Group: "organise", Mode: "instant", MinInputs: 1, FixedAngle: 270, Suffix: "-rotated"},
 	{ID: "pdf-rotate-180", Label: "Rotate 180°", Group: "organise", Mode: "instant", MinInputs: 1, FixedAngle: 180, Suffix: "-rotated"},
 	{ID: "pdf-reverse", Label: "Reverse pages", Group: "organise", Mode: "instant", MinInputs: 1, Suffix: "-reversed"},
+	{ID: "pdf-strip-metadata", Label: "Strip metadata", Group: "fix", Mode: "instant", Engine: EnginePDFCPU, MinInputs: 1, Inputs: InputPDF, Suffix: "-clean"},
+	{ID: "pdf-from-images", Label: "Images to PDF", Group: "import", Mode: "instant", Engine: EnginePDFCPU, MinInputs: 1, Inputs: InputImage, Suffix: "", Merges: true},
 }

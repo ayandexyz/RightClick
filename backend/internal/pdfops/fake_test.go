@@ -5,14 +5,15 @@ import "context"
 // fakeBackend records the calls an Operation makes so tests can assert the
 // mapping from parameters to backend work without touching a real PDF.
 type fakeBackend struct {
-	pages     map[string]int // input path to page count
-	pageCount int            // used for paths not in pages
-	calls     []string
-	merged    [][]string
-	collected [][]int
-	rotated   []rotation
-	err       error
-	available error
+	pages          map[string]int // input path to page count
+	pageCount      int            // used for paths not in pages
+	calls          []string
+	merged         [][]string
+	collected      [][]int
+	rotated        []rotation
+	importedImages []int
+	err            error
+	available      error
 }
 
 type rotation struct {
@@ -65,4 +66,15 @@ func (f *fakeBackend) Rotate(_ context.Context, _, _ string, pages []int, angle 
 	f.calls = append(f.calls, "rotate")
 	f.rotated = append(f.rotated, rotation{pages: pages, angle: angle})
 	return nil
+}
+
+func (f *fakeBackend) StripMetadata(_ context.Context, _, _ string) error {
+	f.calls = append(f.calls, "strip_metadata")
+	return f.err
+}
+
+func (f *fakeBackend) ImportImages(_ context.Context, inputs []string, _ string) error {
+	f.calls = append(f.calls, "import_images")
+	f.importedImages = append(f.importedImages, len(inputs))
+	return f.err
 }

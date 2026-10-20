@@ -25,6 +25,7 @@ type fakePDFBackend struct {
 	pageCountErr error // fails the operation while the PageCount probe succeeds
 	destinations []string
 	merged       [][]string
+	imported     []int
 }
 
 func newFakePDFBackend(pages int) *fakePDFBackend {
@@ -82,6 +83,14 @@ func (f *fakePDFBackend) Rotate(_ context.Context, input, output string, _ []int
 	}
 	f.destinations = append(f.destinations, output)
 	return writePDFStub(output)
+}
+
+func (f *fakePDFBackend) StripMetadata(_ context.Context, _ string, _ string) error { return nil }
+func (f *fakePDFBackend) ImportImages(_ context.Context, inputs []string, _ string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.imported = append(f.imported, len(inputs))
+	return nil
 }
 
 func writePDFStub(path string) error {

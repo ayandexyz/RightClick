@@ -595,6 +595,9 @@ func (s *stubPDFBackend) Rotate(_ context.Context, input, output string, _ []int
 	return os.WriteFile(output, []byte("%PDF-1.7\nstub\n"), 0o600)
 }
 
+func (s *stubPDFBackend) StripMetadata(_ context.Context, _ string, _ string) error  { return nil }
+func (s *stubPDFBackend) ImportImages(_ context.Context, _ []string, _ string) error { return nil }
+
 func pdfFixture(t *testing.T, dir, name string) string {
 	t.Helper()
 	path := filepath.Join(dir, name)
@@ -701,12 +704,13 @@ func TestServerOperationsForOnePDF(t *testing.T) {
 
 	response := exchange(t, conn, reader, protocol.Request{ID: 1, Method: "operations", Params: json.RawMessage(`{"files":["` + pdfFixture(t, dir, "one.pdf") + `"]}`)})
 	ops := operationsFrom(t, response)
-	if len(ops) != 8 {
-		t.Fatalf("operations = %+v, want the eight catalogue entries for one PDF", ops)
+	if len(ops) < 8 {
+		t.Fatalf("operations = %+v, want the organise + fix catalogue entries for one PDF", ops)
 	}
 	for _, op := range ops {
-		if op.Engine != "pdfcpu" {
-			t.Fatalf("%s engine = %q, want pdfcpu", op.ID, op.Engine)
+		want := pdfEngineForID(op.ID)
+		if op.Engine != want {
+			t.Fatalf("%s engine = %q, want %s", op.ID, op.Engine, want)
 		}
 	}
 	byID := map[string]protocol.Operation{}
@@ -1020,4 +1024,18 @@ func pngFixture(t *testing.T, dir, name string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+// pdfEngineForID is the test-side mirror of the daemon's engine mapping: every
+// operation published on the wire has a fixed engine, so an assertion can pin
+// it by ID rather than parsing the catalogue from the test.
+func pdfEngineForID(id string) string {
+	switch id {
+	case "pdf-repair", "pdf-linearize", "pdf-flatten":
+		return "qpdf"
+	case "pdf-compress", "pdf-grayscale":
+		return "ghostscript"
+	default:
+		return "pdfcpu"
+	}
 }

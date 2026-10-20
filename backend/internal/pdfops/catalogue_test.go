@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"file-converter/backend/internal/formats"
 )
 
 // TestCatalogueListsPhase2OrganiseOperations guards the organise catalogue: it
@@ -270,5 +272,67 @@ func TestRunMergeUsesEveryInputRegardlessOfCount(t *testing.T) {
 	}
 	if len(fake.merged) != 1 || len(fake.merged[0]) != 1 {
 		t.Fatalf("merge should forward all inputs, got %v", fake.merged)
+	}
+}
+
+func TestStripMetadataCallsTheBackend(t *testing.T) {
+	op, ok := Lookup("pdf-strip-metadata")
+	if !ok {
+		t.Fatal("pdf-strip-metadata is not in the catalogue")
+	}
+	if op.InputKind() != InputPDF {
+		t.Fatalf("input kind = %q, want pdf", op.InputKind())
+	}
+	if op.OutputExtension() != "pdf" {
+		t.Fatalf("output = %q, want pdf", op.OutputExtension())
+	}
+	fake := newFakeBackend(4, "a.pdf")
+	if err := op.Run(context.Background(), Toolbox{PDFCPU: fake}, []string{"a.pdf"}, "out.pdf", Params{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.calls) != 1 || fake.calls[0] != "strip_metadata" {
+		t.Fatalf("calls = %v, want one strip_metadata", fake.calls)
+	}
+}
+
+func TestImagesToPDFImportsEveryInput(t *testing.T) {
+	op, ok := Lookup("pdf-from-images")
+	if !ok {
+		t.Fatal("pdf-from-images is not in the catalogue")
+	}
+	if op.InputKind() != InputImage {
+		t.Fatalf("input kind = %q, want image", op.InputKind())
+	}
+	if !op.Merges {
+		t.Fatal("images-to-PDF must produce one output for the whole selection")
+	}
+	fake := newFakeBackend(1)
+	inputs := []string{"a.png", "b.jpg", "c.tiff"}
+	if err := op.Run(context.Background(), Toolbox{PDFCPU: fake}, inputs, "out.pdf", Params{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.importedImages) != 1 || fake.importedImages[0] != 3 {
+		t.Fatalf("imported = %v, want one import of 3 images", fake.importedImages)
+	}
+}
+
+func TestImagesToPDFRejectsAnEmptySelection(t *testing.T) {
+	op, _ := Lookup("pdf-from-images")
+	if err := op.Validate(nil, Params{}); err == nil {
+		t.Fatal("an empty selection should be rejected before the job runs")
+	}
+}
+
+func TestSupportsImageImportMatchesWhatPDFCPUExtracts(t *testing.T) {
+	for _, format := range []formats.Format{formats.JPEG, formats.PNG, formats.TIFF} {
+		if !SupportsImageImport(format) {
+			t.Fatalf("%s should be importable", format)
+		}
+	}
+	// pdfcpu registers no decoder for these, so offering them would fail.
+	for _, format := range []formats.Format{formats.GIF, formats.BMP, formats.WebP, formats.AVIF, formats.JXL, formats.SVG} {
+		if SupportsImageImport(format) {
+			t.Fatalf("%s should not be reported as importable", format)
+		}
 	}
 }

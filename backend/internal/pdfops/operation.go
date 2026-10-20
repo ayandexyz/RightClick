@@ -25,6 +25,8 @@ type Backend interface {
 	// 1-based and duplicates are allowed, which is what reordering needs.
 	Collect(ctx context.Context, input, output string, pages []int) error
 	Rotate(ctx context.Context, input, output string, pages []int, angle int) error
+	StripMetadata(ctx context.Context, input, output string) error
+	ImportImages(ctx context.Context, inputs []string, output string) error
 }
 
 // Engine IDs name the external tool that performs an operation. They appear in
@@ -162,6 +164,9 @@ func (o Operation) Run(ctx context.Context, tb Toolbox, inputs []string, output 
 	}
 	b := tb.PDFCPU
 	if o.Merges {
+		if o.InputKind() == InputImage {
+			return b.ImportImages(ctx, inputs, output)
+		}
 		return b.Merge(ctx, inputs, output)
 	}
 	if len(inputs) != 1 {
@@ -169,11 +174,13 @@ func (o Operation) Run(ctx context.Context, tb Toolbox, inputs []string, output 
 	}
 	input := inputs[0]
 	if !o.NeedsPages && p.Pages == "" {
-		if o.ID == "pdf-reverse" {
+		switch {
+		case o.ID == "pdf-reverse":
 			return o.reverse(ctx, b, input, output)
-		}
-		if o.ID == "pdf-rotate" || o.FixedAngle != 0 {
+		case o.ID == "pdf-rotate" || o.FixedAngle != 0:
 			return b.Rotate(ctx, input, output, nil, o.angle(p))
+		case o.ID == "pdf-strip-metadata":
+			return b.StripMetadata(ctx, input, output)
 		}
 		return fmt.Errorf("%s has no implementation", o.ID)
 	}
