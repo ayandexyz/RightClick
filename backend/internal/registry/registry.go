@@ -74,10 +74,11 @@ func (r *Registry) TargetsForFiles(paths []string) ([]protocol.Target, error) {
 		}
 		available := make(map[formats.Format]bool)
 		for _, target := range allSupportedFormats() {
-			if target != source {
-				if _, err := r.Resolve(source, target); err == nil {
-					available[target] = true
-				}
+			if target == source || (formats.IsAudioFormat(source) && formats.IsVideoFormat(target)) {
+				continue
+			}
+			if _, err := r.Resolve(source, target); err == nil {
+				available[target] = true
 			}
 		}
 		if common == nil {

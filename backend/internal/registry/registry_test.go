@@ -138,6 +138,31 @@ func TestTargetsForFilesUnavailableMediaEngineDoesNotHideImageTargets(t *testing
 	assertPresets(t, got, []string{"image-to-jpeg", "image-to-webp", "image-to-jxl", "image-to-avif", "image-to-gif", "image-to-bmp", "image-to-tiff", "image-to-ico", "image-to-heic"})
 }
 
+func TestTargetsForFilesClassifiesAudioWithoutUnavailableMediaRoutes(t *testing.T) {
+	audio := mediaFixture(t, "input.mp3")
+	image := filepath.Join(t.TempDir(), "photo.png")
+	if err := os.WriteFile(image, []byte("\x89PNG\r\n\x1a\nfixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	r := New()
+	r.Register(missingMediaEngine{})
+	r.Register(mediaEngine{kind: engine.MediaAudio, allowVideo: true})
+	r.Register(allImageEngine{})
+
+	mediaTargets, err := r.TargetsForFiles([]string{audio})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPresets(t, mediaTargets, []string{"audio-to-wav", "audio-to-flac", "audio-to-aac", "audio-to-m4a", "audio-to-ogg", "audio-to-opus"})
+
+	imageTargets, err := r.TargetsForFiles([]string{image})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPresets(t, imageTargets, []string{"image-to-jpeg", "image-to-webp", "image-to-jxl", "image-to-avif", "image-to-gif", "image-to-bmp", "image-to-tiff", "image-to-ico", "image-to-heic"})
+}
+
 func TestTargetsForFilesUsesIntersection(t *testing.T) {
 	dir := t.TempDir()
 	png := filepath.Join(dir, "photo.png")
@@ -201,6 +226,7 @@ func audioPresets() []string {
 type mediaEngine struct {
 	kind       engine.MediaKind
 	kindByPath map[string]engine.MediaKind
+	allowVideo bool
 }
 
 func (f mediaEngine) ID() string                 { return "media" }
@@ -208,7 +234,7 @@ func (f mediaEngine) Available() (string, error) { return "/fake-media", nil }
 func (f mediaEngine) Supports(source, target formats.Format) bool {
 	return (formats.IsAudioFormat(source) || formats.IsVideoFormat(source)) &&
 		(formats.IsAudioFormat(target) || formats.IsVideoFormat(target)) &&
-		(!formats.IsAudioFormat(source) || formats.IsAudioFormat(target))
+		(!formats.IsAudioFormat(source) || f.allowVideo || formats.IsAudioFormat(target))
 }
 func (f mediaEngine) Convert(context.Context, string, formats.Format, string, formats.Format, protocol.ImageOptions) error {
 	return nil
