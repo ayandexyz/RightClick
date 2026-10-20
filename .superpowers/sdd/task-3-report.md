@@ -44,7 +44,6 @@ git diff --check
 
 - `backend/internal/registry/registry.go`
 - `backend/internal/registry/registry_test.go`
-- `backend/internal/formats/images.go`
 
 ## Concerns / follow-up
 
