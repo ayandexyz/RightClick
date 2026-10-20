@@ -28,6 +28,16 @@ func TestEngineRegistryIncludesSVG(t *testing.T) {
 	t.Fatal("daemon engine registry does not include svg")
 }
 
+func TestEngineRegistryIncludesPDF(t *testing.T) {
+	engines := newEngineRegistry()
+	for _, registered := range engines.Engines() {
+		if registered.ID() == "pdf" {
+			return
+		}
+	}
+	t.Fatal("daemon engine registry does not include pdf")
+}
+
 func TestEngineRegistryIncludesFFmpeg(t *testing.T) {
 	engines := newEngineRegistry()
 	var found bool

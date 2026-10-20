@@ -39,3 +39,15 @@ None.
   - `go test -race ./internal/engine -run PDF -count=1` -> `ok file-converter/backend/internal/engine 1.033s`
   - `go test ./internal/engine -count=1` -> `ok file-converter/backend/internal/engine 0.235s`
   - `git diff --check` -> passed with no output.
+
+## Reachability follow-up
+
+- Independent review found the PDF engine was not registered by the daemon, so production requests could not reach `PDF.ConvertMany` despite the engine-level fixes.
+- RED: `go test ./cmd/fcd -run TestEngineRegistryIncludesPDF -count=1` failed with `daemon engine registry does not include pdf`.
+- Registered `engine.NewPDF(nil)` in `setupEngines` and added an application-registry regression test. This required a narrow exception to the original engine-file scope because the defect existed at the application composition root.
+- GREEN verification:
+  - `go test ./cmd/fcd -count=1` -> `ok file-converter/backend/cmd/fcd 0.112s`
+  - `go test ./internal/engine -run PDF -count=1` -> `ok file-converter/backend/internal/engine 0.009s`
+  - `go test -race ./internal/engine -run PDF -count=1` -> `ok file-converter/backend/internal/engine 1.035s`
+  - `go test ./... -count=1` -> all backend packages passed.
+  - `git diff --check` -> passed with no output.
