@@ -1,6 +1,7 @@
 package formats
 
 import (
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"slices"
@@ -8,10 +9,16 @@ import (
 )
 
 var fixtures = map[string][]byte{
-	"png":  append([]byte("\x89PNG\r\n\x1a\n"), make([]byte, 8)...),
-	"jpeg": {0xff, 0xd8, 0xff, 0xe0, 0x00},
-	"webp": append([]byte("RIFF\x00\x00\x00\x00WEBP"), 0, 0, 0, 0),
-	"jxl":  {0xff, 0x0a},
+	"png":     append([]byte("\x89PNG\r\n\x1a\n"), make([]byte, 8)...),
+	"jpeg":    {0xff, 0xd8, 0xff, 0xe0, 0x00},
+	"webp":    append([]byte("RIFF\x00\x00\x00\x00WEBP"), 0, 0, 0, 0),
+	"jxl":     {0xff, 0x0a},
+	"gif":     []byte("GIF89a"),
+	"bmp":     []byte("BM"),
+	"tiff":    {0x49, 0x49, 0x2a, 0x00},
+	"bigtiff": {0x4d, 0x4d, 0x00, 0x2b},
+	"ico":     append([]byte{0, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 16, 0, 16, 0, 0, 0, 22, 0, 0, 0}, make([]byte, 16)...),
+	"cur":     {0, 0, 2, 0, 1, 0},
 }
 
 func fixture(t *testing.T, kind string) string {
@@ -28,6 +35,45 @@ func TestDetectUsesContent(t *testing.T) {
 		if got, err := Detect(fixture(t, kind)); err != nil || got != want {
 			t.Fatalf("%s: got %q, %v", kind, got, err)
 		}
+	}
+}
+
+func TestDetectAdditionalSignatures(t *testing.T) {
+	for kind, want := range map[string]Format{"gif": GIF, "bmp": BMP, "tiff": TIFF, "bigtiff": TIFF, "ico": ICO} {
+		if got, err := Detect(fixture(t, kind)); err != nil || got != want {
+			t.Fatalf("%s: got %q, %v", kind, got, err)
+		}
+	}
+	if _, err := Detect(fixture(t, "cur")); err != ErrUnsupported {
+		t.Fatalf("CUR got %v, want unsupported", err)
+	}
+}
+
+func TestDetectISOBrands(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		brands []string
+		want   Format
+	}{
+		{"avif", []string{"avif", "mif1"}, AVIF},
+		{"heic", []string{"mif1"}, HEIC},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data := make([]byte, 8+4*len(tc.brands))
+			binary.BigEndian.PutUint32(data, uint32(len(data)))
+			copy(data[4:], "ftyp")
+			for i, brand := range tc.brands {
+				copy(data[8+i*4:], brand)
+			}
+			path := filepath.Join(t.TempDir(), "input.bin")
+			if err := os.WriteFile(path, data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			got, err := Detect(path)
+			if err != nil || got != tc.want {
+				t.Fatalf("got %q, %v", got, err)
+			}
+		})
 	}
 }
 
@@ -51,9 +97,9 @@ func TestTargetsAreOrderedAndExcludeInputFormats(t *testing.T) {
 		files []string
 		want  []string
 	}{
-		{"png", []string{png}, []string{"image-to-jpeg", "image-to-webp", "image-to-jxl"}},
-		{"mixed", []string{png, jpeg}, []string{"image-to-webp", "image-to-jxl"}},
-		{"all", []string{png, jpeg, webp}, []string{"image-to-jxl"}},
+		{"png", []string{png}, []string{"image-to-jpeg", "image-to-webp", "image-to-jxl", "image-to-avif", "image-to-gif", "image-to-bmp", "image-to-tiff", "image-to-ico", "image-to-heic"}},
+		{"mixed", []string{png, jpeg}, []string{"image-to-webp", "image-to-jxl", "image-to-avif", "image-to-gif", "image-to-bmp", "image-to-tiff", "image-to-ico", "image-to-heic"}},
+		{"all", []string{png, jpeg, webp}, []string{"image-to-jxl", "image-to-avif", "image-to-gif", "image-to-bmp", "image-to-tiff", "image-to-ico", "image-to-heic"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := Targets(tc.files)

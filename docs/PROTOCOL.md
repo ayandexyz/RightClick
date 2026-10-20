@@ -41,7 +41,9 @@ Target = {
 Targets are ordered by the user's toolbar profile, so frontends keep the order.
 
 ### `convert`
-`params: {files: [path], preset: string, output_dir?: string, on_conflict?: "rename"|"skip"|"overwrite"}`
+`params: {files: [path], preset: string, output_dir?: string, on_conflict?: "rename"|"skip"|"overwrite", quality?: 1..100, max_size?: positive integer, background?: color}`
+
+Image presets include `image-to-png`, `image-to-jpeg`, `image-to-webp`, `image-to-jxl`, `image-to-avif`, `image-to-gif`, `image-to-bmp`, `image-to-tiff`, `image-to-ico`, and `image-to-heic`. The daemon advertises only targets writable by the installed ImageMagick build. ICO output is limited to 256×256.
 → `{job: string}` (returned immediately; progress arrives as events)
 
 ### `cancel`

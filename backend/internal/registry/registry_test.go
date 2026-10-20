@@ -76,6 +76,12 @@ func TestTargetsForFilesUsesIntersection(t *testing.T) {
 	want := []protocol.Target{
 		{Preset: "image-to-webp", Label: "WebP Image", Format: "webp", Category: "image", Enabled: true},
 		{Preset: "image-to-jxl", Label: "JPEG XL Image", Format: "jxl", Category: "image", Enabled: true},
+		{Preset: "image-to-avif", Label: "AVIF Image", Format: "avif", Category: "image", Enabled: true},
+		{Preset: "image-to-gif", Label: "GIF Image", Format: "gif", Category: "image", Enabled: true},
+		{Preset: "image-to-bmp", Label: "BMP Image", Format: "bmp", Category: "image", Enabled: true},
+		{Preset: "image-to-tiff", Label: "TIFF Image", Format: "tiff", Category: "image", Enabled: true},
+		{Preset: "image-to-ico", Label: "ICO Image", Format: "ico", Category: "image", Enabled: true},
+		{Preset: "image-to-heic", Label: "HEIC Image", Format: "heic", Category: "image", Enabled: true},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %#v, want %#v", got, want)

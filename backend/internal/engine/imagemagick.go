@@ -19,6 +19,8 @@ type Runner func(context.Context, string, []string) error
 type ImageMagick struct {
 	executable string
 	runner     Runner
+	readCaps   map[formats.Format]bool
+	writeCaps  map[formats.Format]bool
 }
 
 func NewImageMagick(runner Runner) *ImageMagick { return &ImageMagick{runner: runner} }
@@ -26,11 +28,97 @@ func NewImageMagick(runner Runner) *ImageMagick { return &ImageMagick{runner: ru
 func (e *ImageMagick) ID() string { return "imagemagick" }
 
 func (e *ImageMagick) Supports(source, target formats.Format) bool {
-	return isImageFormat(source) && isImageFormat(target)
+	if !isImageFormat(source) || !isImageFormat(target) {
+		return false
+	}
+	// Read capability is checked by Convert so recognized-but-unreadable inputs
+	// produce a useful error instead of looking like an unknown route.
+	return e.writeCaps == nil || e.writeCaps[target]
+}
+
+func (e *ImageMagick) Capability(format formats.Format) (bool, bool) {
+	return e.readCaps[format], e.writeCaps[format]
+}
+
+func (e *ImageMagick) ProbeCapabilities() error {
+	executable, err := e.Available()
+	if err != nil {
+		e.readCaps, e.writeCaps = map[formats.Format]bool{}, map[formats.Format]bool{}
+		return err
+	}
+	cmd := exec.Command(executable, "-list", "format")
+	out, err := cmd.Output()
+	if err != nil {
+		return err
+	}
+	readCaps, writeCaps, parsed := parseCapabilities(string(out))
+	if !parsed {
+		for _, format := range []formats.Format{formats.PNG, formats.JPEG, formats.WebP} {
+			readCaps[format], writeCaps[format] = true, true
+		}
+	}
+	e.readCaps, e.writeCaps = readCaps, writeCaps
+	return nil
+}
+
+func parseCapabilities(output string) (map[formats.Format]bool, map[formats.Format]bool, bool) {
+	readCaps, writeCaps := map[formats.Format]bool{}, map[formats.Format]bool{}
+	parsed := false
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+		name, mode := strings.ToLower(strings.TrimRight(fields[0], "*")), fields[2]
+		if len(mode) < 2 || (mode[0] != 'r' && mode[0] != '-') || (mode[1] != 'w' && mode[1] != '-') {
+			continue
+		}
+		parsed = true
+		var format formats.Format
+		switch name {
+		case "png":
+			format = formats.PNG
+		case "jpeg", "jpg":
+			format = formats.JPEG
+		case "webp":
+			format = formats.WebP
+		case "jxl":
+			format = formats.JXL
+		case "avif":
+			format = formats.AVIF
+		case "gif":
+			format = formats.GIF
+		case "bmp":
+			format = formats.BMP
+		case "tiff":
+			format = formats.TIFF
+		case "ico":
+			format = formats.ICO
+		case "heic":
+			format = formats.HEIC
+		default:
+			continue
+		}
+		if format == "" {
+			continue
+		}
+		if mode[0] == 'r' {
+			readCaps[format] = true
+		}
+		if mode[1] == 'w' {
+			writeCaps[format] = true
+		}
+	}
+	return readCaps, writeCaps, parsed
 }
 
 func isImageFormat(format formats.Format) bool {
-	return format == formats.PNG || format == formats.JPEG || format == formats.WebP || format == formats.JXL
+	switch format {
+	case formats.PNG, formats.JPEG, formats.WebP, formats.JXL, formats.AVIF, formats.GIF, formats.BMP, formats.TIFF, formats.ICO, formats.HEIC:
+		return true
+	default:
+		return false
+	}
 }
 
 func (e *ImageMagick) Available() (string, error) {
@@ -54,22 +142,38 @@ func (e *ImageMagick) Convert(ctx context.Context, source string, sourceFormat f
 	if strings.ContainsAny(filepath.Base(source), "[]:") || strings.HasPrefix(filepath.Base(source), "@") {
 		return fmt.Errorf("unsafe image path")
 	}
+	if e.readCaps != nil && !e.readCaps[sourceFormat] {
+		return fmt.Errorf("%s is not supported by this ImageMagick build", strings.ToUpper(string(sourceFormat)))
+	}
+	if e.writeCaps != nil && !e.writeCaps[target] {
+		return fmt.Errorf("%s is not supported by this ImageMagick build", strings.ToUpper(string(target)))
+	}
 	input := string(sourceFormat) + ":" + source
-	if sourceFormat == formats.WebP {
+	if (sourceFormat == formats.WebP || sourceFormat == formats.GIF || sourceFormat == formats.TIFF || sourceFormat == formats.ICO) && target != formats.GIF && target != formats.WebP {
 		input += "[0]"
 	}
 	args := []string{"-limit", "memory", "512MiB", "-limit", "map", "1GiB", "-limit", "disk", "2GiB", "-limit", "time", "300", input, "-auto-orient"}
+	maxSize := 0
 	if options.MaxSize != nil {
-		args = append(args, "-resize", fmt.Sprintf("%dx%d>", *options.MaxSize, *options.MaxSize))
+		maxSize = *options.MaxSize
 	}
-	if target == formats.JPEG {
+	if target == formats.ICO && (maxSize == 0 || maxSize > 256) {
+		maxSize = 256
+	}
+	if maxSize > 0 {
+		args = append(args, "-resize", fmt.Sprintf("%dx%d>", maxSize, maxSize))
+	}
+	if target == formats.JPEG || target == formats.BMP || target == formats.GIF {
 		background := options.Background
 		if background == "" {
 			background = "white"
 		}
+		if sourceFormat == formats.GIF && target == formats.GIF {
+			args = append(args, "-coalesce")
+		}
 		args = append(args, "-background", background, "-alpha", "remove", "-alpha", "off")
 	}
-	if options.Quality != nil && target != formats.PNG {
+	if options.Quality != nil && target != formats.PNG && target != formats.GIF && target != formats.BMP && target != formats.TIFF && target != formats.ICO {
 		args = append(args, "-quality", strconv.Itoa(*options.Quality))
 	}
 	args = append(args, string(target)+":"+destination)
@@ -105,7 +209,7 @@ func PlanOutput(dir, source string, targetExt string, conflict protocol.Conflict
 	if unsafeBase(filepath.Base(source)) {
 		return OutputPlan{}, fmt.Errorf("unsafe image path")
 	}
-	if targetExt != "png" && targetExt != "jpg" && targetExt != "webp" && targetExt != "jxl" {
+	if targetExt != "png" && targetExt != "jpg" && targetExt != "webp" && targetExt != "jxl" && targetExt != "avif" && targetExt != "gif" && targetExt != "bmp" && targetExt != "tiff" && targetExt != "ico" && targetExt != "heic" {
 		return OutputPlan{}, fmt.Errorf("unsupported target extension: %s", targetExt)
 	}
 	if dir == "" {

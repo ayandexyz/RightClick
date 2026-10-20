@@ -5,11 +5,12 @@ One backend, a native frontend per platform.
 
 ## Backend status
 
-The Linux Go backend vertical slice is implemented for PNG, JPEG, WebP, and JPEG XL conversion:
+The Linux Go backend vertical slice supports PNG, JPEG, WebP, JPEG XL, AVIF, GIF, BMP, TIFF, ICO, and HEIC conversion. Targets are filtered by the installed ImageMagick build:
 
 - `fcd` serves protocol v1 over `$XDG_RUNTIME_DIR/file-converter/fcd.sock`.
 - `fcctl` is a small NDJSON development client.
-- Supported presets are `image-to-png`, `image-to-jpeg`, `image-to-webp`, and `image-to-jxl`.
+- Supported presets are `image-to-png`, `image-to-jpeg`, `image-to-webp`, `image-to-jxl`, `image-to-avif`, `image-to-gif`, `image-to-bmp`, `image-to-tiff`, `image-to-ico`, and `image-to-heic`.
+- ICO output is capped at 256×256; GIF/WebP animation is preserved when supported.
 - Inputs are absolute regular files and formats are detected from file content.
 - ImageMagick performs conversion. The daemon never uploads files or uses a network service.
 - Output files are created through temporary files and committed with an atomic rename.

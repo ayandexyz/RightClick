@@ -36,6 +36,7 @@ func main() {
 	}
 	defer cleanup()
 	imageEngine := engine.NewImageMagick(nil)
+	_ = imageEngine.ProbeCapabilities()
 	enginePath, _ := imageEngine.Available()
 	engines := registry.New()
 	engines.Register(imageEngine)

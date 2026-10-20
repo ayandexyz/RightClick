@@ -14,7 +14,11 @@ log = logging.getLogger("file_converter")
 if os.environ.get("FC_DEBUG") == "1":
     logging.basicConfig(level=logging.DEBUG)
 
-SUPPORTED_MIME_TYPES = {"image/png", "image/jpeg", "image/webp"}
+SUPPORTED_MIME_TYPES = {
+    "image/png", "image/jpeg", "image/webp", "image/jxl", "image/avif",
+    "image/gif", "image/bmp", "image/x-ms-bmp", "image/tiff",
+    "image/vnd.microsoft.icon", "image/x-icon", "image/heic", "image/heif",
+}
 
 try:
     if __name__ == "__main__":

@@ -191,6 +191,18 @@ func presetForTarget(target string) string {
 		return "image-to-webp"
 	case "jxl":
 		return "image-to-jxl"
+	case "avif":
+		return "image-to-avif"
+	case "gif":
+		return "image-to-gif"
+	case "bmp":
+		return "image-to-bmp"
+	case "tif", "tiff":
+		return "image-to-tiff"
+	case "ico":
+		return "image-to-ico"
+	case "heic", "heif":
+		return "image-to-heic"
 	default:
 		return ""
 	}

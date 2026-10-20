@@ -17,6 +17,12 @@ var supportedPresets = []Target{
 	{Preset: "image-to-jpeg", Label: "JPEG Image", Format: "jpeg", Category: "image", Enabled: true},
 	{Preset: "image-to-webp", Label: "WebP Image", Format: "webp", Category: "image", Enabled: true},
 	{Preset: "image-to-jxl", Label: "JPEG XL Image", Format: "jxl", Category: "image", Enabled: true},
+	{Preset: "image-to-avif", Label: "AVIF Image", Format: "avif", Category: "image", Enabled: true},
+	{Preset: "image-to-gif", Label: "GIF Image", Format: "gif", Category: "image", Enabled: true},
+	{Preset: "image-to-bmp", Label: "BMP Image", Format: "bmp", Category: "image", Enabled: true},
+	{Preset: "image-to-tiff", Label: "TIFF Image", Format: "tiff", Category: "image", Enabled: true},
+	{Preset: "image-to-ico", Label: "ICO Image", Format: "ico", Category: "image", Enabled: true},
+	{Preset: "image-to-heic", Label: "HEIC Image", Format: "heic", Category: "image", Enabled: true},
 }
 
 // SupportedPresets returns the image conversion targets supported by this slice.
@@ -146,8 +152,8 @@ func validateConvert(params json.RawMessage) (string, string) {
 		if !backgroundPattern.MatchString(background) {
 			return "bad_request", "background must be white, black, transparent, or a 3/4/6/8-digit hex color"
 		}
-		if strings.EqualFold(p.Preset, "image-to-jpeg") && (background == "transparent" || len(background) == 5 || len(background) == 9) {
-			return "bad_request", "transparent background is not supported for JPEG"
+		if (strings.EqualFold(p.Preset, "image-to-jpeg") || strings.EqualFold(p.Preset, "image-to-bmp") || strings.EqualFold(p.Preset, "image-to-gif")) && (background == "transparent" || len(background) == 5 || len(background) == 9) {
+			return "bad_request", "transparent background is not supported for this format"
 		}
 	}
 	return "", ""

@@ -92,6 +92,12 @@ func (m *Manager) Submit(req SubmitRequest) (string, error) {
 		targetPreset = "image-to-webp"
 	case "jxl":
 		targetPreset = "image-to-jxl"
+	case "avif", "gif", "bmp", "tiff", "ico", "heic":
+		targetPreset = "image-to-" + targetPreset
+	case "tif":
+		targetPreset = "image-to-tiff"
+	case "heif":
+		targetPreset = "image-to-heic"
 	}
 	if _, ok := formats.PresetFormat(targetPreset); !ok {
 		return "", fmt.Errorf("unsupported preset")
