@@ -54,6 +54,43 @@ class ClientTests(unittest.TestCase):
         finally:
             server.close()
 
+    def test_targets_requests_menu_policy_only_when_asked(self):
+        seen = []
+
+        def handler(file):
+            for _ in range(2):
+                file.readline()
+                file.write(b'{"id":1,"result":{"server":"fcd","protocol":1}}\n')
+                file.flush()
+                seen.append(json.loads(file.readline())["params"])
+                file.write(b'{"id":2,"result":{"targets":[]}}\n')
+                file.flush()
+
+        server = FakeServer(handler)
+        try:
+            FcClient(server.path).targets(["/tmp/a.png"], menu=True)
+            self.assertEqual(seen[0], {"files": ["/tmp/a.png"], "menu": True})
+        finally:
+            server.close()
+
+    def test_targets_default_request_has_no_menu_flag(self):
+        seen = []
+
+        def handler(file):
+            file.readline()
+            file.write(b'{"id":1,"result":{"server":"fcd","protocol":1}}\n')
+            file.flush()
+            seen.append(json.loads(file.readline())["params"])
+            file.write(b'{"id":2,"result":{"targets":[]}}\n')
+            file.flush()
+
+        server = FakeServer(handler)
+        try:
+            FcClient(server.path).targets(["/tmp/a.png"])
+            self.assertEqual(seen[0], {"files": ["/tmp/a.png"]})
+        finally:
+            server.close()
+
     def test_protocol_mismatch_is_rejected(self):
         def handler(file):
             file.readline()

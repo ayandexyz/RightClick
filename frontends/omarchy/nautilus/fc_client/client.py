@@ -92,13 +92,17 @@ class FcClient:
         if result.get("server") != "fcd" or result.get("protocol") != 1:
             raise ProtocolError("unsupported fcd protocol")
 
-    def targets(self, paths):
+    def targets(self, paths, menu=False):
         with self._connect() as sock:
             with sock.makefile("rwb") as file:
                 # hello and targets share one budget so the menu is never held up longer than request_timeout
                 deadline = time.monotonic() + self.request_timeout
                 self._hello(sock, file, deadline)
-                result = self._request(sock, file, "targets", {"files": paths}, deadline=deadline)
+                params = {"files": paths}
+                if menu:
+                    # the daemon applies the user's menu policy; never filter targets client-side
+                    params["menu"] = True
+                result = self._request(sock, file, "targets", params, deadline=deadline)
         return [Target(**{key: target.get(key, "") for key in ("preset", "label", "format", "category", "enabled", "reason")}) for target in result.get("targets", [])]
 
     def convert(self, paths, preset):

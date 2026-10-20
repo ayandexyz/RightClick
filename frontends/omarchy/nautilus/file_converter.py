@@ -63,7 +63,7 @@ class FileConverterMenuProvider(*((GObject.GObject, Nautilus.MenuProvider) if Na
             paths.append(path)
 
         try:
-            targets = [target for target in FcClient(_socket_path()).targets(paths) if target.enabled]
+            targets = [target for target in FcClient(_socket_path()).targets(paths, menu=True) if target.enabled]
         except DaemonUnavailable as exc:
             log.debug("fcd unavailable while building menu: %s", exc)
             _spawn_helper("--warm")

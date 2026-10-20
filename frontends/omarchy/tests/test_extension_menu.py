@@ -80,6 +80,31 @@ class ExtensionMenuTests(unittest.TestCase):
         self.assertEqual(menu[0].label, "Convert to")
         self.assertEqual(menu[0].submenu.items[0].label, "MP4 Video")
 
+    def test_menu_is_built_from_daemon_menu_targets(self):
+        # The daemon owns the menu policy: ask it for menu targets and show exactly what it returns.
+        targets = [types.SimpleNamespace(preset="video-to-webm", label="WebM Video", enabled=True)]
+        with mock.patch.object(self.module, "FcClient") as client:
+            client.return_value.targets.return_value = targets
+            menu = self.module.FileConverterMenuProvider().get_file_items([FakeFile("/tmp/a.mkv", "video/x-matroska")])
+        client.return_value.targets.assert_called_once_with(["/tmp/a.mkv"], menu=True)
+        self.assertEqual([item.label for item in menu[0].submenu.items], ["WebM Video"])
+
+    def test_mixed_image_audio_selection_has_no_menu_when_daemon_offers_nothing(self):
+        files = [FakeFile("/tmp/a.png"), FakeFile("/tmp/b.flac", "audio/flac")]
+        with mock.patch.object(self.module, "FcClient") as client:
+            client.return_value.targets.return_value = []
+            self.assertEqual(self.module.FileConverterMenuProvider().get_file_items(files), [])
+        client.return_value.targets.assert_called_once_with(["/tmp/a.png", "/tmp/b.flac"], menu=True)
+
+    def test_every_supported_category_passes_the_mime_filter(self):
+        for mime in ("image/png", "image/svg+xml", "video/mp4", "audio/mpeg", "application/pdf"):
+            self.assertIn(mime, self.module.SUPPORTED_MIME_TYPES)
+        # No office engine yet, so office documents must not get a menu.
+        self.assertNotIn(
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            self.module.SUPPORTED_MIME_TYPES,
+        )
+
     def test_audio_selection_builds_convert_menu(self):
         targets = [types.SimpleNamespace(preset="audio-to-mp3", label="MP3 Audio", enabled=True)]
         with mock.patch.object(self.module, "FcClient") as client:
