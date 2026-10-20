@@ -139,7 +139,7 @@ Rules carried over from existing engines: argument arrays only (no shell), contr
 - Several PDFs: Merge, Interleave (exactly 2), Compare (exactly 2), and Customise.
 - Images selected: **Images to PDF**.
 
-**PDF Studio** (`frontends/pdf-studio/`, Python + GTK4, libadwaita if present; falls back to plain Gtk):
+**PDF Studio** (`frontends/pdf-studio/`, Python + GTK4 + libadwaita; see Decisions below):
 
 - Left: tool list (the Studio-mode operations). Centre: thumbnail grid, lazy-loaded from `pdf_thumbnails`. Right: parameter form for the chosen tool.
 - Selection: click, ctrl/shift-click ranges, rubber-band, select odd/even/all/invert. A text box shows the page spec and stays in two-way sync with the grid.
@@ -170,9 +170,19 @@ Each phase is independently shippable and gets its own plan under `docs/superpow
 - Studio: a headless logic layer (edit list to params) unit-tested without GTK; GTK itself smoke-tested manually.
 - Property check: for every page-editing op, `pdfinfo` page count equals the expected count.
 
+## Decisions made while planning the Studio
+
+Recorded in `docs/superpowers/plans/2026-10-21-pdf-tools-phase3.md`:
+
+- **libadwaita is required**, minimum 1.5 with GTK 4.12 (Ubuntu 24.04 and current Arch both meet it). Nautilus itself needs libadwaita on both supported desktops, and an optional fallback would mean writing the UI twice. This replaces the earlier "optional" default.
+- **Thumbnails are rendered by the daemon**, not by Poppler's GObject bindings, which are a separate package on Ubuntu. The cache is private (0700/0600), keyed by file content, and bounded by size and age; thumbnails of a sensitive document persist for up to 7 days unless `fcctl cache clear` is run.
+- **One `pdf-edit` operation carries the whole page grid**: an ordered list of source pages with a clockwise rotation each, or a blank. Apply is therefore one atomic job.
+- **Split by maximum file size is deferred**; it needs trial writes to measure.
+- **The Studio owns no PDF logic.** Its editing model is plain Python with no GTK imports so it is unit-tested headlessly, and its page-spec parser is tested against the same vectors as the daemon's (`backend/internal/pdfops/testdata/pagespec_cases.json`).
+
 ## Open questions
 
-1. libadwaita required or optional for the Studio? (Default: optional.)
+1. ~~libadwaita required or optional for the Studio?~~ Decided, see Decisions.
 2. Is redaction in scope for v1 given the correctness risk? Naive redaction (a black box over live text) is unsafe; the plan is rasterize-and-rebuild the affected pages, which loses text on those pages.
 3. Ship Office to PDF at all, given the LibreOffice dependency?
 
