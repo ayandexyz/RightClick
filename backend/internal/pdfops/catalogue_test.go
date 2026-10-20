@@ -7,21 +7,20 @@ import (
 	"testing"
 )
 
-func TestCatalogueHasTheStructuralOperations(t *testing.T) {
+// TestCatalogueListsPhase2OrganiseOperations guards the organise catalogue: it
+// grows as new operations land (Task 3 added "fix" so this list stays put).
+func TestCatalogueListsPhase2OrganiseOperations(t *testing.T) {
 	want := []string{
 		"pdf-merge", "pdf-extract", "pdf-delete", "pdf-rotate",
 		"pdf-rotate-cw", "pdf-rotate-ccw", "pdf-rotate-180", "pdf-reverse",
 	}
-	got := make([]string, 0, len(want))
+	gotIDs := map[string]bool{}
 	for _, op := range Catalogue() {
-		got = append(got, op.ID)
+		gotIDs[op.ID] = true
 	}
-	if len(got) != len(want) {
-		t.Fatalf("Catalogue = %v, want exactly %v", got, want)
-	}
-	for i, id := range want {
-		if got[i] != id {
-			t.Fatalf("Catalogue = %v, want %v", got, want)
+	for _, id := range want {
+		if !gotIDs[id] {
+			t.Fatalf("Catalogue missing %s; have %v", id, gotIDs)
 		}
 	}
 	for _, op := range Catalogue() {
