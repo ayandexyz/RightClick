@@ -184,6 +184,15 @@ func (m *Manager) mergeOperation(j *job, op pdfops.Operation) []protocol.FileJob
 		}
 		return files
 	}
+	// Attribute an unreadable input to that file alone, so a single damaged or
+	// locked file does not fail the whole selection with no explanation.
+	if err := m.firstUnreadableInput(j); err != nil {
+		var input *pdfops.InputError
+		if errors.As(err, &input) {
+			return mergeInputFailure(files, input, operationErrorCode(input.Err))
+		}
+		return failed(err)
+	}
 	outputDir := j.op.OutputDir
 	if outputDir == "" {
 		outputDir = filepath.Dir(j.op.Files[0])
@@ -222,6 +231,46 @@ func (m *Manager) mergeOperation(j *job, op pdfops.Operation) []protocol.FileJob
 	return files
 }
 
+// firstUnreadableInput probes every merge input in order and returns an
+// InputError for the first one that cannot be read. The probe error is mapped
+// onto the sentinel codes so callers classify it without inspecting pdfcpu's
+// wording; anything else is reported as a damaged PDF, which is what a probe
+// failure on an otherwise well-formed request means.
+func (m *Manager) firstUnreadableInput(j *job) error {
+	backend := m.pdfBackend()
+	if backend == nil {
+		return nil
+	}
+	for _, source := range j.op.Files {
+		if j.ctx.Err() != nil {
+			return nil
+		}
+		if _, err := backend.PageCount(j.ctx, source); err != nil {
+			if errors.Is(err, pdfops.ErrPasswordRequired) {
+				return &pdfops.InputError{Path: source, Err: pdfops.ErrPasswordRequired}
+			}
+			return &pdfops.InputError{Path: source, Err: pdfops.ErrInvalidPDF}
+		}
+	}
+	return nil
+}
+
+// mergeInputFailure marks the unreadable file failed with its own code and
+// every other input skipped, explaining which file stopped the merge.
+func mergeInputFailure(files []protocol.FileJob, input *pdfops.InputError, code string) []protocol.FileJob {
+	notice := "not merged: " + filepath.Base(input.Path) + " could not be read"
+	for i := range files {
+		if files[i].Source == input.Path {
+			files[i].State = "failed"
+			files[i].Error = &protocol.FileError{Code: code, Message: input.Error()}
+			continue
+		}
+		files[i].State = "skipped"
+		files[i].Notice = notice
+	}
+	return files
+}
+
 // runOneOperation performs one operation on one input file.
 func (m *Manager) runOneOperation(j *job, op pdfops.Operation, index int, source string) fileResult {
 	file := protocol.FileJob{Source: source, State: "running", Outputs: []string{}}
@@ -248,7 +297,7 @@ func (m *Manager) runOneOperation(j *job, op pdfops.Operation, index int, source
 	}
 	if err := op.Run(j.ctx, m.pdfBackend(), []string{source}, plan.Temp, j.op.Params); err != nil {
 		plan.Rollback()
-		return fileResult{index: index, file: failOperationFile(j, file, err)}
+		return fileResult{index: index, file: m.failOperationFile(j, file, err)}
 	}
 	output, file := m.publishPlan(j, plan, file)
 	if file.State != "done" {
@@ -259,8 +308,11 @@ func (m *Manager) runOneOperation(j *job, op pdfops.Operation, index int, source
 }
 
 func operationErrorCode(err error) string {
-	if errors.Is(err, pdfops.ErrPasswordRequired) {
+	switch {
+	case errors.Is(err, pdfops.ErrPasswordRequired):
 		return "password_required"
+	case errors.Is(err, pdfops.ErrInvalidPDF):
+		return "invalid_pdf"
 	}
 	return "internal"
 }

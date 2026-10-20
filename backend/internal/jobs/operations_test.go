@@ -22,6 +22,7 @@ type fakePDFBackend struct {
 	mu           sync.Mutex
 	pages        int
 	fail         map[string]error
+	pageCountErr error // fails the operation while the PageCount probe succeeds
 	destinations []string
 	merged       [][]string
 }
@@ -33,13 +34,23 @@ func newFakePDFBackend(pages int) *fakePDFBackend {
 func (f *fakePDFBackend) ID() string       { return "fake-pdf" }
 func (f *fakePDFBackend) Available() error { return nil }
 
-func (f *fakePDFBackend) PageCount(context.Context, string) (int, error) {
+// unreadable marks paths that PageCount fails on, so tests can tell a damaged
+// input apart from an operation that failed on a readable one.
+func (f *fakePDFBackend) PageCount(_ context.Context, path string) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err, ok := f.fail[path]; ok && err != nil {
+		return 0, err
+	}
 	return f.pages, nil
 }
 
 func (f *fakePDFBackend) Merge(_ context.Context, inputs []string, output string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.pageCountErr != nil {
+		return f.pageCountErr
+	}
 	if err, ok := f.fail[inputs[0]]; ok && err != nil {
 		return err
 	}
@@ -50,6 +61,9 @@ func (f *fakePDFBackend) Merge(_ context.Context, inputs []string, output string
 func (f *fakePDFBackend) Collect(_ context.Context, input, output string, pages []int) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.pageCountErr != nil {
+		return f.pageCountErr
+	}
 	if err, ok := f.fail[input]; ok && err != nil {
 		return err
 	}
@@ -60,6 +74,9 @@ func (f *fakePDFBackend) Collect(_ context.Context, input, output string, pages 
 func (f *fakePDFBackend) Rotate(_ context.Context, input, output string, _ []int, _ int) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.pageCountErr != nil {
+		return f.pageCountErr
+	}
 	if err, ok := f.fail[input]; ok && err != nil {
 		return err
 	}
@@ -426,6 +443,27 @@ func (b *blockingPDFBackend) Collect(ctx context.Context, input, output string, 
 	return b.fakePDFBackend.Collect(ctx, input, output, pages)
 }
 
+// Merge blocks the same way Collect does, so cancellation can be tested on the
+// merge path.
+func (b *blockingPDFBackend) Merge(ctx context.Context, inputs []string, output string) error {
+	b.once.Do(func() { close(b.started) })
+	select {
+	case <-b.release:
+	case <-ctx.Done():
+	}
+	return b.fakePDFBackend.Merge(ctx, inputs, output)
+}
+
+// PageCount blocks once, so a test can cancel a job while it is being probed.
+func (b *blockingPDFBackend) PageCount(ctx context.Context, path string) (int, error) {
+	b.once.Do(func() { close(b.started) })
+	select {
+	case <-b.release:
+	case <-ctx.Done():
+	}
+	return b.fakePDFBackend.PageCount(ctx, path)
+}
+
 func TestOperationWithoutBackendIsRejected(t *testing.T) {
 	dir := t.TempDir()
 	source := writePDFSource(t, dir, "doc.pdf")
@@ -487,4 +525,122 @@ func TestOperationsManagerReleasesFinishedJobs(t *testing.T) {
 	if m.Active() != 0 {
 		t.Fatalf("Active = %d after the job finished", m.Active())
 	}
+}
+
+func TestOperationReportsInvalidPDF(t *testing.T) {
+	dir := t.TempDir()
+	source := writePDFSource(t, dir, "damaged.pdf")
+	backend := newFakePDFBackend(3)
+	// Both the probe and the operation fail: the file is unreadable, so this
+	// is a damaged document rather than a failed operation.
+	backend.fail[source] = errors.New("cannot read cross-reference table")
+	m := newOperationManager(t, backend)
+
+	job := submitOp(t, m, OperationRequest{Op: "pdf-reverse", Files: []string{source}, Conflict: protocol.ConflictRename})
+	if job.Files[0].Error == nil {
+		t.Fatalf("file = %+v, want an error", job.Files[0])
+	}
+	if job.Files[0].Error.Code != "invalid_pdf" {
+		t.Fatalf("code = %q, want invalid_pdf", job.Files[0].Error.Code)
+	}
+}
+
+func TestOperationFailureOnReadableFileStaysInternal(t *testing.T) {
+	dir := t.TempDir()
+	source := writePDFSource(t, dir, "readable.pdf")
+	backend := newFakePDFBackend(3)
+	// The probe succeeds, so the failure belongs to the operation.
+	backend.pageCountErr = errors.New("cannot read cross-reference table")
+	m := newOperationManager(t, backend)
+
+	job := submitOp(t, m, OperationRequest{Op: "pdf-reverse", Files: []string{source}, Conflict: protocol.ConflictRename})
+	if job.Files[0].Error == nil {
+		t.Fatalf("file = %+v, want an error", job.Files[0])
+	}
+	if job.Files[0].Error.Code != "internal" {
+		t.Fatalf("code = %q, want internal", job.Files[0].Error.Code)
+	}
+}
+
+func TestMergeAttributesFailureToTheUnreadableFile(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		code string
+	}{
+		{"locked", pdfops.ErrPasswordRequired, "password_required"},
+		{"damaged", errors.New("cannot read cross-reference table"), "invalid_pdf"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			good := writePDFSource(t, dir, "good.pdf")
+			bad := writePDFSource(t, dir, "bad.pdf")
+			backend := newFakePDFBackend(3)
+			backend.fail[bad] = tc.err
+			m := newOperationManager(t, backend)
+
+			job := submitOp(t, m, OperationRequest{Op: "pdf-merge", Files: []string{good, bad}, Conflict: protocol.ConflictRename})
+			if job.State != "failed" {
+				t.Fatalf("state = %q, want failed", job.State)
+			}
+			badIndex := indexOfSource(job.Files, bad)
+			if job.Files[badIndex].State != "failed" || job.Files[badIndex].Error == nil {
+				t.Fatalf("bad file = %+v, want a failure", job.Files[badIndex])
+			}
+			if job.Files[badIndex].Error.Code != tc.code {
+				t.Fatalf("code = %q, want %s", job.Files[badIndex].Error.Code, tc.code)
+			}
+			goodIndex := indexOfSource(job.Files, good)
+			if job.Files[goodIndex].State != "skipped" {
+				t.Fatalf("good file state = %q, want skipped", job.Files[goodIndex].State)
+			}
+			want := "not merged: " + filepath.Base(bad) + " could not be read"
+			if job.Files[goodIndex].Notice != want {
+				t.Fatalf("notice = %q, want %q", job.Files[goodIndex].Notice, want)
+			}
+			if len(backend.merged) != 0 {
+				t.Fatalf("the merge should not have run: %v", backend.merged)
+			}
+		})
+	}
+}
+
+func TestMergeCancellationIsNotClassifiedAsInvalid(t *testing.T) {
+	dir := t.TempDir()
+	good := writePDFSource(t, dir, "good.pdf")
+	bad := writePDFSource(t, dir, "bad.pdf")
+	backend := newFakePDFBackend(3)
+	blocking := &blockingPDFBackend{fakePDFBackend: backend, started: make(chan struct{}), release: make(chan struct{})}
+	m := newOperationManager(t, blocking)
+
+	events := make(chan protocol.Event, 128)
+	id, err := m.SubmitOperation(OperationRequest{Op: "pdf-merge", Files: []string{good, bad}, Conflict: protocol.ConflictRename, Events: func(e protocol.Event) { events <- e }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The pre-merge probe blocks, which is where classification would decide the
+	// file is damaged. Cancelling first must win over invalid_pdf.
+	<-blocking.started
+	if err := m.Cancel(id); err != nil {
+		t.Fatal(err)
+	}
+	close(blocking.release)
+	job := waitJob(t, events)
+	if job.State != "cancelled" {
+		t.Fatalf("state = %q, want cancelled", job.State)
+	}
+	for _, file := range job.Files {
+		if file.Error != nil && file.Error.Code == "invalid_pdf" {
+			t.Fatalf("a cancelled job reported %q", file.Error.Code)
+		}
+	}
+}
+
+func indexOfSource(files []protocol.FileJob, source string) int {
+	for i, file := range files {
+		if file.Source == source {
+			return i
+		}
+	}
+	return -1
 }

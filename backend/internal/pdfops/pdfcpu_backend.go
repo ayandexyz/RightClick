@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -15,6 +16,23 @@ import (
 // ErrPasswordRequired marks an encrypted PDF. Passwords arrive in a later
 // phase, so the job layer turns this into a distinct error code.
 var ErrPasswordRequired = errors.New("pdf is encrypted")
+
+// ErrInvalidPDF marks a file that cannot be read as a PDF at all: damaged,
+// truncated, or not a PDF. The job layer turns this into the invalid_pdf code.
+var ErrInvalidPDF = errors.New("pdf is damaged or not a valid PDF")
+
+// InputError names the input a multi-file operation could not read. Merge uses
+// it to attribute a failure to one file instead of the whole selection.
+type InputError struct {
+	Path string
+	Err  error
+}
+
+func (e *InputError) Error() string {
+	return fmt.Sprintf("%s: %v", filepath.Base(e.Path), e.Err)
+}
+
+func (e *InputError) Unwrap() error { return e.Err }
 
 // pdfcpu reports an unreadable encrypted file either by refusing outright or by
 // asking for the password, depending on which code path reads it.

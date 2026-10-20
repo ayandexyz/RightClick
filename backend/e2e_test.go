@@ -768,6 +768,119 @@ func TestDaemonEndToEndPDFOperations(t *testing.T) {
 	_ = daemon
 }
 
+// TestDaemonEndToEndReportsDamagedPDF checks that a file with a PDF header but
+// an unreadable body is reported as invalid_pdf over the socket, both on its
+// own and as the cause of a failed merge.
+func TestDaemonEndToEndReportsDamagedPDF(t *testing.T) {
+	if _, err := exec.LookPath("pdfinfo"); err != nil {
+		t.Skip("pdfinfo is not installed")
+	}
+	_, socket, stop := startDaemonForE2E(t)
+	defer stop()
+	conn, err := net.DialTimeout("unix", socket, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	stream := newE2EStream(conn)
+
+	if hello := request(t, stream, map[string]any{
+		"id": 1, "method": "hello", "params": map[string]any{"client": "e2e", "protocol": 1},
+	}); hello["error"] != nil {
+		t.Fatalf("hello: %#v", hello)
+	}
+
+	outDir := t.TempDir()
+	good := filepath.Join(outDir, "good.pdf")
+	if err := os.WriteFile(good, minimalOnePagePDF(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A valid header followed by nothing parseable: the daemon's input check
+	// passes and the damage only shows up when the PDF is actually opened.
+	damaged := filepath.Join(outDir, "damaged.pdf")
+	if err := os.WriteFile(damaged, append([]byte("%PDF-1.7\n"), bytes.Repeat([]byte{0x00}, 512)...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("single file", func(t *testing.T) {
+		files := runJobForFiles(t, stream, map[string]any{
+			"op": "pdf-reverse", "files": []string{damaged}, "output_dir": outDir,
+		})
+		if len(files) != 1 {
+			t.Fatalf("files = %#v, want one", files)
+		}
+		if got := fileErrorCode(t, files[0]); got != "invalid_pdf" {
+			t.Fatalf("code = %q, want invalid_pdf (file %#v)", got, files[0])
+		}
+	})
+
+	t.Run("merge attributes the damaged file", func(t *testing.T) {
+		files := runJobForFiles(t, stream, map[string]any{
+			"op": "pdf-merge", "files": []string{good, damaged}, "output_dir": outDir,
+		})
+		if len(files) != 2 {
+			t.Fatalf("files = %#v, want two", files)
+		}
+		if got := fileErrorCode(t, files[1]); got != "invalid_pdf" {
+			t.Fatalf("damaged code = %q, want invalid_pdf (file %#v)", got, files[1])
+		}
+		if files[0]["state"] != "skipped" {
+			t.Fatalf("good file state = %#v, want skipped", files[0])
+		}
+		if notice, _ := files[0]["notice"].(string); !strings.Contains(notice, "damaged.pdf") {
+			t.Fatalf("notice = %q, want it to name damaged.pdf", notice)
+		}
+	})
+}
+
+func fileErrorCode(t *testing.T, file map[string]any) string {
+	t.Helper()
+	raw, ok := file["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("file has no error: %#v", file)
+	}
+	code, _ := raw["code"].(string)
+	return code
+}
+
+// runJobForFiles submits an operation and returns the finished job's files
+// without requiring any of them to have produced an output.
+func runJobForFiles(t *testing.T, stream *e2eStream, params map[string]any) []map[string]any {
+	t.Helper()
+	ack := request(t, stream, map[string]any{"id": 60, "method": "run_operation", "params": params})
+	if ack["error"] != nil {
+		t.Fatalf("run_operation rejected: %#v", ack)
+	}
+	id, _ := ack["result"].(map[string]any)["job"].(string)
+	if id == "" {
+		t.Fatalf("missing job id: %#v", ack)
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		message, err := stream.read(5 * time.Second)
+		if err != nil {
+			t.Fatalf("waiting for job.finished: %v", err)
+		}
+		if event, _ := message["event"].(string); event != "job.finished" {
+			continue
+		}
+		data, _ := message["data"].(map[string]any)
+		if data["id"] != id {
+			continue
+		}
+		raw, _ := data["files"].([]any)
+		files := make([]map[string]any, 0, len(raw))
+		for _, entry := range raw {
+			if row, ok := entry.(map[string]any); ok {
+				files = append(files, row)
+			}
+		}
+		return files
+	}
+	t.Fatal("timed out waiting for job.finished")
+	return nil
+}
+
 func runJob(t *testing.T, stream *e2eStream, params map[string]any) string {
 	t.Helper()
 	ack := request(t, stream, map[string]any{"id": 50, "method": "run_operation", "params": params})

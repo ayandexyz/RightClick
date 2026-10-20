@@ -698,7 +698,7 @@ func (m *Manager) convertFile(j *job, index int, source string, target formats.F
 	err = route.Convert(j.ctx, source, sourceFormat, plan.Temp, target, j.req.Options)
 	if err != nil {
 		plan.Rollback()
-		file = failOperationFile(j, file, err)
+		file = m.failOperationFile(j, file, err)
 		return fileResult{index: index, file: file}
 	}
 	output, file := m.publishPlan(j, plan, file)
@@ -763,17 +763,40 @@ func (m *Manager) publishPlan(j *job, plan engine.OutputPlan, file protocol.File
 }
 
 // failOperationFile turns a backend error into a file error, honouring
-// cancellation and the encrypted-PDF sentinel.
-func failOperationFile(j *job, file protocol.FileJob, err error) protocol.FileJob {
+// cancellation, the encrypted-PDF sentinel, and a damaged input. A failure is
+// only reported as invalid_pdf when the input itself cannot be read; otherwise
+// it belongs to the operation and stays internal.
+func (m *Manager) failOperationFile(j *job, file protocol.FileJob, err error) protocol.FileJob {
 	if j.ctx.Err() != nil {
 		file.State = "cancelled"
 		return file
 	}
-	code := "internal"
-	if errors.Is(err, pdfops.ErrPasswordRequired) {
-		code = "password_required"
+	code := operationErrorCode(err)
+	if code == "internal" && m.inputUnreadable(j, file.Source) {
+		code = "invalid_pdf"
 	}
 	file.State = "failed"
 	file.Error = &protocol.FileError{Code: code, Message: err.Error()}
 	return file
+}
+
+// inputUnreadable probes an input and reports whether it cannot be opened as a
+// PDF. A password error is not a damaged file, and cancellation is never a
+// verdict on the input at all.
+func (m *Manager) inputUnreadable(j *job, source string) bool {
+	if j.ctx.Err() != nil {
+		return false
+	}
+	backend := m.pdfBackend()
+	if backend == nil {
+		return false
+	}
+	_, err := backend.PageCount(j.ctx, source)
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, pdfops.ErrPasswordRequired) {
+		return false
+	}
+	return j.ctx.Err() == nil
 }
