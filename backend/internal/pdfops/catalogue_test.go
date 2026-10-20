@@ -275,26 +275,6 @@ func TestRunMergeUsesEveryInputRegardlessOfCount(t *testing.T) {
 	}
 }
 
-func TestStripMetadataCallsTheBackend(t *testing.T) {
-	op, ok := Lookup("pdf-strip-metadata")
-	if !ok {
-		t.Fatal("pdf-strip-metadata is not in the catalogue")
-	}
-	if op.InputKind() != InputPDF {
-		t.Fatalf("input kind = %q, want pdf", op.InputKind())
-	}
-	if op.OutputExtension() != "pdf" {
-		t.Fatalf("output = %q, want pdf", op.OutputExtension())
-	}
-	fake := newFakeBackend(4, "a.pdf")
-	if err := op.Run(context.Background(), Toolbox{PDFCPU: fake}, []string{"a.pdf"}, "out.pdf", Params{}); err != nil {
-		t.Fatal(err)
-	}
-	if len(fake.calls) != 1 || fake.calls[0] != "strip_metadata" {
-		t.Fatalf("calls = %v, want one strip_metadata", fake.calls)
-	}
-}
-
 func TestImagesToPDFImportsEveryInput(t *testing.T) {
 	op, ok := Lookup("pdf-from-images")
 	if !ok {

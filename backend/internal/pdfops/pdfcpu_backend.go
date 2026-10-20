@@ -114,14 +114,6 @@ func (b *PDFCPU) Rotate(ctx context.Context, input, output string, pages []int, 
 	})
 }
 
-// StripMetadata removes every entry from the document information dictionary.
-// pdfcpu's RemovePropertiesFile with an empty list removes all of them.
-func (b *PDFCPU) StripMetadata(ctx context.Context, input, output string) error {
-	return runPDFCPU(ctx, func() error {
-		return api.RemovePropertiesFile(input, output, nil, model.NewDefaultConfiguration())
-	})
-}
-
 // ImportImages turns a list of image files (JPEG, PNG or TIFF) into a PDF,
 // one image per page. The format check is performed elsewhere; pdfcpu decodes
 // any supported format and routes every other through its internal image

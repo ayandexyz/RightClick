@@ -26,7 +26,6 @@ Beyond rasterizing pages, the backend offers structural PDF tools. The Nautilus 
 | `pdf-grayscale` | ghostscript | instant | |
 | `pdf-to-text` | poppler | instant | extract text to `<stem>-text.txt` |
 | `pdf-extract-images` | poppler | instant | numbered PNGs `<stem>-image-N.png` |
-| `pdf-strip-metadata` | pdfcpu | instant | remove Info dictionary entries |
 | `pdf-from-images` | pdfcpu | instant | JPEG / PNG / TIFF to a single PDF |
 | `pdf-ocr` | tesseract | studio | not implemented yet; listed but always disabled — see below |
 

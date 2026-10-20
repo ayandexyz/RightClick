@@ -596,7 +596,6 @@ func (s *stubPDFBackend) Rotate(_ context.Context, input, output string, _ []int
 	return os.WriteFile(output, []byte("%PDF-1.7\nstub\n"), 0o600)
 }
 
-func (s *stubPDFBackend) StripMetadata(_ context.Context, _ string, _ string) error  { return nil }
 func (s *stubPDFBackend) ImportImages(_ context.Context, _ []string, _ string) error { return nil }
 
 func pdfFixture(t *testing.T, dir, name string) string {
@@ -1072,7 +1071,7 @@ func TestServerOperationsListsThePhase2Catalogue(t *testing.T) {
 		}
 	}
 	// pdfcpu is linked in, so its operations are genuinely available.
-	for _, want := range []string{"pdf-rotate-cw", "pdf-rotate-180", "pdf-strip-metadata"} {
+	for _, want := range []string{"pdf-rotate-cw", "pdf-rotate-180"} {
 		if op, ok := byID[want]; !ok || !op.Enabled {
 			t.Errorf("%s = %+v, want enabled", want, op)
 		}

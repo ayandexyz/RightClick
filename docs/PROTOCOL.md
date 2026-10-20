@@ -124,7 +124,6 @@ Operations:
 | `pdf-grayscale` | ghostscript | instant | 1 or more PDFs | `<stem>-gray.pdf` |
 | `pdf-to-text` | poppler | instant | 1 or more PDFs | `<stem>-text.txt` |
 | `pdf-extract-images` | poppler | instant | 1 or more PDFs | `<stem>-image-1.png`, `<stem>-image-2.png`, ... |
-| `pdf-strip-metadata` | pdfcpu | instant | 1 or more PDFs | `<stem>-clean.pdf` |
 | `pdf-ocr` | tesseract | studio | 1 or more PDFs | not implemented; always `enabled: false` |
 | `pdf-from-images` | pdfcpu | instant | 1 or more JPEG / PNG / TIFF | `images.pdf` in `output_dir` |
 

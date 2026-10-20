@@ -282,7 +282,6 @@ OPERATION_TITLES = {
     "pdf-reverse": "PDF reversed",
     "pdf-extract": "PDF pages extracted",
     "pdf-delete": "PDF pages deleted",
-    "pdf-strip-metadata": "PDF metadata stripped",
     "pdf-to-text": "Text extracted",
     "pdf-extract-images": "Images extracted",
     "pdf-ocr": "PDF OCR'd",

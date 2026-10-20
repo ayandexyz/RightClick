@@ -605,8 +605,7 @@ func fatal(err error) { fmt.Fprintln(os.Stderr, err); os.Exit(1) }
 
 // pdfShortName is the CLI verb for an operation ID, derived by stripping the
 // "pdf-" prefix and well-known longer names that do not lend themselves to a
-// straight strip (extract-images, from-images, to-text, compress-balanced,
-// strip-metadata).
+// straight strip (extract-images, from-images, to-text, compress-balanced).
 func pdfShortName(id string) string {
 	short := strings.TrimPrefix(id, "pdf-")
 	switch id {
@@ -628,8 +627,6 @@ func pdfShortName(id string) string {
 		return "rotate-ccw"
 	case "pdf-rotate-180":
 		return "rotate-180"
-	case "pdf-strip-metadata":
-		return "strip-metadata"
 	}
 	return short
 }

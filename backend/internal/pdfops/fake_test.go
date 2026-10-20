@@ -68,11 +68,6 @@ func (f *fakeBackend) Rotate(_ context.Context, _, _ string, pages []int, angle 
 	return nil
 }
 
-func (f *fakeBackend) StripMetadata(_ context.Context, _, _ string) error {
-	f.calls = append(f.calls, "strip_metadata")
-	return f.err
-}
-
 func (f *fakeBackend) ImportImages(_ context.Context, inputs []string, _ string) error {
 	f.calls = append(f.calls, "import_images")
 	f.importedImages = append(f.importedImages, len(inputs))

@@ -86,7 +86,6 @@ func (f *fakePDFBackend) Rotate(_ context.Context, input, output string, _ []int
 	return writePDFStub(output)
 }
 
-func (f *fakePDFBackend) StripMetadata(_ context.Context, _ string, _ string) error { return nil }
 func (f *fakePDFBackend) ImportImages(_ context.Context, inputs []string, _ string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

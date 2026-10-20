@@ -25,7 +25,6 @@ type Backend interface {
 	// 1-based and duplicates are allowed, which is what reordering needs.
 	Collect(ctx context.Context, input, output string, pages []int) error
 	Rotate(ctx context.Context, input, output string, pages []int, angle int) error
-	StripMetadata(ctx context.Context, input, output string) error
 	ImportImages(ctx context.Context, inputs []string, output string) error
 }
 
@@ -184,8 +183,6 @@ func (o Operation) Run(ctx context.Context, tb Toolbox, inputs []string, output 
 			return o.reverse(ctx, b, input, output)
 		case o.ID == "pdf-rotate" || o.FixedAngle != 0:
 			return b.Rotate(ctx, input, output, nil, o.angle(p))
-		case o.ID == "pdf-strip-metadata":
-			return b.StripMetadata(ctx, input, output)
 		}
 		return fmt.Errorf("%s has no implementation", o.ID)
 	}
