@@ -407,6 +407,9 @@ func Targets(paths []string) ([]protocol.Target, error) {
 		if strings.HasPrefix(target.Preset, "svg-to-") && !inputFormats[SVG] {
 			continue
 		}
+		if inputFormats[PDF] && !strings.HasPrefix(target.Preset, "pdf-to-") {
+			continue
+		}
 		if strings.HasPrefix(target.Preset, "pdf-to-") && !inputFormats[PDF] {
 			continue
 		}

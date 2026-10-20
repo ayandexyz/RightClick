@@ -226,6 +226,26 @@ func TestFormatClassification(t *testing.T) {
 	}
 }
 
+func TestTargetsForPDFExposeExactlyPDFPresets(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "input.pdf")
+	if err := os.WriteFile(path, []byte("%PDF-1.7 fixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Targets([]string{path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := make([]string, len(got))
+	for i := range got {
+		ids[i] = got[i].Preset
+	}
+	want := []string{"pdf-to-png", "pdf-to-jpeg", "pdf-to-webp"}
+	if !slices.Equal(ids, want) {
+		t.Fatalf("got %v, want %v", ids, want)
+	}
+}
+
 func TestTargetsAreOrderedAndExcludeInputFormats(t *testing.T) {
 	png, jpeg, webp := fixture(t, "png"), fixture(t, "jpeg"), fixture(t, "webp")
 	for _, tc := range []struct {

@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"slices"
 	"strings"
 	"testing"
 
@@ -60,86 +59,30 @@ func TestTargetsUsesRegisteredCapabilities(t *testing.T) {
 	}
 }
 
-func TestTargetsIncludesPDFRasterRoutes(t *testing.T) {
+func TestTargetsNeverIncludesPDFAsAnOutput(t *testing.T) {
 	r := New()
-	r.Register(pdfImageEngine{})
+	r.Register(anyFormatEngine{})
 
-	got := r.Targets(formats.PDF)
-	want := []formats.Format{formats.PNG, formats.JPEG, formats.WebP}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("got targets %v, want %v", got, want)
+	for _, target := range r.Targets(formats.PNG) {
+		if target == formats.PDF {
+			t.Fatal("PDF was exposed as an output target")
+		}
 	}
 }
 
-func TestTargetsForPDFInputsExposePDFPresetsOnlyForPDFOnlySelection(t *testing.T) {
-	dir := t.TempDir()
-	pdf := filepath.Join(dir, "input.pdf")
-	png := filepath.Join(dir, "input.png")
-	if err := os.WriteFile(pdf, []byte("%PDF-1.7 fixture"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(png, []byte("\x89PNG\r\n\x1a\nfixture"), 0o600); err != nil {
+func TestTargetsForPDFInputsExposeExactlyPDFPresets(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "input.pdf")
+	if err := os.WriteFile(path, []byte("%PDF-1.7 fixture"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
 	r := New()
 	r.Register(pdfImageEngine{})
-	r.Register(allImageEngine{})
-
-	pdfOnly, err := r.TargetsForFiles([]string{pdf})
+	got, err := r.TargetsForFiles([]string{path})
 	if err != nil {
 		t.Fatal(err)
 	}
-	pdfPresets := make([]string, 0, len(pdfOnly))
-	for _, target := range pdfOnly {
-		pdfPresets = append(pdfPresets, target.Preset)
-	}
-	for _, preset := range []string{"pdf-to-png", "pdf-to-jpeg", "pdf-to-webp"} {
-		if !slices.Contains(pdfPresets, preset) {
-			t.Fatalf("PDF-only inputs missing preset %q: %v", preset, pdfPresets)
-		}
-	}
-
-	mixed, err := r.TargetsForFiles([]string{pdf, png})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, target := range mixed {
-		if strings.HasPrefix(target.Preset, "pdf-to-") {
-			t.Fatalf("mixed inputs exposed PDF preset %q", target.Preset)
-		}
-	}
-
-	rasterOnly, err := r.TargetsForFiles([]string{png})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, target := range rasterOnly {
-		if strings.HasPrefix(target.Preset, "pdf-to-") {
-			t.Fatalf("raster-only inputs exposed PDF preset %q", target.Preset)
-		}
-	}
-}
-
-func TestSupportedPresetsKeepPDFPresetsImmediatelyAfterSVG(t *testing.T) {
-	presets := protocol.SupportedPresets()
-	want := []string{"svg-to-png", "svg-to-jpeg", "svg-to-webp", "pdf-to-png", "pdf-to-jpeg", "pdf-to-webp"}
-	for i := range presets {
-		if i+len(want) > len(presets) {
-			break
-		}
-		matches := true
-		for j, expected := range want {
-			if presets[i+j].Preset != expected {
-				matches = false
-				break
-			}
-		}
-		if matches {
-			return
-		}
-	}
-	t.Fatalf("presets do not contain %v in stable order", want)
+	assertPresets(t, got, []string{"pdf-to-png", "pdf-to-jpeg", "pdf-to-webp"})
 }
 
 func TestTargetsForFilesIncludesRegisteredMediaRoutes(t *testing.T) {
@@ -407,6 +350,17 @@ func (svgTestEngine) Supports(source, target formats.Format) bool {
 	return formats.IsSVGFormat(source) && (target == formats.PNG || target == formats.JPEG || target == formats.WebP)
 }
 func (svgTestEngine) Convert(context.Context, string, formats.Format, string, formats.Format, protocol.ImageOptions) error {
+	return nil
+}
+
+type anyFormatEngine struct{}
+
+func (anyFormatEngine) ID() string                 { return "any-format" }
+func (anyFormatEngine) Available() (string, error) { return "any-format", nil }
+func (anyFormatEngine) Supports(source, target formats.Format) bool {
+	return source != target
+}
+func (anyFormatEngine) Convert(context.Context, string, formats.Format, string, formats.Format, protocol.ImageOptions) error {
 	return nil
 }
 

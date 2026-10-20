@@ -68,9 +68,9 @@ func (r *Registry) TargetsForFiles(paths []string) ([]protocol.Target, error) {
 	var hasVideoSource bool
 	var hasImageSource bool
 	var hasSVGSource bool
+	var hasNonSVGSource bool
 	var hasPDFSource bool
 	var hasNonPDFSource bool
-	var hasNonSVGSource bool
 	for _, path := range paths {
 		source, err := formats.Detect(path)
 		if err != nil {
@@ -96,12 +96,20 @@ func (r *Registry) TargetsForFiles(paths []string) ([]protocol.Target, error) {
 			hasNonPDFSource = true
 		}
 		available := make(map[formats.Format]bool)
-		for _, target := range allSupportedFormats() {
-			if target == source || (formats.IsAudioFormat(source) && formats.IsVideoFormat(target)) {
-				continue
+		if formats.IsPDFFormat(source) {
+			for _, target := range []formats.Format{formats.PNG, formats.JPEG, formats.WebP} {
+				if _, err := r.Resolve(source, target); err == nil {
+					available[target] = true
+				}
 			}
-			if _, err := r.Resolve(source, target); err == nil {
-				available[target] = true
+		} else {
+			for _, target := range sourceCandidateFormats() {
+				if target == source || (formats.IsAudioFormat(source) && formats.IsVideoFormat(target)) {
+					continue
+				}
+				if _, err := r.Resolve(source, target); err == nil {
+					available[target] = true
+				}
 			}
 		}
 		if common == nil {
@@ -123,6 +131,12 @@ func (r *Registry) TargetsForFiles(paths []string) ([]protocol.Target, error) {
 			continue
 		}
 		if strings.HasPrefix(target.Preset, "pdf-to-") && (!hasPDFSource || hasNonPDFSource) {
+			continue
+		}
+		if hasPDFSource && !hasNonPDFSource && !strings.HasPrefix(target.Preset, "pdf-to-") {
+			continue
+		}
+		if hasPDFSource && hasNonPDFSource {
 			continue
 		}
 		format, ok := formats.PresetFormat(target.Preset)
@@ -174,20 +188,28 @@ func (r *Registry) mediaSource(ctx context.Context, path string) (formats.Format
 	return "", formats.ErrUnsupported
 }
 
-func allSupportedFormats() []formats.Format {
+func sourceCandidateFormats() []formats.Format {
+	return append([]formats.Format{formats.PDF}, outputTargetFormats()...)
+}
+
+func outputTargetFormats() []formats.Format {
 	candidates := []formats.Format{
-		formats.PDF, formats.PNG, formats.JPEG, formats.WebP, formats.JXL, formats.AVIF, formats.BMP, formats.TIFF, formats.ICO, formats.HEIC,
+		formats.PNG, formats.JPEG, formats.WebP, formats.JXL, formats.AVIF, formats.BMP, formats.TIFF, formats.ICO, formats.HEIC,
 		formats.MP4, formats.MOV, formats.WebM, formats.MKV, formats.AVI, formats.GIF,
 		formats.MP3, formats.WAV, formats.FLAC, formats.AAC, formats.M4A, formats.OGG, formats.Opus,
 		formats.AIFF, formats.ALAC, formats.AC3, formats.AMR, formats.WMA,
 	}
 	out := make([]formats.Format, 0, len(candidates))
 	for _, format := range candidates {
-		if formats.IsPDFFormat(format) || formats.IsImageFormat(format) || formats.IsVideoFormat(format) || formats.IsAudioFormat(format) {
+		if formats.IsImageFormat(format) || formats.IsVideoFormat(format) || formats.IsAudioFormat(format) {
 			out = append(out, format)
 		}
 	}
 	return out
+}
+
+func allSupportedFormats() []formats.Format {
+	return outputTargetFormats()
 }
 
 func (r *Registry) Targets(source formats.Format) []formats.Format {
