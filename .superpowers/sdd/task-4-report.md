@@ -12,7 +12,9 @@ Implemented media outputs through the existing atomic job lifecycle. Media outpu
 - Preserved the same temp-file, conversion, cleanup, and commit lifecycle for media outputs.
 - Preserved cancellation cleanup and conflict handling by continuing to use `PlanOutput` and `OutputPlan.Commit` for all routes.
 - Added same-format exclusion at conversion time, returning a stable per-file `unsupported` failure without invoking an engine.
-- Added coverage for video-to-audio extraction, all media extension aliases, and rejecting audio-to-video submission before queueing.
+- Added coverage for video-to-audio extraction, canonical alias presets, direct media conversion cancellation and temp cleanup, all three media conflict policies, and rejecting audio-to-video submission before queueing.
+- Media probing now accepts and receives the Manager job context, so ffprobe cancellation is tied to the job rather than `context.Background()`.
+- Route resolution now precedes output planning, preventing unsupported routes from becoming conflict-policy skips when a destination already exists.
 
 ## Verification
 
@@ -25,4 +27,5 @@ All passed.
 ## Concerns
 
 - Media classification still depends on a registered engine implementing the existing `MediaProber` interface and being available. If no media prober is available, the file receives the existing per-file `unsupported` failure.
+- The registry's UI-oriented `TargetsForFiles` path still uses `context.Background()` because it is not a submitted job; submitted conversion paths use the Manager job context.
 - The requested implementation files included engine and job files; the registry needed a small public classification bridge so the manager could use the route engine's media classification without duplicating probing logic.

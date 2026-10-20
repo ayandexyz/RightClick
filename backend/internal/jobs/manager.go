@@ -24,7 +24,7 @@ type Router interface {
 }
 
 type MediaSourceRouter interface {
-	MediaSource(path string) (formats.Format, error)
+	MediaSource(context.Context, string) (formats.Format, error)
 }
 
 type SubmitRequest struct {
@@ -322,7 +322,7 @@ func (m *Manager) convertFile(j *job, index int, source string, target formats.F
 	sourceFormat, err := formats.Detect(source)
 	if err != nil {
 		if mediaRouter, ok := m.router.(MediaSourceRouter); ok {
-			sourceFormat, err = mediaRouter.MediaSource(source)
+			sourceFormat, err = mediaRouter.MediaSource(j.ctx, source)
 		}
 		if err != nil {
 			file.State = "failed"
@@ -339,6 +339,12 @@ func (m *Manager) convertFile(j *job, index int, source string, target formats.F
 	if target == formats.JPEG {
 		ext = "jpg"
 	}
+	route, err := m.router.Resolve(sourceFormat, target)
+	if err != nil {
+		file.State = "failed"
+		file.Error = &protocol.FileError{Code: "unsupported", Message: err.Error()}
+		return fileResult{index: index, file: file}
+	}
 	plan, err := engine.PlanOutput(j.req.OutputDir, source, ext, j.req.Conflict)
 	if err != nil {
 		file.State = "failed"
@@ -349,10 +355,7 @@ func (m *Manager) convertFile(j *job, index int, source string, target formats.F
 		file.State = "skipped"
 		return fileResult{index: index, file: file}
 	}
-	route, err := m.router.Resolve(sourceFormat, target)
-	if err == nil {
-		err = route.Convert(j.ctx, source, sourceFormat, plan.Temp, target, j.req.Options)
-	}
+	err = route.Convert(j.ctx, source, sourceFormat, plan.Temp, target, j.req.Options)
 	if err != nil {
 		plan.RemoveTemp()
 		if j.ctx.Err() != nil {

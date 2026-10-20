@@ -67,7 +67,7 @@ func (r *Registry) TargetsForFiles(paths []string) ([]protocol.Target, error) {
 	for _, path := range paths {
 		source, err := formats.Detect(path)
 		if err != nil {
-			source, err = r.mediaSource(path)
+			source, err = r.mediaSource(context.Background(), path)
 			if err != nil {
 				return nil, err
 			}
@@ -105,11 +105,11 @@ type MediaProber interface {
 	Probe(context.Context, string) (engine.MediaKind, error)
 }
 
-func (r *Registry) MediaSource(path string) (formats.Format, error) {
-	return r.mediaSource(path)
+func (r *Registry) MediaSource(ctx context.Context, path string) (formats.Format, error) {
+	return r.mediaSource(ctx, path)
 }
 
-func (r *Registry) mediaSource(path string) (formats.Format, error) {
+func (r *Registry) mediaSource(ctx context.Context, path string) (formats.Format, error) {
 	for _, registered := range r.engines {
 		prober, ok := registered.(MediaProber)
 		if !ok {
@@ -118,7 +118,7 @@ func (r *Registry) mediaSource(path string) (formats.Format, error) {
 		if _, err := registered.Available(); err != nil {
 			continue
 		}
-		kind, err := prober.Probe(context.Background(), path)
+		kind, err := prober.Probe(ctx, path)
 		if err != nil {
 			continue
 		}

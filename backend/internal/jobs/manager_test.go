@@ -21,10 +21,16 @@ type fakeConverter struct {
 }
 
 type fakeMediaEngine struct {
-	mu     sync.Mutex
-	calls  int
-	target formats.Format
-	kind   engine.MediaKind
+	mu             sync.Mutex
+	calls          int
+	target         formats.Format
+	kind           engine.MediaKind
+	probeCtx       context.Context
+	probeStarted   chan struct{}
+	probeBlock     bool
+	convertBlock   bool
+	convertStarted chan struct{}
+	rejectAudio    bool
 }
 
 func (f *fakeMediaEngine) ID() string                 { return "fake-media" }
@@ -32,12 +38,40 @@ func (f *fakeMediaEngine) Available() (string, error) { return "fake-media", nil
 func (f *fakeMediaEngine) Supports(source, target formats.Format) bool {
 	return (formats.IsAudioFormat(source) || formats.IsVideoFormat(source)) &&
 		(formats.IsAudioFormat(target) || formats.IsVideoFormat(target)) &&
-		(!formats.IsAudioFormat(source) || formats.IsAudioFormat(target))
+		(!formats.IsAudioFormat(source) || formats.IsAudioFormat(target)) &&
+		!(f.rejectAudio && formats.IsAudioFormat(target))
 }
-func (f *fakeMediaEngine) Probe(context.Context, string) (engine.MediaKind, error) {
+func (f *fakeMediaEngine) Probe(ctx context.Context, _ string) (engine.MediaKind, error) {
+	f.mu.Lock()
+	f.probeCtx = ctx
+	started := f.probeStarted
+	block := f.probeBlock
+	f.mu.Unlock()
+	if started != nil {
+		select {
+		case <-started:
+		default:
+			close(started)
+		}
+	}
+	if block {
+		<-ctx.Done()
+		return "", ctx.Err()
+	}
 	return f.kind, nil
 }
-func (f *fakeMediaEngine) Convert(_ context.Context, _ string, _ formats.Format, destination string, target formats.Format, _ protocol.ImageOptions) error {
+func (f *fakeMediaEngine) Convert(ctx context.Context, _ string, _ formats.Format, destination string, target formats.Format, _ protocol.ImageOptions) error {
+	if f.convertBlock {
+		if f.convertStarted != nil {
+			select {
+			case <-f.convertStarted:
+			default:
+				close(f.convertStarted)
+			}
+		}
+		<-ctx.Done()
+		return ctx.Err()
+	}
 	f.mu.Lock()
 	f.calls++
 	f.target = target
@@ -150,15 +184,144 @@ func TestManagerRoutesVideoSourceToAudioOutputThroughAtomicLifecycle(t *testing.
 	}
 }
 
-func TestManagerAcceptsAllMediaExtensionAliases(t *testing.T) {
-	for _, alias := range []string{"mp4", "mov", "webm", "mkv", "avi", "mp3", "wav", "flac", "aac", "m4a", "ogg", "opus", "aiff", "alac", "ac3", "amr", "wma"} {
-		m := NewManager(&fakeConverter{})
-		_, err := m.Submit(SubmitRequest{Files: []string{imageFixture(t)}, Preset: alias, OutputDir: t.TempDir(), Conflict: protocol.ConflictRename})
-		if err != nil {
-			m.Close()
-			t.Fatalf("alias %q rejected: %v", alias, err)
-		}
-		m.Close()
+func TestManagerMediaAliasesUseCanonicalPresets(t *testing.T) {
+	cases := []struct {
+		alias string
+		want  string
+	}{
+		{"mp4", "video-to-mp4"}, {"webm", "video-to-webm"}, {"mp3", "audio-to-mp3"},
+		{"wav", "audio-to-wav"}, {"flac", "audio-to-flac"}, {"aac", "audio-to-aac"},
+		{"m4a", "audio-to-m4a"}, {"ogg", "audio-to-ogg"}, {"opus", "audio-to-opus"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.alias, func(t *testing.T) {
+			m := NewManager(&fakeConverter{})
+			defer m.Close()
+			events := make(chan protocol.Event, 16)
+			_, err := m.Submit(SubmitRequest{Files: []string{imageFixture(t)}, Preset: tc.alias, OutputDir: t.TempDir(), Conflict: protocol.ConflictRename, Events: func(e protocol.Event) { events <- e }})
+			if err != nil {
+				t.Fatal(err)
+			}
+			job := waitJob(t, events)
+			if job.Preset != tc.want {
+				t.Fatalf("job preset = %q, want %q", job.Preset, tc.want)
+			}
+		})
+	}
+}
+
+func TestManagerResolvesUnsupportedRouteBeforeConflictSkip(t *testing.T) {
+	source := mediaFixture(t, "input.mp4")
+	output := t.TempDir()
+	if err := os.WriteFile(filepath.Join(output, "input.mp3"), []byte("existing"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := registry.New()
+	r.Register(&fakeMediaEngine{kind: engine.MediaVideo, rejectAudio: true})
+	m := NewManagerWithRegistry(r)
+	defer m.Close()
+	events := make(chan protocol.Event, 16)
+	_, err := m.Submit(SubmitRequest{Files: []string{source}, Preset: "audio-to-mp3", OutputDir: output, Conflict: protocol.ConflictSkip, Events: func(e protocol.Event) { events <- e }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := waitJob(t, events)
+	if job.Files[0].State != "failed" || job.Files[0].Error == nil || job.Files[0].Error.Code != "unsupported" {
+		t.Fatalf("unexpected file result: %+v", job.Files[0])
+	}
+}
+
+func TestManagerMediaProbeUsesJobContextOnCancellation(t *testing.T) {
+	source := mediaFixture(t, "input.mp4")
+	probeStarted := make(chan struct{})
+	media := &fakeMediaEngine{kind: engine.MediaVideo, probeStarted: probeStarted, probeBlock: true}
+	r := registry.New()
+	r.Register(media)
+	m := NewManagerWithRegistry(r)
+	defer m.Close()
+	events := make(chan protocol.Event, 16)
+	id, err := m.Submit(SubmitRequest{Files: []string{source}, Preset: "audio-to-mp3", OutputDir: t.TempDir(), Conflict: protocol.ConflictRename, Events: func(e protocol.Event) { events <- e }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-probeStarted:
+	case <-time.After(3 * time.Second):
+		t.Fatal("media probe did not start")
+	}
+	if err := m.Cancel(id); err != nil {
+		t.Fatal(err)
+	}
+	job := waitJob(t, events)
+	if job.State != "cancelled" {
+		t.Fatalf("job state = %q, want cancelled", job.State)
+	}
+	media.mu.Lock()
+	probeCtx := media.probeCtx
+	media.mu.Unlock()
+	if probeCtx == nil || probeCtx.Err() == nil {
+		t.Fatal("probe did not receive cancelled job context")
+	}
+}
+
+func TestManagerMediaConversionCancellationRemovesTemporaryOutput(t *testing.T) {
+	source := mediaFixture(t, "input.mp4")
+	output := t.TempDir()
+	started := make(chan struct{})
+	media := &fakeMediaEngine{kind: engine.MediaVideo, convertBlock: true, convertStarted: started}
+	r := registry.New()
+	r.Register(media)
+	m := NewManagerWithRegistry(r)
+	defer m.Close()
+	events := make(chan protocol.Event, 16)
+	id, err := m.Submit(SubmitRequest{Files: []string{source}, Preset: "audio-to-mp3", OutputDir: output, Conflict: protocol.ConflictRename, Events: func(e protocol.Event) { events <- e }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("media conversion did not start")
+	}
+	if err := m.Cancel(id); err != nil {
+		t.Fatal(err)
+	}
+	job := waitJob(t, events)
+	if job.State != "cancelled" || job.Files[0].State != "cancelled" {
+		t.Fatalf("unexpected job: %+v", job)
+	}
+	entries, _ := os.ReadDir(output)
+	if len(entries) != 0 {
+		t.Fatalf("temporary output remains: %v", entries)
+	}
+}
+
+func TestManagerMediaConflictPolicies(t *testing.T) {
+	for _, policy := range []protocol.ConflictPolicy{protocol.ConflictRename, protocol.ConflictSkip, protocol.ConflictOverwrite} {
+		t.Run(string(policy), func(t *testing.T) {
+			source := mediaFixture(t, "input.mp4")
+			output := t.TempDir()
+			if err := os.WriteFile(filepath.Join(output, "input.mp3"), []byte("existing"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			media := &fakeMediaEngine{kind: engine.MediaVideo}
+			r := registry.New()
+			r.Register(media)
+			m := NewManagerWithRegistry(r)
+			defer m.Close()
+			events := make(chan protocol.Event, 16)
+			_, err := m.Submit(SubmitRequest{Files: []string{source}, Preset: "audio-to-mp3", OutputDir: output, Conflict: policy, Events: func(e protocol.Event) { events <- e }})
+			if err != nil {
+				t.Fatal(err)
+			}
+			job := waitJob(t, events)
+			if policy == protocol.ConflictSkip && job.Files[0].State != "skipped" {
+				t.Fatalf("state = %q", job.Files[0].State)
+			}
+			if policy != protocol.ConflictSkip && job.Files[0].State != "done" {
+				t.Fatalf("state = %q", job.Files[0].State)
+			}
+		})
 	}
 }
 
