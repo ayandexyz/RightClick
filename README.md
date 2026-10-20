@@ -36,6 +36,18 @@ SVG inputs use the dedicated `rsvg-convert` renderer and can be rasterized to PN
 
 The SVG renderer requires `rsvg-convert`. ImageMagick is additionally required for `svg-to-jpeg` and `svg-to-webp`. Raster-to-SVG conversion is unsupported. SVG input is validated locally and external resources, including file, HTTP/HTTPS, data, and traversal-like references, are rejected.
 
+### PDF conversions
+
+PDF inputs are rasterized with Poppler's `pdftocairo` at 150 DPI, and every page is written as a separate numbered output (`name-1.png`, `name-2.png`, …):
+
+| Output format | Preset |
+| --- | --- |
+| PNG | `pdf-to-png` |
+| JPEG | `pdf-to-jpeg` |
+| WebP | `pdf-to-webp` |
+
+`pdftocairo` is required for all PDF conversions. ImageMagick is used only for `pdf-to-webp`, where the rendered PNG pages are converted to WebP; PNG and JPEG outputs come straight from `pdftocairo`. Page selection and page-range options are not supported, so a document always produces one output per page. Converting to PDF, video, audio, or SVG is unsupported.
+
 ### Video conversions
 
 Video conversions use FFmpeg. Video inputs can also be converted to audio outputs, but audio inputs never advertise video targets.

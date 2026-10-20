@@ -25,6 +25,7 @@ SUPPORTED_MIME_TYPES = {
     "audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav", "audio/flac",
     "audio/aac", "audio/mp4", "audio/x-m4a", "audio/ogg", "audio/opus",
     "audio/aiff", "audio/x-aiff", "audio/ac3", "audio/amr", "audio/x-ms-wma",
+    "application/pdf", "application/x-pdf",
 }
 
 try:
