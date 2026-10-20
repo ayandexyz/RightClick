@@ -162,13 +162,12 @@ func (m *Manager) Cancel(id string) error {
 		return fmt.Errorf("job not found")
 	}
 	j.publicationMu.Lock()
-	defer j.publicationMu.Unlock()
-	if !j.published {
-		j.cancel()
-		for _, plan := range j.pending {
-			plan.Rollback()
-		}
+	if j.published {
+		j.publicationMu.Unlock()
+		return nil
 	}
+	j.cancel()
+	j.publicationMu.Unlock()
 	return nil
 }
 
@@ -322,8 +321,8 @@ func (m *Manager) run(j *job) {
 	beforePublish()
 	j.publicationMu.Lock()
 	if j.ctx.Err() != nil {
-		for _, plan := range j.pending {
-			plan.Rollback()
+		for i := len(j.pending) - 1; i >= 0; i-- {
+			j.pending[i].Rollback()
 		}
 		j.pending = nil
 	} else {
@@ -371,8 +370,6 @@ func (m *Manager) run(j *job) {
 }
 
 func (m *Manager) convertMany(j *job, index int, file protocol.FileJob, route registry.MultiOutputEngine, source string, sourceFormat, target formats.Format, ext string) fileResult {
-	m.outputMu.Lock()
-	defer m.outputMu.Unlock()
 	outputDir := j.req.OutputDir
 	if outputDir == "" {
 		outputDir = filepath.Dir(source)
@@ -410,10 +407,12 @@ func (m *Manager) convertMany(j *job, index int, file protocol.FileJob, route re
 	}
 	plans := make([]engine.OutputPlan, len(pages))
 	removePlans := func() {
-		for _, plan := range plans {
-			plan.Rollback()
+		for i := len(plans) - 1; i >= 0; i-- {
+			plans[i].Rollback()
 		}
 	}
+	m.outputMu.Lock()
+	defer m.outputMu.Unlock()
 	for i, page := range pages {
 		clean := filepath.Clean(page)
 		info, statErr := os.Lstat(clean)
@@ -473,6 +472,12 @@ func (m *Manager) convertMany(j *job, index int, file protocol.FileJob, route re
 				return fileResult{index: index, file: file}
 			}
 		}
+	}
+	if j.ctx.Err() != nil {
+		removePlans()
+		file.Outputs = nil
+		file.State = "cancelled"
+		return fileResult{index: index, file: file}
 	}
 	j.publicationMu.Lock()
 	if j.ctx.Err() != nil {
@@ -559,6 +564,8 @@ func (m *Manager) convertFile(j *job, index int, source string, target formats.F
 		file.State = "cancelled"
 		return fileResult{index: index, file: file}
 	}
+	j.publicationMu.Lock()
+	defer j.publicationMu.Unlock()
 	output, err := plan.Commit()
 	if err != nil {
 		plan.Rollback()
@@ -566,15 +573,12 @@ func (m *Manager) convertFile(j *job, index int, source string, target formats.F
 		file.Error = &protocol.FileError{Code: "internal", Message: err.Error()}
 		return fileResult{index: index, file: file}
 	}
-	j.publicationMu.Lock()
 	if j.ctx.Err() != nil {
-		j.publicationMu.Unlock()
 		plan.Rollback()
 		file.State = "cancelled"
 		return fileResult{index: index, file: file}
 	}
 	j.pending = append(j.pending, plan)
-	j.publicationMu.Unlock()
 	file.State, file.Progress, file.Outputs = "done", 1, []string{output}
 	return fileResult{index: index, file: file}
 }

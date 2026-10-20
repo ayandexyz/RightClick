@@ -28,6 +28,7 @@ type fakeMultiConverter struct {
 	fail          bool
 	outsidePath   string
 	rendered      chan struct{}
+	started       chan<- struct{}
 	release       <-chan struct{}
 	destinationCh chan string
 	outputMode    string
@@ -52,6 +53,9 @@ func (f *fakeMultiConverter) ConvertMany(ctx context.Context, _ string, _ format
 		default:
 			close(f.rendered)
 		}
+	}
+	if f.started != nil {
+		f.started <- struct{}{}
 	}
 	if f.release != nil {
 		select {
@@ -298,6 +302,116 @@ func TestManagerReservesRenameDestinationsForDuplicateStems(t *testing.T) {
 	entries, err := os.ReadDir(output)
 	if err != nil || len(entries) != 2 {
 		t.Fatalf("output entries = %v, err = %v", entries, err)
+	}
+}
+
+func TestManagerReservesSingleOutputRenameDestinationsDuringConcurrentConversion(t *testing.T) {
+	dir := t.TempDir()
+	firstDir := filepath.Join(dir, "first")
+	secondDir := filepath.Join(dir, "second")
+	for _, sourceDir := range []string{firstDir, secondDir} {
+		if err := os.MkdirAll(sourceDir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first := filepath.Join(firstDir, "image.png")
+	second := filepath.Join(secondDir, "image.png")
+	for _, source := range []string{first, second} {
+		if err := os.WriteFile(source, []byte("\x89PNG\r\n\x1a\n00000000"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	output := t.TempDir()
+	m := NewManager(&fakeConverter{})
+	defer m.Close()
+	events := make(chan protocol.Event, 16)
+	if _, err := m.Submit(SubmitRequest{Files: []string{first, second}, Preset: "image-to-jpeg", OutputDir: output, Conflict: protocol.ConflictRename, Events: func(e protocol.Event) { events <- e }}); err != nil {
+		t.Fatal(err)
+	}
+	job := waitJob(t, events)
+	want := []string{filepath.Join(output, "image.jpg"), filepath.Join(output, "image (1).jpg")}
+	var got []string
+	for _, file := range job.Files {
+		got = append(got, file.Outputs...)
+	}
+	if !reflect.DeepEqual(got, want) && !reflect.DeepEqual(got, []string{want[1], want[0]}) {
+		t.Fatalf("outputs = %v, want %v in either completion order", got, want)
+	}
+}
+
+func TestManagerCancelDefersPendingRollbackToJobCleanup(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "input.png")
+	if err := os.WriteFile(source, []byte("\x89PNG\r\n\x1a\n00000000"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := engine.PlanOutput(dir, source, "jpg", protocol.ConflictRename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(plan.Temp, []byte("converted"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := plan.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(&fakeConverter{})
+	defer m.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	j := &job{id: "job-pending", ctx: ctx, cancel: cancel, pending: []engine.OutputPlan{plan}}
+	m.mu.Lock()
+	m.jobs[j.id] = j
+	m.mu.Unlock()
+	if err := m.Cancel(j.id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(plan.Destination); err != nil {
+		t.Fatalf("Cancel rolled back pending output before workers stopped: %v", err)
+	}
+	plan.Rollback()
+	m.mu.Lock()
+	delete(m.jobs, j.id)
+	m.mu.Unlock()
+}
+
+func TestManagerAllowsMultiPageConversionsToOverlapBeforePublication(t *testing.T) {
+	dir := t.TempDir()
+	firstDir := filepath.Join(dir, "first")
+	secondDir := filepath.Join(dir, "second")
+	for _, sourceDir := range []string{firstDir, secondDir} {
+		if err := os.MkdirAll(sourceDir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first := filepath.Join(firstDir, "document.pdf")
+	second := filepath.Join(secondDir, "document.pdf")
+	for _, source := range []string{first, second} {
+		if err := os.WriteFile(source, []byte("%PDF-1.7"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	output := t.TempDir()
+	started := make(chan struct{}, 2)
+	release := make(chan struct{})
+	r := registry.New()
+	r.Register(&fakeMultiConverter{pages: 1, started: started, release: release})
+	m := NewManagerWithRegistry(r)
+	defer m.Close()
+	events := make(chan protocol.Event, 16)
+	if _, err := m.Submit(SubmitRequest{Files: []string{first, second}, Preset: "pdf-to-png", OutputDir: output, Conflict: protocol.ConflictRename, Events: func(e protocol.Event) { events <- e }}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		select {
+		case <-started:
+		case <-time.After(3 * time.Second):
+			t.Fatal("multi-page conversions did not overlap during rendering")
+		}
+	}
+	close(release)
+	job := waitJob(t, events)
+	if job.State != "completed" {
+		t.Fatalf("job = %+v", job)
 	}
 }
 
