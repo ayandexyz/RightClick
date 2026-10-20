@@ -63,6 +63,24 @@ type Target struct {
 	Reason   string `json:"reason,omitempty"`
 }
 
+// Operation describes a PDF tool applicable to the current selection, returned
+// by the operations method.
+type Operation struct {
+	ID      string `json:"id"`
+	Label   string `json:"label"`
+	Group   string `json:"group"`
+	Mode    string `json:"mode"`
+	Enabled bool   `json:"enabled"`
+	Reason  string `json:"reason,omitempty"`
+}
+
+// Params carries an operation's parameters. A nil field means "not provided",
+// so an operation can tell a missing parameter from a zero value.
+type Params struct {
+	Pages *string `json:"pages,omitempty"`
+	Angle *int    `json:"angle,omitempty"`
+}
+
 // Job represents the state of a conversion job.
 type Job struct {
 	ID       string    `json:"id"`

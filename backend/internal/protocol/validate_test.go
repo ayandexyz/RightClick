@@ -3,6 +3,7 @@ package protocol
 import (
 	"encoding/json"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -428,5 +429,95 @@ func TestValidateConvertAcceptsRecursiveFlag(t *testing.T) {
 	bad := json.RawMessage(`{"files":["/tmp/folder"],"preset":"image-to-jpeg","recursive":"yes"}`)
 	if err := ValidateRequest(Request{ID: 1, Method: "convert", Params: bad}); err == nil {
 		t.Fatal("non-boolean recursive accepted")
+	}
+}
+
+func TestValidateOperations(t *testing.T) {
+	tests := []struct {
+		name     string
+		params   string
+		wantCode string
+		wantMsg  string
+	}{
+		{name: "valid", params: `{"files":["/tmp/a.pdf"]}`},
+		{name: "several files", params: `{"files":["/tmp/a.pdf","/tmp/b.pdf"]}`},
+		{name: "empty files", params: `{"files":[]}`, wantCode: "bad_request", wantMsg: "files list cannot be empty"},
+		{name: "missing files", params: `{}`, wantCode: "bad_request", wantMsg: "files list cannot be empty"},
+		{name: "relative path", params: `{"files":["a.pdf"]}`, wantCode: "bad_request", wantMsg: "must be absolute"},
+		{name: "invalid json", params: `{`, wantCode: "bad_request", wantMsg: "invalid operations params"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ValidateRequest(Request{ID: 1, Method: "operations", Params: json.RawMessage(tc.params)})
+			if tc.wantCode == "" {
+				if got != nil {
+					t.Fatalf("ValidateRequest = %+v, want nil", got)
+				}
+				return
+			}
+			if got == nil {
+				t.Fatal("ValidateRequest = nil, want an error")
+			}
+			if got.Error.Code != tc.wantCode {
+				t.Fatalf("code = %q, want %q", got.Error.Code, tc.wantCode)
+			}
+			if !strings.Contains(got.Error.Message, tc.wantMsg) {
+				t.Fatalf("message = %q, want it to contain %q", got.Error.Message, tc.wantMsg)
+			}
+		})
+	}
+}
+
+func TestValidateRunOperation(t *testing.T) {
+	tests := []struct {
+		name     string
+		params   string
+		wantCode string
+		wantMsg  string
+	}{
+		{name: "valid", params: `{"op":"pdf-merge","files":["/tmp/a.pdf","/tmp/b.pdf"]}`},
+		{name: "with params", params: `{"op":"pdf-extract","files":["/tmp/a.pdf"],"params":{"pages":"1-3"}}`},
+		{name: "with angle", params: `{"op":"pdf-rotate","files":["/tmp/a.pdf"],"params":{"angle":90}}`},
+		{name: "with output dir", params: `{"op":"pdf-merge","files":["/tmp/a.pdf","/tmp/b.pdf"],"output_dir":"/tmp/out"}`},
+		{name: "with conflict", params: `{"op":"pdf-merge","files":["/tmp/a.pdf","/tmp/b.pdf"],"on_conflict":"overwrite"}`},
+		{name: "missing op", params: `{"files":["/tmp/a.pdf"]}`, wantCode: "bad_request", wantMsg: "op is required"},
+		{name: "empty op", params: `{"op":"","files":["/tmp/a.pdf"]}`, wantCode: "bad_request", wantMsg: "op is required"},
+		{name: "empty files", params: `{"op":"pdf-merge","files":[]}`, wantCode: "bad_request", wantMsg: "files list cannot be empty"},
+		{name: "relative file", params: `{"op":"pdf-merge","files":["a.pdf","b.pdf"]}`, wantCode: "bad_request", wantMsg: "must be absolute"},
+		{name: "relative output dir", params: `{"op":"pdf-merge","files":["/tmp/a.pdf","/tmp/b.pdf"],"output_dir":"out"}`, wantCode: "bad_request", wantMsg: "output_dir must be absolute"},
+		{name: "bad conflict", params: `{"op":"pdf-merge","files":["/tmp/a.pdf","/tmp/b.pdf"],"on_conflict":"clobber"}`, wantCode: "bad_request", wantMsg: "invalid on_conflict"},
+		{name: "angle not an integer", params: `{"op":"pdf-rotate","files":["/tmp/a.pdf"],"params":{"angle":"90"}}`, wantCode: "bad_request", wantMsg: "invalid run_operation params"},
+		{name: "invalid json", params: `{`, wantCode: "bad_request", wantMsg: "invalid run_operation params"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ValidateRequest(Request{ID: 1, Method: "run_operation", Params: json.RawMessage(tc.params)})
+			if tc.wantCode == "" {
+				if got != nil {
+					t.Fatalf("ValidateRequest = %+v, want nil", got)
+				}
+				return
+			}
+			if got == nil {
+				t.Fatal("ValidateRequest = nil, want an error")
+			}
+			if got.Error.Code != tc.wantCode {
+				t.Fatalf("code = %q, want %q", got.Error.Code, tc.wantCode)
+			}
+			if !strings.Contains(got.Error.Message, tc.wantMsg) {
+				t.Fatalf("message = %q, want it to contain %q", got.Error.Message, tc.wantMsg)
+			}
+		})
+	}
+}
+
+// The new methods must not swallow genuinely unknown ones.
+func TestValidateRequestStillRejectsUnknownMethods(t *testing.T) {
+	got := ValidateRequest(Request{ID: 1, Method: "run_operations", Params: json.RawMessage(`{}`)})
+	if got == nil {
+		t.Fatal("a misspelled method should be rejected")
+	}
+	if got.Error.Code != "bad_request" {
+		t.Fatalf("code = %q, want bad_request", got.Error.Code)
 	}
 }

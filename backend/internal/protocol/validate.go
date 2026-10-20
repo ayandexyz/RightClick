@@ -74,6 +74,10 @@ func ValidateRequest(req Request) *Error {
 		code, msg = validateTargets(req.Params)
 	case "convert":
 		code, msg = validateConvert(req.Params)
+	case "operations":
+		code, msg = validateOperations(req.Params)
+	case "run_operation":
+		code, msg = validateRunOperation(req.Params)
 	case "cancel":
 		code, msg = validateCancel(req.Params)
 	case "menu":
@@ -192,10 +196,8 @@ func validateConvert(params json.RawMessage) (string, string) {
 	if p.OutputDir != "" && !filepath.IsAbs(p.OutputDir) {
 		return "bad_request", "output_dir must be absolute"
 	}
-	if p.OnConflict != "" {
-		if p.OnConflict != "rename" && p.OnConflict != "skip" && p.OnConflict != "overwrite" {
-			return "bad_request", fmt.Sprintf("invalid on_conflict: %s (must be rename, skip, or overwrite)", p.OnConflict)
-		}
+	if p.OnConflict != "" && !isConflictPolicy(p.OnConflict) {
+		return "bad_request", fmt.Sprintf("invalid on_conflict: %s (must be rename, skip, or overwrite)", p.OnConflict)
 	}
 	if p.Quality != nil && (*p.Quality < 1 || *p.Quality > 100) {
 		return "bad_request", "quality must be between 1 and 100"
@@ -213,6 +215,64 @@ func validateConvert(params json.RawMessage) (string, string) {
 		}
 	}
 	return "", ""
+}
+
+// validateOperations checks the shape of an operations request. Which
+// operations apply to the selection is decided by the server, not here.
+func validateOperations(params json.RawMessage) (string, string) {
+	var p struct {
+		Files []string `json:"files"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return "bad_request", "invalid operations params"
+	}
+	if len(p.Files) == 0 {
+		return "bad_request", "files list cannot be empty"
+	}
+	for _, file := range p.Files {
+		if !filepath.IsAbs(file) {
+			return "bad_request", fmt.Sprintf("path must be absolute: %s", file)
+		}
+	}
+	return "", ""
+}
+
+// validateRunOperation checks the shape of a run_operation request. Which
+// parameters an operation requires, and whether it exists at all, is decided by
+// the pdfops catalogue.
+func validateRunOperation(params json.RawMessage) (string, string) {
+	var p struct {
+		Op         string   `json:"op"`
+		Files      []string `json:"files"`
+		Params     Params   `json:"params"`
+		OutputDir  string   `json:"output_dir,omitempty"`
+		OnConflict string   `json:"on_conflict,omitempty"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return "bad_request", "invalid run_operation params"
+	}
+	if p.Op == "" {
+		return "bad_request", "op is required"
+	}
+	if len(p.Files) == 0 {
+		return "bad_request", "files list cannot be empty"
+	}
+	for _, file := range p.Files {
+		if !filepath.IsAbs(file) {
+			return "bad_request", fmt.Sprintf("path must be absolute: %s", file)
+		}
+	}
+	if p.OutputDir != "" && !filepath.IsAbs(p.OutputDir) {
+		return "bad_request", "output_dir must be absolute"
+	}
+	if p.OnConflict != "" && !isConflictPolicy(p.OnConflict) {
+		return "bad_request", fmt.Sprintf("invalid on_conflict: %s (must be rename, skip, or overwrite)", p.OnConflict)
+	}
+	return "", ""
+}
+
+func isConflictPolicy(value string) bool {
+	return value == string(ConflictRename) || value == string(ConflictSkip) || value == string(ConflictOverwrite)
 }
 
 func validateEmptyParams(params json.RawMessage) (string, string) {
