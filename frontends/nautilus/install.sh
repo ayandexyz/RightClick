@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import glob
 import os
 import shutil
 import subprocess
@@ -9,8 +10,48 @@ ROOT = Path(__file__).resolve().parents[2]
 BACKEND = ROOT / "backend"
 FRONTEND = Path(__file__).parent
 
+PACKAGES = {
+    "arch": ["pacman", "-S", "--needed", "python-nautilus"],
+    "debian": ["apt-get", "install", "-y", "python3-nautilus"],
+}
+
+
+def distro_family():
+    info = {}
+    try:
+        for line in Path("/etc/os-release").read_text().splitlines():
+            key, _, value = line.partition("=")
+            info[key] = value.strip('"')
+    except OSError:
+        return None
+    ids = [info.get("ID", "")] + info.get("ID_LIKE", "").split()
+    for name in ids:
+        if name in ("arch", "omarchy"):
+            return "arch"
+        if name in ("debian", "ubuntu"):
+            return "debian"
+    return None
+
+
+def has_nautilus_python():
+    return bool(glob.glob("/usr/lib*/**/nautilus/extensions-*/libnautilus-python.so", recursive=True))
+
+
+def ensure_nautilus_python():
+    if has_nautilus_python():
+        return
+    family = distro_family()
+    if family is None:
+        print("warning: nautilus-python not found; install it with your package manager")
+        return
+    command = ["sudo", *PACKAGES[family]]
+    print("nautilus-python is missing; running: " + " ".join(command))
+    if subprocess.run(command, check=False).returncode != 0:
+        print("warning: could not install nautilus-python; run the command above manually")
+
 
 def main():
+    ensure_nautilus_python()
     build_dir = Path(tempfile.mkdtemp(prefix="file-converter-build-"))
     try:
         binary = build_dir / "fcd"
