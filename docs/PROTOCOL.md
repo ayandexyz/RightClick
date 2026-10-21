@@ -215,6 +215,17 @@ present; `sizes` is omitted entirely when it could not be read, so a client must
 not treat a missing `sizes` as pages of zero size. Errors: `password_required`,
 `invalid_pdf`, `bad_request`.
 
+### `pdf_find`
+`params: {file, terms: [string], password?: string}` → `{matches: [{page, x, y, w, h, term}]}`
+
+Finds text in a document and reports a box for each match, as fractions (0..1)
+of the page as the reader sees it, origin at the top left, `/Rotate` included.
+Matching ignores case, matches inside words and across consecutive words, and
+returns one box per line when a phrase wraps. A word hyphenated across a line is
+not rejoined, and a scanned page has no text to find. At most 50 terms of 1-100
+characters. The search is read-only; terms are not logged or cached. Errors:
+`password_required`, `invalid_pdf`, `bad_request`, `unsupported` (no Poppler).
+
 ### `pdf_thumbnails`
 `params: {file, pages: [int], width?: int, password?: string}` → `{pages: [{page, path, w, h}]}`
 

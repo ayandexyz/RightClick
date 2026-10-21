@@ -318,6 +318,7 @@ func (s *Server) handle(conn net.Conn) {
 					Layout:           pdfops.LayoutParams{PerSheet: p.Params.Layout.PerSheet, Orientation: p.Params.Layout.Orientation, Margin: p.Params.Layout.Margin, Border: p.Params.Layout.Border},
 					Metadata:         pdfops.MetadataParams{Title: p.Params.Metadata.Title, Author: p.Params.Metadata.Author, Subject: p.Params.Metadata.Subject, Keywords: p.Params.Metadata.Keywords, Custom: p.Params.Metadata.Custom},
 					PDFA:             p.Params.PDFA,
+					Redact:           redactParams(p.Params.Redact),
 					Stamp: pdfops.StampParams{
 						Kind: p.Params.Stamp.Kind, Text: p.Params.Stamp.Text, Image: p.Params.Stamp.Image,
 						Position: p.Params.Stamp.Position, Opacity: p.Params.Stamp.Opacity, Rotation: p.Params.Stamp.Rotation,
@@ -771,4 +772,13 @@ func (s *Server) lockedBase() string {
 		return ""
 	}
 	return filepath.Join(s.deps.RuntimeDir, "file-converter")
+}
+
+// redactParams converts the wire form of a redaction request.
+func redactParams(p protocol.RedactParams) pdfops.RedactParams {
+	areas := make([]pdfops.RedactArea, len(p.Areas))
+	for i, a := range p.Areas {
+		areas[i] = pdfops.RedactArea{Page: a.Page, X: a.X, Y: a.Y, W: a.W, H: a.H}
+	}
+	return pdfops.RedactParams{Areas: areas, Terms: p.Terms, DPI: p.DPI}
 }

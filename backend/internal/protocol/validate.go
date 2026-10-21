@@ -300,6 +300,9 @@ func validateRedact(p RedactParams) (string, string) {
 	if len(p.Areas) > 500 {
 		return "bad_request", "redact allows at most 500 areas"
 	}
+	if len(p.Terms) > 50 {
+		return "bad_request", "redact allows at most 50 terms"
+	}
 	if p.DPI != 0 && (p.DPI < 72 || p.DPI > 300) {
 		return "bad_request", "dpi must be between 72 and 300"
 	}

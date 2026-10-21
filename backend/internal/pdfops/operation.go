@@ -53,9 +53,12 @@ type RedactArea struct {
 
 // FindMatch is a search result in visual page coordinates, expressed as page fractions.
 type FindMatch struct {
-	Page       int
-	X, Y, W, H float64
-	Term       string
+	Page int     `json:"page"`
+	X    float64 `json:"x"`
+	Y    float64 `json:"y"`
+	W    float64 `json:"w"`
+	H    float64 `json:"h"`
+	Term string  `json:"term"`
 }
 
 // PageItem is one page of an edit: a source page in the original document, with

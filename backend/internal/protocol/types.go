@@ -97,7 +97,7 @@ type Params struct {
 	Resize           ResizeParams   `json:"resize,omitempty"`
 	Layout           LayoutParams   `json:"layout,omitempty"`
 	Metadata         MetadataParams `json:"metadata,omitempty"`
-	PDFA             string          `json:"pdfa,omitempty"`
+	PDFA             string         `json:"pdfa,omitempty"`
 	Redact           RedactParams   `json:"redact,omitempty"`
 }
 
