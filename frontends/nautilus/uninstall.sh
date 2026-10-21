@@ -12,6 +12,13 @@ def main():
         else:
             path.unlink(missing_ok=True)
     (Path.home() / ".local/bin/fcd").unlink(missing_ok=True)
+    shutil.rmtree(Path.home() / ".local/share/file-converter/studio", ignore_errors=True)
+    (Path.home() / ".local/bin/fc-pdf-studio").unlink(missing_ok=True)
+    desktop = Path.home() / ".local/share/applications/io.fileconverter.PdfStudio.desktop"
+    desktop.unlink(missing_ok=True)
+    database = shutil.which("update-desktop-database")
+    if database:
+        subprocess.run([database, str(desktop.parent)], check=False)
     unit = Path.home() / ".config/systemd/user/fcd.service"
     subprocess.run(["systemctl", "--user", "disable", "--now", "fcd.service"], check=False)
     unit.unlink(missing_ok=True)

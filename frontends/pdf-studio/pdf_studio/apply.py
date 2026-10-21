@@ -56,16 +56,6 @@ def reduce_job_event(state, event):
     )
 
 
-def build_output_options(folder, conflict):
-    """Return optional output fields accepted by the daemon."""
-    options = {}
-    if folder:
-        options["output_dir"] = folder
-    if conflict:
-        options["on_conflict"] = conflict
-    return options
-
-
 def friendly_apply_error(code, message):
     return friendly_error(code, message)
 

@@ -50,6 +50,51 @@ def ensure_nautilus_python():
         print("warning: could not install nautilus-python; run the command above manually")
 
 
+def toolkit_available():
+    try:
+        import gi
+
+        gi.require_version("Gtk", "4.0")
+        gi.require_version("Adw", "1")
+        from gi.repository import Adw, Gtk
+        return (Gtk.get_major_version(), Gtk.get_minor_version()) >= (4, 12) and (Adw.get_major_version(), Adw.get_minor_version()) >= (1, 5)
+    except (ImportError, ValueError):
+        return False
+
+
+def install_studio():
+    if not toolkit_available():
+        print("PDF Studio skipped: GTK 4.12+ and libadwaita 1.5+ with PyGObject are required")
+        print("  Arch: install gtk4 libadwaita python-gobject")
+        print("  Debian/Ubuntu: install gir1.2-gtk-4.0 gir1.2-adw-1 python3-gi")
+        return
+    studio_dir = Path.home() / ".local/share/file-converter/studio"
+    studio_dir.mkdir(parents=True, exist_ok=True)
+    for name in ("pdf_studio",):
+        target = studio_dir / name
+        shutil.rmtree(target, ignore_errors=True)
+        shutil.copytree(FRONTEND.parent / "pdf-studio" / name, target)
+    client = studio_dir / "fc_client"
+    shutil.rmtree(client, ignore_errors=True)
+    shutil.copytree(ROOT / "frontends" / "common" / "fc_client", client)
+    launcher = Path.home() / ".local/bin/fc-pdf-studio"
+    launcher.parent.mkdir(parents=True, exist_ok=True)
+    launcher.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os, sys\n"
+        "sys.path.insert(0, os.path.expanduser('~/.local/share/file-converter/studio'))\n"
+        "from pdf_studio.cli import main\n"
+        "sys.exit(main())\n"
+    )
+    launcher.chmod(0o755)
+    applications = Path.home() / ".local/share/applications"
+    applications.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(FRONTEND.parent / "pdf-studio" / "io.fileconverter.PdfStudio.desktop", applications / "io.fileconverter.PdfStudio.desktop")
+    if shutil.which("update-desktop-database"):
+        subprocess.run(["update-desktop-database", str(applications)], check=False)
+    print("PDF Studio installed")
+
+
 def main():
     ensure_nautilus_python()
     build_dir = Path(tempfile.mkdtemp(prefix="file-converter-build-"))
@@ -79,6 +124,7 @@ def main():
         subprocess.run(["systemctl", "--user", "restart", "fcd.service"], check=False)
         subprocess.run(["nautilus", "-q"], check=False)
         print("File Converter Nautilus integration installed")
+        install_studio()
         report_missing_engines()
     finally:
         shutil.rmtree(build_dir, ignore_errors=True)

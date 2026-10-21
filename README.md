@@ -76,6 +76,14 @@ The daemon also prunes the cache at start-up and after every render batch. Witho
 `pdftocairo` installed the daemon keeps serving every other method and reports
 thumbnails as unavailable.
 
+## PDF Studio
+
+Install the Nautilus integration with `./frontends/nautilus/install.sh`. When GTK 4.12+, libadwaita 1.5+, and PyGObject are available, the installer also installs PDF Studio at `~/.local/bin/fc-pdf-studio` and adds **PDF Studio** to the applications menu. In Nautilus, select one or more local PDFs and choose **PDF Tools → Customise…**. The Studio is never registered as the default PDF opener.
+
+If the GTK dependencies are unavailable, the Nautilus extension and daemon still install normally; only the Studio files are skipped. Remove the integration and Studio files with `./frontends/nautilus/uninstall.sh`.
+
+PDF Studio supports page reordering through its toolbar buttons and shortcuts: `Alt+Left`/`Alt+Right` moves the selection one place, while `Alt+Home`/`Alt+End` moves it to the beginning or end. Drag-and-drop is intentionally not required, so these controls remain reliable across GTK versions.
+
 ## Backend status
 
 The Linux Go backend supports image conversion plus FFmpeg-backed video and audio conversion. Image targets are filtered by the installed ImageMagick build; media targets require both `ffmpeg` and `ffprobe`. These engines are independent: missing FFmpeg/ffprobe does not disable ImageMagick image conversion, and missing ImageMagick does not disable media conversion:

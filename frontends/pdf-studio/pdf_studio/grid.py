@@ -129,7 +129,7 @@ if GTK_AVAILABLE:
                 details.append(f"rotated {row.item.rotate}°")
             else:
                 self._rotation.set_visible(False)
-            self.set_accessible_name(", ".join(details))
+            self._caption.set_tooltip_text(", ".join(details))
 
         def _set_thumbnail(self, thumbnail):
             if thumbnail:
@@ -189,6 +189,9 @@ if GTK_AVAILABLE:
                 row = _GtkRow(item, position)
                 self._rows[item.uid] = row
                 self.store.append(row)
+            for index, item in enumerate(self.model.items):
+                if item.uid in self.model.selection:
+                    self.selection.select_item(index, False)
             if self._loader:
                 self._loader.stop()
             if self._loader_factory:

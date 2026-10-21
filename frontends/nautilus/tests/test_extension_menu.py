@@ -278,6 +278,34 @@ class PDFToolsMenuTests(ExtensionMenuTests):
             menu = module.FileConverterMenuProvider().get_file_items([FakeFile("/tmp/a.pdf", "application/pdf")])
         self.assertEqual([item.label for item in menu], ["Convert to"])
 
+    def test_studio_is_last_for_pdf_selection_and_preserves_order(self):
+        module = self.module
+        with mock.patch.object(module, "_studio_available", return_value=True), mock.patch.object(module, "_studio_launcher") as launcher:
+            launcher.return_value.is_file.return_value = True
+            provider = self.provider_with([], [op("pdf-reverse", "Reverse pages")])
+            paths = ["/tmp/b.pdf", "/tmp/a.pdf"]
+            menu = provider.get_file_items([FakeFile(path, "application/pdf") for path in paths])
+        self.assertEqual(menu[0].submenu.items[-1].label, "Customise…")
+        with mock.patch.object(module, "_spawn_helper") as spawn:
+            menu[0].submenu.items[-1].activate()
+        spawn.assert_called_once_with("--studio", *paths)
+
+    def test_studio_is_hidden_when_launcher_is_missing(self):
+        module = self.module
+        provider = self.provider_with([], [op("pdf-reverse", "Reverse pages")])
+        with mock.patch.object(module, "_studio_launcher") as launcher:
+            launcher.return_value.is_file.return_value = False
+            menu = provider.get_file_items([FakeFile("/tmp/a.pdf", "application/pdf")])
+        self.assertNotIn("Customise…", [item.label for item in menu[0].submenu.items])
+
+    def test_studio_is_hidden_for_images(self):
+        module = self.module
+        provider = self.provider_with([], [op("pdf-from-images", "Images to PDF", group="import")])
+        with mock.patch.object(module, "_studio_launcher") as launcher:
+            launcher.return_value.is_file.return_value = True
+            menu = provider.get_file_items([FakeFile("/tmp/a.png")])
+        self.assertNotIn("Customise…", [item.label for item in menu[0].submenu.items])
+
     def test_activating_an_operation_spawns_the_helper_with_op_and_paths(self):
         module = self.module
         provider = self.provider_with([], [op("pdf-reverse", "Reverse pages")])

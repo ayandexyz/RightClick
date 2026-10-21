@@ -86,4 +86,55 @@ def range_box_state(model, text):
     return RangeBoxState(True, text)
 
 
-__all__ = ["ACTION_TABLE", "RangeBoxState", "dispatch_action", "range_box_state"]
+SHORTCUTS = {
+    "select-all": "<Primary>a",
+    "select-none": "<Primary><Shift>a",
+    "rotate-left": "<Primary>[",
+    "rotate-right": "<Primary>]",
+    "delete": "Delete",
+    "duplicate": "<Primary>d",
+    "insert-blank": "<Primary><Shift>b",
+    "undo": "<Primary>z",
+    "redo": "<Primary><Shift>z",
+    "move-left": "<Alt>Left",
+    "move-right": "<Alt>Right",
+    "move-start": "<Alt>Home",
+    "move-end": "<Alt>End",
+}
+
+
+def action_label(action_id):
+    return action_id.replace("-", " ").title()
+
+
+def action_buttons(model, on_action):
+    """Build a GTK toolbar when GTK is available, otherwise return ``None``.
+
+    The model/action catalogue remains usable without GTK; this helper only
+    provides the reliable button fallback for reordering and page edits.
+    """
+    try:
+        import gi
+        gi.require_version("Gtk", "4.0")
+        from importlib import import_module
+        Gtk = import_module("gi.repository.Gtk")
+    except (ImportError, ValueError):
+        return None
+    box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+    box.set_margin_start(8)
+    box.set_margin_end(8)
+    box.set_margin_top(8)
+    box.set_margin_bottom(8)
+    ids = ("undo", "redo", "rotate-left", "rotate-right", "delete", "duplicate",
+           "insert-blank", "move-left", "move-right", "move-start", "move-end")
+    for action_id in ids:
+        button = Gtk.Button(label=action_label(action_id))
+        button.set_tooltip_text(f"{action_label(action_id)} ({SHORTCUTS.get(action_id, '')})")
+        button.set_action_name(f"studio.{action_id}")
+        button.connect("clicked", lambda _button, name=action_id: on_action(name))
+        button._studio_action_id = action_id
+        box.append(button)
+    return box
+
+
+__all__ = ["ACTION_TABLE", "SHORTCUTS", "RangeBoxState", "action_buttons", "action_label", "dispatch_action", "range_box_state"]

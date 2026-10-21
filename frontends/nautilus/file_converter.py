@@ -1,6 +1,8 @@
 import logging
 import os
+import subprocess
 import sys
+from pathlib import Path
 
 _here = os.path.dirname(__file__)
 if _here not in sys.path:
@@ -11,9 +13,12 @@ from fc_client.daemon import ensure_daemon
 from fc_client.messages import friendly_error
 from fc_client.notify import send
 
+
 log = logging.getLogger("file_converter")
 if os.environ.get("FC_DEBUG") == "1":
     logging.basicConfig(level=logging.DEBUG)
+
+PDF_MIME_TYPES = {"application/pdf", "application/x-pdf"}
 
 SUPPORTED_MIME_TYPES = {
     "image/png", "image/jpeg", "image/webp", "image/jxl", "image/avif",
@@ -39,6 +44,14 @@ try:
 except ImportError:
     GObject = None
     Nautilus = None
+
+
+def _studio_launcher():
+    return Path.home() / ".local/bin/fc-pdf-studio"
+
+
+def _studio_available():
+    return _studio_launcher().is_file()
 
 
 def _path(file_info):
@@ -85,12 +98,12 @@ class FileConverterMenuProvider(*((GObject.GObject, Nautilus.MenuProvider) if Na
             top.set_submenu(submenu)
             items.append(top)
 
-        pdf_tools = self._pdf_tools_menu(client, paths)
+        pdf_tools = self._pdf_tools_menu(client, paths, all(file_info.get_mime_type() in PDF_MIME_TYPES for file_info in files))
         if pdf_tools is not None:
             items.append(pdf_tools)
         return items
 
-    def _pdf_tools_menu(self, client, paths):
+    def _pdf_tools_menu(self, client, paths, all_pdfs):
         """Build the PDF Tools submenu, or return None when it does not apply.
 
         Studio operations need a page selection or an angle that the Nautilus
@@ -111,13 +124,17 @@ class FileConverterMenuProvider(*((GObject.GObject, Nautilus.MenuProvider) if Na
             return None
 
         instant = [op for op in operations if op.enabled and op.mode == "instant"]
-        if not instant:
+        if not instant and not (all_pdfs and _studio_available()):
             return None
         submenu = Nautilus.Menu()
         for op in instant:
-            item = Nautilus.MenuItem(name=f"FileConverter::pdf::{op.id}", label=op.label)
+            item = Nautilus.MenuItem(name=f"FileConverter::pdf::{op.id}", label=op.label)  # type: ignore[union-attr]
             item.connect("activate", self._activate_operation, paths, op.id)
             submenu.append_item(item)
+        if all_pdfs and _studio_available():
+            studio = Nautilus.MenuItem(name="FileConverter::pdf::studio", label="Customise…")  # type: ignore[union-attr]
+            studio.connect("activate", self._activate_studio, paths)
+            submenu.append_item(studio)
         top = Nautilus.MenuItem(name="FileConverter::PDFTools", label="PDF Tools")
         top.set_submenu(submenu)
         return top
@@ -127,6 +144,9 @@ class FileConverterMenuProvider(*((GObject.GObject, Nautilus.MenuProvider) if Na
 
     def _activate_operation(self, _item, paths, op):
         _spawn_helper("--operation", op, *paths)
+
+    def _activate_studio(self, _item, paths):
+        _spawn_helper("--studio", *paths)
 
     @staticmethod
     def _convert(paths, preset):
@@ -292,3 +312,6 @@ if __name__ == "__main__":
         FileConverterMenuProvider._convert(sys.argv[3:], sys.argv[2])
     elif sys.argv[1:2] == ["--operation"] and len(sys.argv) > 3:
         FileConverterMenuProvider._run_operation(sys.argv[3:], sys.argv[2])
+    elif sys.argv[1:2] == ["--studio"] and len(sys.argv) > 1:
+        launcher = _studio_launcher()
+        subprocess.Popen([str(launcher), *sys.argv[2:]], start_new_session=True)

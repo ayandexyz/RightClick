@@ -13,6 +13,15 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, GLib, Gtk  # noqa: E402
+from importlib import import_module
+
+_Gio = import_module("gi.repository.Gio")
+
+from .grid import PageGrid  # noqa: E402
+from .model import EditModel  # noqa: E402
+from .requests import edit_request  # noqa: E402
+from .toolbar import ACTION_TABLE, SHORTCUTS, dispatch_action, range_box_state  # noqa: E402
+from .thumbnails import ThumbnailLoader  # noqa: E402
 
 from fc_client.client import FcClient  # noqa: E402
 from fc_client.daemon import ensure_daemon, socket_path  # noqa: E402
@@ -58,11 +67,18 @@ class StudioWindow(Adw.ApplicationWindow):
         self._status.set_child(self._action)
         self._stack.add_named(self._status, "status")
         self._ready = Adw.StatusPage(icon_name="document-edit-symbolic")
-        self._apply_button = Gtk.Button(label="Apply", halign=Gtk.Align.CENTER)
-        self._apply_button.add_css_class("suggested-action")
-        self._apply_button.connect("clicked", self._on_apply)
-        self._ready.set_child(self._apply_button)
+        self._editor = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        self._editor.set_vexpand(True)
+        self._editor.set_hexpand(True)
+        self._ready.set_child(self._editor)
         self._stack.add_named(self._ready, "ready")
+        self._model = None
+        self._grid = None
+        self._range_entry = None
+        self._status_line = None
+        self._apply_button = None
+        self._actions = {}
+        self._install_actions()
         self._apply_state = None
         self._cancel_event = None
 
@@ -144,6 +160,32 @@ class StudioWindow(Adw.ApplicationWindow):
         self._show_ready(results)
         return GLib.SOURCE_REMOVE
 
+    def _install_actions(self):
+        for action_id in ACTION_TABLE:
+            action = _Gio.SimpleAction.new(action_id, None)
+            action.connect("activate", lambda _action, _param, name=action_id: self._run_action(name))
+            self.add_action(action)
+            self._actions[action_id] = action
+            shortcut = SHORTCUTS.get(action_id)
+            if shortcut:
+                self.get_application().set_accels_for_action(f"win.{action_id}", [shortcut])
+
+    def _run_action(self, action_id):
+        if self._model is None or not ACTION_TABLE[action_id]["enabled"](self._model):
+            return
+        dispatch_action(self._model, action_id)
+        self._refresh_editor()
+
+    def _refresh_editor(self):
+        if self._grid is not None:
+            self._grid.refresh()
+        for action_id, action in self._actions.items():
+            action.set_enabled(self._model is not None and ACTION_TABLE[action_id]["enabled"](self._model))
+        if self._range_entry is not None and self._model is not None:
+            self._range_entry.set_text(self._model.selection_spec())
+        if self._status_line is not None and self._model is not None:
+            self._status_line.set_text(f"{len(self._model.items)} pages · {len(self._model.selection)} selected")
+
     def _show_ready(self, results):
         if len(results) == 1:
             name = os.path.basename(self._paths[0])
@@ -151,12 +193,59 @@ class StudioWindow(Adw.ApplicationWindow):
             self._set_title(name, f"{pages} page{'s' if pages != 1 else ''}")
             self._ready.set_title(f"{pages} page{'s' if pages != 1 else ''}")
             self._ready.set_description(_markup(name))
+            self._model = EditModel(pages)
+            self._build_editor(self._paths[0])
         else:
             self._set_title(f"Merge {len(results)} PDFs")
             self._ready.set_title(f"{len(results)} PDFs")
             lines = [f"{_markup(os.path.basename(path))} — {result.pages} page{'s' if result.pages != 1 else ''}" for path, result in zip(self._paths, results)]
             self._ready.set_description("\n".join(lines))
+            self._build_merge_editor(results)
         self._stack.set_visible_child_name("ready")
+
+    def _build_editor(self, path):
+        toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        toolbar.set_margin_start(8)
+        toolbar.set_margin_end(8)
+        for action_id in ("undo", "redo", "rotate-left", "rotate-right", "delete", "duplicate", "insert-blank", "move-left", "move-right", "move-start", "move-end"):
+            button = Gtk.Button(label=action_id.replace("-", " ").title())
+            button.set_action_name(f"win.{action_id}")
+            toolbar.append(button)
+        self._editor.append(toolbar)
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        row.set_margin_start(8)
+        self._range_entry = Gtk.Entry(placeholder_text="Pages, e.g. 1-3,7")
+        self._range_entry.connect("activate", self._range_changed)
+        row.append(Gtk.Label(label="Selection:"))
+        row.append(self._range_entry)
+        self._status_line = Gtk.Label(xalign=0)
+        row.append(self._status_line)
+        self._apply_button = Gtk.Button(label="Apply", css_classes=["suggested-action"])
+        self._apply_button.connect("clicked", self._on_apply)
+        row.append(self._apply_button)
+        self._editor.append(row)
+        model = self._model
+        if model is None:
+            return
+        page_count = model.page_count
+        self._grid = PageGrid(model, loader_factory=lambda callback, error: ThumbnailLoader(_make_client, path, page_count, callback=callback, error_callback=error), on_selection_changed=self._refresh_editor)
+        self._editor.append(self._grid)
+        self._refresh_editor()
+
+    def _build_merge_editor(self, results):
+        self._apply_button = Gtk.Button(label="Apply", css_classes=["suggested-action"])
+        self._apply_button.connect("clicked", self._on_apply)
+        self._editor.append(self._apply_button)
+
+    def _range_changed(self, entry):
+        if self._model is None:
+            return
+        state = range_box_state(self._model, entry.get_text())
+        if not state.valid:
+            entry.add_css_class("error")
+        else:
+            entry.remove_css_class("error")
+            self._refresh_editor()
 
     # -- actions -------------------------------------------------------------
 
@@ -187,13 +276,15 @@ class StudioWindow(Adw.ApplicationWindow):
     def _on_apply(self, _button):
         if not self._paths:
             return
+        if self._apply_button is None:
+            return
         self._apply_button.set_sensitive(False)
         self._cancel_event = threading.Event()
-        request = {
-            "files": list(self._paths),
-            "op": "pdf-merge" if len(self._paths) > 1 else "pdf-edit",
-            "params": {},
-        }
+        if self._model is not None:
+            op, params = edit_request(self._model)
+        else:
+            op, params = "pdf-merge", {}
+        request = {"files": list(self._paths), "op": op, "params": params}
         request.update(build_output_options(os.path.dirname(self._paths[0]), "rename"))
 
         def report(state):
@@ -217,7 +308,7 @@ class StudioWindow(Adw.ApplicationWindow):
             self._ready.set_title("Apply cancelled")
         else:
             self._ready.set_description(f"Applying… {round(state.progress * 100)}%")
-        if state.status in ("completed", "completed-with-errors", "failed", "cancelled"):
+        if state.status in ("completed", "completed-with-errors", "failed", "cancelled") and self._apply_button is not None:
             self._apply_button.set_sensitive(True)
         return GLib.SOURCE_REMOVE
 
