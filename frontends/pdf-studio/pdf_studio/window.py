@@ -17,6 +17,7 @@ from gi.repository import Adw, GLib, Gtk  # noqa: E402
 from fc_client.client import FcClient  # noqa: E402
 from fc_client.daemon import ensure_daemon, socket_path  # noqa: E402
 
+from .apply import build_output_options, friendly_apply_error, run_apply  # noqa: E402
 from .loading import load_document  # noqa: E402
 
 _ICONS = {
@@ -57,7 +58,13 @@ class StudioWindow(Adw.ApplicationWindow):
         self._status.set_child(self._action)
         self._stack.add_named(self._status, "status")
         self._ready = Adw.StatusPage(icon_name="document-edit-symbolic")
+        self._apply_button = Gtk.Button(label="Apply", halign=Gtk.Align.CENTER)
+        self._apply_button.add_css_class("suggested-action")
+        self._apply_button.connect("clicked", self._on_apply)
+        self._ready.set_child(self._apply_button)
         self._stack.add_named(self._ready, "ready")
+        self._apply_state = None
+        self._cancel_event = None
 
         view = Adw.ToolbarView()
         view.add_top_bar(header)
@@ -176,6 +183,43 @@ class StudioWindow(Adw.ApplicationWindow):
         if paths:
             self.get_application().open_paths(paths)
             self.close()
+
+    def _on_apply(self, _button):
+        if not self._paths:
+            return
+        self._apply_button.set_sensitive(False)
+        self._cancel_event = threading.Event()
+        request = {
+            "files": list(self._paths),
+            "op": "pdf-merge" if len(self._paths) > 1 else "pdf-edit",
+            "params": {},
+        }
+        request.update(build_output_options(os.path.dirname(self._paths[0]), "rename"))
+
+        def report(state):
+            self._apply_state = state
+            GLib.idle_add(self._apply_state_changed, state)
+
+        def work():
+            run_apply(_make_client, request, report, self._cancel_event)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _apply_state_changed(self, state):
+        if state.status == "completed":
+            self._ready.set_title("Apply complete")
+        elif state.status == "completed-with-errors":
+            self._ready.set_title("Apply completed with errors")
+        elif state.status == "failed":
+            self._ready.set_title("Apply failed")
+            self._ready.set_description(_markup(state.error or "The operation failed"))
+        elif state.status == "cancelled":
+            self._ready.set_title("Apply cancelled")
+        else:
+            self._ready.set_description(f"Applying… {round(state.progress * 100)}%")
+        if state.status in ("completed", "completed-with-errors", "failed", "cancelled"):
+            self._apply_button.set_sensitive(True)
+        return GLib.SOURCE_REMOVE
 
     def _show_problems(self):
         lines = [f"{os.path.basename(problem.path) or problem.path} {problem.reason}" for problem in self._problems]

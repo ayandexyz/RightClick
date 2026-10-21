@@ -5,10 +5,9 @@ import queue
 import threading
 from types import MappingProxyType
 
-try:
-    from fc_client.messages import friendly_error
-except ImportError:  # source-tree imports may load this module directly
-    from frontends.common.fc_client.messages import friendly_error
+from fc_client.messages import friendly_error
+
+from .output_panel import build_output_options
 
 
 @dataclass(frozen=True)
@@ -121,7 +120,9 @@ def run_apply(client_factory, request, on_event, cancel_event):
             if state.status in ("completed", "completed-with-errors", "failed", "cancelled"):
                 return state
         elif kind == "error":
-            state = JobState("failed", state.progress, state.files, str(value), state.job_id)
+            code = getattr(value, "code", "")
+            message = getattr(value, "message", str(value))
+            state = JobState("failed", state.progress, state.files, friendly_apply_error(code, message), state.job_id)
             on_event(state)
             return state
         elif kind == "done":
