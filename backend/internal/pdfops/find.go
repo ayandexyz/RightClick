@@ -41,17 +41,23 @@ func (p *Poppler) FindPassword(ctx context.Context, input string, terms []string
 			return nil, fmt.Errorf("find term must be at most 100 characters")
 		}
 	}
+	if password != "" {
+		// Decrypt to a private copy so the password is never a command-line
+		// argument, where any local user could read it from /proc.
+		unlocked, cleanup, err := Unlock(ctx, NewPDFCPUBackend(), input, password)
+		if err != nil {
+			return nil, err
+		}
+		defer cleanup()
+		input = unlocked
+	}
 	dir, err := os.MkdirTemp("", "fcd-find-")
 	if err != nil {
 		return nil, err
 	}
 	defer os.RemoveAll(dir)
 	out := filepath.Join(dir, "text.xml")
-	args := []string{"-bbox-layout"}
-	if password != "" {
-		args = append(args, "-upw", password)
-	}
-	args = append(args, input, out)
+	args := []string{"-bbox-layout", input, out}
 	if err := p.runner(ctx, "pdftotext", args); err != nil {
 		return nil, fmt.Errorf("pdftotext: %w", err)
 	}
@@ -63,7 +69,7 @@ func (p *Poppler) FindPassword(ctx context.Context, input string, terms []string
 	if err := xml.Unmarshal(data, &doc); err != nil {
 		return nil, fmt.Errorf("parse pdftotext boxes: %w", err)
 	}
-	rotated := rotatedPages(ctx, input, password, len(doc.Pages))
+	rotated := rotatedPages(ctx, input, len(doc.Pages))
 
 	var matches []FindMatch
 	for index, page := range doc.Pages {
@@ -160,17 +166,14 @@ func sameLine(a, b bboxWord, vertical bool) bool {
 }
 
 // rotatedPages reports, per page, whether it is turned a quarter. A missing
-// pdfinfo reports none rotated.
-func rotatedPages(ctx context.Context, input, password string, count int) []bool {
+// pdfinfo reports none rotated. The input must already be readable without a
+// password: a password is never passed to a subprocess.
+func rotatedPages(ctx context.Context, input string, count int) []bool {
 	rotated := make([]bool, count)
 	if count == 0 {
 		return rotated
 	}
-	args := []string{"-f", "1", "-l", strconv.Itoa(count)}
-	if password != "" {
-		args = append(args, "-upw", password)
-	}
-	out, err := runForOutput(ctx, nil, "pdfinfo", append(args, input)...)
+	out, err := runForOutput(ctx, nil, "pdfinfo", "-f", "1", "-l", strconv.Itoa(count), input)
 	if err != nil {
 		return rotated
 	}

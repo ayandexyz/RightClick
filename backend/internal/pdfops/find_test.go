@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"context"
+	"errors"
 	"image/png"
 	"math"
 	"os"
@@ -173,5 +174,52 @@ func TestRedactByTermBlacksOutTheWordOnTheRenderedPage(t *testing.T) {
 				t.Errorf("pixel (%d,%d) of the redacted page is not black: %d %d %d", cx, cy, r, g, bl)
 			}
 		})
+	}
+}
+
+// TestFindWithAPasswordNeverPutsItOnACommandLine records every Poppler call
+// through logging shims: any local user can read a process's arguments from
+// /proc, so the password may only be used in memory.
+func TestFindWithAPasswordNeverPutsItOnACommandLine(t *testing.T) {
+	for _, tool := range []string{"qpdf", "pdftotext", "pdfinfo"} {
+		requireTool(t, tool)
+	}
+	const password = "Sentinel-Find-Pw-20481"
+	plain := buildFindPDF(t)
+	locked := filepath.Join(t.TempDir(), "locked.pdf")
+	// qpdf exits 3 for warnings it still succeeded with.
+	if out, err := exec.Command("qpdf", "--encrypt", password, password, "256", "--", plain, locked).CombinedOutput(); err != nil {
+		if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != 3 {
+			t.Fatalf("qpdf --encrypt: %v\n%s", err, out)
+		}
+	}
+
+	shims, log := t.TempDir(), filepath.Join(t.TempDir(), "argv.log")
+	for _, tool := range []string{"pdftotext", "pdfinfo"} {
+		real, _ := exec.LookPath(tool)
+		script := "#!/bin/sh\necho \"" + tool + " $*\" >> '" + log + "'\nexec " + real + " \"$@\"\n"
+		if err := os.WriteFile(filepath.Join(shims, tool), []byte(script), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", shims+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	matches, err := NewPoppler(nil).FindPassword(context.Background(), locked, []string{"secret"}, password)
+	if err != nil || len(matches) != 2 {
+		t.Fatalf("FindPassword = %+v, %v, want the 2 matches of the unlocked file", matches, err)
+	}
+	data, err := os.ReadFile(log)
+	if err != nil || !strings.Contains(string(data), "pdftotext") || !strings.Contains(string(data), "pdfinfo") {
+		t.Fatalf("the shims recorded %q (%v); the check below would prove nothing", data, err)
+	}
+	if strings.Contains(string(data), password) || strings.Contains(string(data), "-upw") {
+		t.Errorf("the password reached a command line:\n%s", data)
+	}
+
+	if _, err := NewPoppler(nil).FindPassword(context.Background(), locked, []string{"secret"}, "wrong"); !errors.Is(err, ErrPasswordIncorrect) {
+		t.Errorf("wrong password = %v, want ErrPasswordIncorrect", err)
+	}
+	if _, err := NewPoppler(nil).FindPassword(context.Background(), locked, []string{"secret"}, ""); err == nil {
+		t.Error("a locked file with no password should not be searched")
 	}
 }

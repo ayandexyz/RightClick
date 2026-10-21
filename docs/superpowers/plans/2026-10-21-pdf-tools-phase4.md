@@ -86,12 +86,12 @@ Not verified, and therefore spiked in the task that depends on it: whether `AddP
 
 Each spike runs real pdfcpu on a real fixture and records the observed behaviour. No production code in this task.
 
-- [ ] **Step 1: Properties.** Call `AddPropertiesFile` with `Title`, `Author`, `Subject`, `Keywords`. Read the result with `pdfinfo` and `qpdf --json`. Record whether the standard Info keys changed, whether the XMP packet (if any) still disagrees, and what `Producer`/`ModDate` do. If standard keys are not set, test the fallback: `qpdf --update-from-json` for the trailer `/Info`, and Ghostscript `pdfmark` DOCINFO. Pick the engine that actually sets all four and also leaves XMP consistent, or record that XMP cannot be kept in sync and the editor warns about it.
-- [ ] **Step 2: Encryption.** Encrypt with (a) user password only, (b) owner only, (c) both, AES-256. Open each with `pdfinfo`, `qpdf --check` and `pdftotext` using and not using the password. Record what pdfcpu does when only one password is set and what each does for permission flags (`qpdf --show-encryption`).
-- [ ] **Step 3: Wrong password.** Record the exact pdfcpu error for a wrong password versus no password, so `classifyUnreadable` can tell `password_incorrect` from `password_required` (today both map to `password_required`).
-- [ ] **Step 4: Stamps.** Text stamp with `%p`, `%P`, `%p100`; a non-Latin string (e.g. Bengali, Devanagari, Cyrillic, an accented Latin string) with the default core font. Record which scripts render and which produce missing glyphs or an error. Record how a stamp behaves on a page with `/Rotate 90`.
-- [ ] **Step 5: Booklet and N-up.** Booklet with 5, 7 and 8 pages; N-up with a page count that does not fill the last sheet. Record whether pdfcpu pads with blanks or errors.
-- [ ] **Step 6:** Write the findings into this file under **Spike results**, adjust the later tasks if a finding contradicts them, delete the spike test, commit `docs: record phase 4 spike results`.
+- [x] **Step 1: Properties.** Call `AddPropertiesFile` with `Title`, `Author`, `Subject`, `Keywords`. Read the result with `pdfinfo` and `qpdf --json`. Record whether the standard Info keys changed, whether the XMP packet (if any) still disagrees, and what `Producer`/`ModDate` do. If standard keys are not set, test the fallback: `qpdf --update-from-json` for the trailer `/Info`, and Ghostscript `pdfmark` DOCINFO. Pick the engine that actually sets all four and also leaves XMP consistent, or record that XMP cannot be kept in sync and the editor warns about it.
+- [x] **Step 2: Encryption.** Encrypt with (a) user password only, (b) owner only, (c) both, AES-256. Open each with `pdfinfo`, `qpdf --check` and `pdftotext` using and not using the password. Record what pdfcpu does when only one password is set and what each does for permission flags (`qpdf --show-encryption`).
+- [x] **Step 3: Wrong password.** Record the exact pdfcpu error for a wrong password versus no password, so `classifyUnreadable` can tell `password_incorrect` from `password_required` (today both map to `password_required`).
+- [x] **Step 4: Stamps.** Text stamp with `%p`, `%P`, `%p100`; a non-Latin string (e.g. Bengali, Devanagari, Cyrillic, an accented Latin string) with the default core font. Record which scripts render and which produce missing glyphs or an error. Record how a stamp behaves on a page with `/Rotate 90`.
+- [x] **Step 5: Booklet and N-up.** Booklet with 5, 7 and 8 pages; N-up with a page count that does not fill the last sheet. Record whether pdfcpu pads with blanks or errors.
+- [x] **Step 6:** Write the findings into this file under **Spike results**, adjust the later tasks if a finding contradicts them, delete the spike test, commit `docs: record phase 4 spike results`.
 
 ### Task 2: Passwords in the daemon (unlock stage)
 
@@ -100,11 +100,11 @@ Each spike runs real pdfcpu on a real fixture and records the observed behaviour
 - Create: `backend/internal/pdfops/unlock.go`, `unlock_test.go`
 - Test: `backend/e2e_pdf_password_test.go`
 
-- [ ] **Step 1: Write failing tests.** (a) `Unlock(ctx, in, password)` on a plain PDF returns the input path and a no-op cleanup; (b) on an encrypted PDF with the right password returns a private temp path whose content is a readable PDF and whose directory is 0700, file 0600; (c) wrong password → `ErrPasswordIncorrect`; none → `ErrPasswordRequired`; (d) cleanup removes the directory, and is also run when the context is cancelled mid-job; (e) with a recording `Runner`, a full encrypted `pdf-compress-balanced` job puts the password in **no** argument list; (f) a sentinel password appears in no job field, event, log output or error string.
-- [ ] **Step 2: Implement `Unlock`.** pdfcpu `DecryptFile` with `UserPW` set, into `os.MkdirTemp` 0700. It returns `(path, cleanup, error)`. Map the two pdfcpu failures from Task 1 to `ErrPasswordRequired` / new `ErrPasswordIncorrect` and add `password_incorrect` to `classifyUnreadable` and the code mapping. Where the owner password but not the user password is what is known, record the Task 1 behaviour.
-- [ ] **Step 3: Thread it through.** `pdf_info`, `pdf_thumbnails` and `Operation.Run` accept an optional password; `Run` unlocks first and hands the unlocked path to the existing code. `Params.Password` is never serialised into a `Job`. Thumbnails of an unlocked-by-password document render into the per-connection tmpfs directory (decision 2); a test asserts nothing is written under the persistent cache for that document and that the directory is gone after the connection closes.
-- [ ] **Step 4: Validation.** The password is length-bounded (say 127 bytes, the PDF limit), may not be logged by the request logger, and the server's request logging is checked to skip `params.password`.
-- [ ] **Step 5: Docs and commit.** `docs/PROTOCOL.md` documents the field, the two error codes, and the tmpfs thumbnail behaviour. Commit `feat: open password-protected PDFs through an unlock stage`.
+- [x] **Step 1: Write failing tests.** (a) `Unlock(ctx, in, password)` on a plain PDF returns the input path and a no-op cleanup; (b) on an encrypted PDF with the right password returns a private temp path whose content is a readable PDF and whose directory is 0700, file 0600; (c) wrong password → `ErrPasswordIncorrect`; none → `ErrPasswordRequired`; (d) cleanup removes the directory, and is also run when the context is cancelled mid-job; (e) with a recording `Runner`, a full encrypted `pdf-compress-balanced` job puts the password in **no** argument list; (f) a sentinel password appears in no job field, event, log output or error string.
+- [x] **Step 2: Implement `Unlock`.** pdfcpu `DecryptFile` with `UserPW` set, into `os.MkdirTemp` 0700. It returns `(path, cleanup, error)`. Map the two pdfcpu failures from Task 1 to `ErrPasswordRequired` / new `ErrPasswordIncorrect` and add `password_incorrect` to `classifyUnreadable` and the code mapping. Where the owner password but not the user password is what is known, record the Task 1 behaviour.
+- [x] **Step 3: Thread it through.** `pdf_info`, `pdf_thumbnails` and `Operation.Run` accept an optional password; `Run` unlocks first and hands the unlocked path to the existing code. `Params.Password` is never serialised into a `Job`. Thumbnails of an unlocked-by-password document render into the per-connection tmpfs directory (decision 2); a test asserts nothing is written under the persistent cache for that document and that the directory is gone after the connection closes.
+- [x] **Step 4: Validation.** The password is length-bounded (say 127 bytes, the PDF limit), may not be logged by the request logger, and the server's request logging is checked to skip `params.password`. The daemon writes nothing to stdout or stderr during locked jobs (secret audit, Task 14 Step 3), so there is no request log to leak from.
+- [x] **Step 5: Docs and commit.** `docs/PROTOCOL.md` documents the field, the two error codes, and the tmpfs thumbnail behaviour. Commit `feat: open password-protected PDFs through an unlock stage`.
 
 ### Task 3: Remove, set and restrict passwords
 
@@ -112,10 +112,10 @@ Each spike runs real pdfcpu on a real fixture and records the observed behaviour
 - Modify: `catalogue.go`, `operation.go` (Params), `protocol/*`, `jobs/operations.go`, `pdfcpu_backend.go`, `backend/cmd/fcctl/main.go`, `docs/PROTOCOL.md`
 - Create: `backend/internal/pdfops/crypto.go`, `crypto_test.go`
 
-- [ ] **Step 1: Failing tests** for `pdf-decrypt` (needs the password; output opens with no password), `pdf-encrypt` (user and/or owner per Task 1; output is AES-256 per `qpdf --show-encryption`; refuses an already-encrypted input with a clear message unless a password was supplied), and `pdf-permissions` (flags map to what `qpdf --show-encryption` reports: print, copy, modify, annotate; the permission set is typed, never a raw integer from the client). Include a real-binary test that skips when `qpdf` is missing.
-- [ ] **Step 2: Implement** the three operations on `PDFCPU` in `crypto.go`; add catalogue entries (studio mode, `OutputExt` pdf, suffixes above); `pdf-decrypt` is the only operation that sets `NeedsPassword`.
-- [ ] **Step 3:** `fcctl pdf pdf-decrypt file.pdf --password-file ./pw` reads the password from a file or stdin, **never from a flag** (flags land in shell history and `/proc`). Document it.
-- [ ] **Step 4:** Run the full Go suite; commit `feat: add pdf-decrypt, pdf-encrypt and pdf-permissions`.
+- [x] **Step 1: Failing tests** for `pdf-decrypt` (needs the password; output opens with no password), `pdf-encrypt` (user and/or owner per Task 1; output is AES-256 per `qpdf --show-encryption`; refuses an already-encrypted input with a clear message unless a password was supplied), and `pdf-permissions` (flags map to what `qpdf --show-encryption` reports: print, copy, modify, annotate; the permission set is typed, never a raw integer from the client). Include a real-binary test that skips when `qpdf` is missing.
+- [x] **Step 2: Implement** the three operations on `PDFCPU` in `crypto.go`; add catalogue entries (studio mode, `OutputExt` pdf, suffixes above); `pdf-decrypt` is the only operation that sets `NeedsPassword`.
+- [x] **Step 3:** `fcctl pdf pdf-decrypt file.pdf --password-file ./pw` reads the password from a file or stdin, **never from a flag** (flags land in shell history and `/proc`). Document it.
+- [x] **Step 4:** Run the full Go suite; commit `feat: add pdf-decrypt, pdf-encrypt and pdf-permissions`.
 
 ### Task 4: The stamp engine (watermark, page numbers, header/footer, Bates)
 
@@ -123,42 +123,42 @@ Each spike runs real pdfcpu on a real fixture and records the observed behaviour
 - Modify: `catalogue.go`, `operation.go`, `protocol/*`, `jobs/operations.go`, `fcctl`, `docs/PROTOCOL.md`
 - Create: `backend/internal/pdfops/stamp.go`, `stamp_test.go`, `stamp_real_test.go`
 
-- [ ] **Step 1: Failing tests for the description builder**, a pure function from typed fields to pdfcpu's description string: position presets (`tl tc tr ml mc mr bl bc br`) to `pos:`, opacity 0-100 to `opacity:`, rotation, size, colour as `#rrggbb` only, `on_top`. Table-driven; an unknown position, an opacity outside 0-100, a colour that is not `#rrggbb`, text with a newline or longer than 200 characters, and a font size outside 4-200 are rejected. Assert the builder can never emit an option the allowlist does not name (fuzz the string fields with `,` and `:`).
-- [ ] **Step 2: Failing tests for the kinds.** `page-numbers` produces `%p` or `%p of %P` at the chosen position and starting number (`start` becomes the `%p<N>` offset); `header-footer` places up to three texts (left, centre, right) in one pass using `%p`/`%P`/`%t` placeholders; `bates` is a prefix plus a zero-padded counter at a start value, in the corner chosen; a page selection limits the pages. Real-binary tests read the output back with `pdftotext -f N -l N` and assert the literal text on the right pages and absence on the others.
-- [ ] **Step 3: Image stamp.** Validate the image path (absolute, regular file, header is PNG/JPEG, at most 20 MB), then `AddImageWatermarksFile`. Test a missing file, a directory, a text file renamed `.png`, and a huge file.
-- [ ] **Step 4: Rotated pages.** Using the Task 1 finding, a stamp on a `/Rotate 90` page lands at the visual position the user chose; test against a real rotated fixture.
-- [ ] **Step 5: Non-Latin text.** Apply the Task 1 finding. The default is to **reject** text with characters the stamp font cannot draw, naming the first offending character, rather than writing a PDF with missing glyphs. If Task 1 shows a safe route to a private font (a TTF installed into a daemon-owned pdfcpu config directory), record it here as a follow-up, not in this task.
-- [ ] **Step 6:** `fcctl pdf` flags for each kind; run the suite; commit `feat: add text and image stamps, page numbers, header/footer and Bates`.
+- [x] **Step 1: Failing tests for the description builder**, a pure function from typed fields to pdfcpu's description string: position presets (`tl tc tr ml mc mr bl bc br`) to `pos:`, opacity 0-100 to `opacity:`, rotation, size, colour as `#rrggbb` only, `on_top`. Table-driven; an unknown position, an opacity outside 0-100, a colour that is not `#rrggbb`, text with a newline or longer than 200 characters, and a font size outside 4-200 are rejected. Assert the builder can never emit an option the allowlist does not name (fuzz the string fields with `,` and `:`).
+- [x] **Step 2: Failing tests for the kinds.** `page-numbers` produces `%p` or `%p of %P` at the chosen position and starting number (`start` becomes the `%p<N>` offset); `header-footer` places up to three texts (left, centre, right) in one pass using `%p`/`%P`/`%t` placeholders; `bates` is a prefix plus a zero-padded counter at a start value, in the corner chosen; a page selection limits the pages. Real-binary tests read the output back with `pdftotext -f N -l N` and assert the literal text on the right pages and absence on the others.
+- [x] **Step 3: Image stamp.** Validate the image path (absolute, regular file, header is PNG/JPEG, at most 20 MB), then `AddImageWatermarksFile`. Test a missing file, a directory, a text file renamed `.png`, and a huge file.
+- [x] **Step 4: Rotated pages.** Using the Task 1 finding, a stamp on a `/Rotate 90` page lands at the visual position the user chose; test against a real rotated fixture.
+- [x] **Step 5: Non-Latin text.** Apply the Task 1 finding. The default is to **reject** text with characters the stamp font cannot draw, naming the first offending character, rather than writing a PDF with missing glyphs. If Task 1 shows a safe route to a private font (a TTF installed into a daemon-owned pdfcpu config directory), record it here as a follow-up, not in this task.
+- [x] **Step 6:** `fcctl pdf` flags for each kind; run the suite; commit `feat: add text and image stamps, page numbers, header/footer and Bates`.
 
 ### Task 5: Crop and resize
 
 **Files:** Modify catalogue, params, protocol, jobs, fcctl, docs. Create `backend/internal/pdfops/geometry.go`, `geometry_test.go`.
 
-- [ ] **Step 1: Failing tests.** Crop: margins in `mm`, `pt` or `percent`; negative, non-numeric, or margins that leave no page (top+bottom ≥ height) are rejected with the page named; the output's `pdfinfo -box` MediaBox/CropBox equals the expectation within a point. Resize: `A4`/`A3`/`A5`/`Letter`/`Legal` with `scale`, `crop`, `pad`; the output page size equals the target; content is not distorted (aspect preserved for `scale`).
-- [ ] **Step 2: Rotation.** Crop and resize on a `/Rotate 90` page behave in visual terms (Task 4's fixture). Document and test the choice.
-- [ ] **Step 3: Implement** with typed params → `model.ParseBox` / `pdfcpu.ParseResizeConfig` strings built server-side (decision 4). Commit `feat: add pdf-crop and pdf-resize`.
+- [x] **Step 1: Failing tests.** Crop: margins in `mm`, `pt` or `percent`; negative, non-numeric, or margins that leave no page (top+bottom ≥ height) are rejected with the page named; the output's `pdfinfo -box` MediaBox/CropBox equals the expectation within a point. Resize: `A4`/`A3`/`A5`/`Letter`/`Legal` with `scale`, `crop`, `pad`; the output page size equals the target; content is not distorted (aspect preserved for `scale`).
+- [x] **Step 2: Rotation.** Crop and resize on a `/Rotate 90` page behave in visual terms (Task 4's fixture). Document and test the choice.
+- [x] **Step 3: Implement** with typed params → `model.ParseBox` / `pdfcpu.ParseResizeConfig` strings built server-side (decision 4). Commit `feat: add pdf-crop and pdf-resize`.
 
 ### Task 6: N-up and booklet
 
 **Files:** Modify catalogue, params, protocol, jobs, fcctl, docs. Create `backend/internal/pdfops/layout.go`, `layout_test.go`.
 
-- [ ] **Step 1: Failing tests.** `pdf-nup` for 2, 4, 6, 9 per sheet, portrait/landscape, optional margin and border: the output page count is `ceil(pages / per_sheet)`, sheet size unchanged; an input that does not fill the last sheet works (behaviour from Task 1). `pdf-booklet` for 2 and 4 per sheet: output page count and imposition order checked by extracting text from a fixture whose pages are labelled; a page count that is not a multiple of 4 follows the Task 1 finding (pad with blanks, or refuse with a clear message — whichever pdfcpu does reliably).
-- [ ] **Step 2: Implement** and commit `feat: add pdf-nup and pdf-booklet`.
+- [x] **Step 1: Failing tests.** `pdf-nup` for 2, 4, 6, 9 per sheet, portrait/landscape, optional margin and border: the output page count is `ceil(pages / per_sheet)`, sheet size unchanged; an input that does not fill the last sheet works (behaviour from Task 1). `pdf-booklet` for 2 and 4 per sheet: output page count and imposition order checked by extracting text from a fixture whose pages are labelled; a page count that is not a multiple of 4 follows the Task 1 finding (pad with blanks, or refuse with a clear message — whichever pdfcpu does reliably).
+- [x] **Step 2: Implement** and commit `feat: add pdf-nup and pdf-booklet`.
 
 ### Task 7: Metadata read and edit
 
 **Files:** Modify catalogue, params, protocol, server, jobs, fcctl, docs. Create `backend/internal/pdfops/metadata.go`, `metadata_test.go`, `backend/e2e_pdf_metadata_test.go`.
 
-- [ ] **Step 1: `pdf_metadata` read.** Title, Author, Subject, Keywords, Producer, Creator, dates and custom keys, from the engine Task 1 selected. Test with a fixture that has all of them and one that has none.
-- [ ] **Step 2: Failing tests for `pdf-metadata` write**, using the engine and fallback Task 1 chose: after the edit, `pdfinfo` reports all four standard fields, clearing a field clears it, custom keys round-trip, the page content is untouched (byte-for-byte for stream objects is not required; text and page count are). Include the XMP-consistency finding: if the file has an XMP packet that now disagrees, either update it or return a `notice` the Studio shows ("this file also stores metadata in XMP, which was left unchanged").
-- [ ] **Step 3: Implement** and commit `feat: read and edit PDF metadata`. If Task 1 finds no engine that sets the standard fields reliably, this task is reduced to the read side, the write side is moved to "Out of scope" below, and the plan is updated before continuing.
+- [x] **Step 1: `pdf_metadata` read.** Title, Author, Subject, Keywords, Producer, Creator, dates and custom keys, from the engine Task 1 selected. Test with a fixture that has all of them and one that has none.
+- [x] **Step 2: Failing tests for `pdf-metadata` write**, using the engine and fallback Task 1 chose: after the edit, `pdfinfo` reports all four standard fields, clearing a field clears it, custom keys round-trip, the page content is untouched (byte-for-byte for stream objects is not required; text and page count are). Include the XMP-consistency finding: if the file has an XMP packet that now disagrees, either update it or return a `notice` the Studio shows ("this file also stores metadata in XMP, which was left unchanged").
+- [x] **Step 3: Implement** and commit `feat: read and edit PDF metadata`. If Task 1 finds no engine that sets the standard fields reliably, this task is reduced to the read side, the write side is moved to "Out of scope" below, and the plan is updated before continuing.
 
 ### Task 8: `operations` catalogue, CLI and docs sweep
 
 **Files:** Modify `README.md`, `docs/PROTOCOL.md`, `backend/cmd/fcctl/main.go` usage text, `catalogue_test.go`.
 
-- [ ] **Step 1:** The README operation table lists every phase 4 operation with engine, mode and notes. `catalogue_test.go` asserts each new ID, its suffix, its mode and that none is offered by the Nautilus instant submenu (they are all studio mode and need parameters).
-- [ ] **Step 2:** Full Go checks; commit `docs: document the phase 4 operations`.
+- [x] **Step 1:** The README operation table lists every phase 4 operation with engine, mode and notes. `catalogue_test.go` asserts each new ID, its suffix, its mode and that none is offered by the Nautilus instant submenu (they are all studio mode and need parameters).
+- [x] **Step 2:** Full Go checks; commit `docs: document the phase 4 operations`.
 
 ---
 
@@ -171,44 +171,44 @@ Each spike runs real pdfcpu on a real fixture and records the observed behaviour
 
 A tool is data: `Tool(id, label, group, op, fields, build)`. A `Field` has `key`, `label`, `kind` (`text`, `choice`, `number`, `colour`, `file`, `pages`, `switch`, `password`), `default`, `required`, `help`, and optional bounds or choices. `build(values, context)` returns `(op, params)` or raises `RequestError` naming the field.
 
-- [ ] **Step 1: Failing tests** for every tool in the phase: required fields, bounds (opacity, size, margins), the page-spec field reusing the existing parser, a `colour` field accepting only `#rrggbb`, a `file` field requiring an absolute path, mutually dependent fields (Bates needs a start; header/footer needs at least one of left/centre/right), and the exact `Params` each produces. A conformance test asserts each tool's `Params` keys are the ones documented in `docs/PROTOCOL.md`.
-- [ ] **Step 2: Implement** `tools.py`: the tool list for stamps (watermark text/image, page numbers, header/footer, Bates), crop, resize, N-up, booklet, encrypt, permissions, decrypt, metadata. Validation messages say what to change.
-- [ ] **Step 3:** Commit `feat: describe PDF Studio tools as data`.
+- [x] **Step 1: Failing tests** for every tool in the phase: required fields, bounds (opacity, size, margins), the page-spec field reusing the existing parser, a `colour` field accepting only `#rrggbb`, a `file` field requiring an absolute path, mutually dependent fields (Bates needs a start; header/footer needs at least one of left/centre/right), and the exact `Params` each produces. A conformance test asserts each tool's `Params` keys are the ones documented in `docs/PROTOCOL.md`.
+- [x] **Step 2: Implement** `tools.py`: the tool list for stamps (watermark text/image, page numbers, header/footer, Bates), crop, resize, N-up, booklet, encrypt, permissions, decrypt, metadata. Validation messages say what to change.
+- [x] **Step 3:** Commit `feat: describe PDF Studio tools as data`.
 
 ### Task 10: Password prompt and unlock in the Studio
 
 **Files:** Modify `loading.py`, `window.py`, `thumbnails.py`, `frontends/common/fc_client/client.py`, `messages.py`. Create `pdf_studio/password_dialog.py`. Tests: `test_loading.py`, `test_window_smoke.py`, `common/tests/test_pdf_client.py`.
 
-- [ ] **Step 1: Client.** `pdf_info`, `pdf_thumbnails` and `run_operation` take an optional `password`; it is sent only when given. Add `password_incorrect` wording to `friendly_error`. Tests assert the field is absent when no password is set and present when it is.
-- [ ] **Step 2: Failing tests.** A locked document shows a password prompt instead of the dead-end status page; a wrong password re-prompts with "That password did not work" and keeps the dialog; cancel returns to the status page; a right password loads the editor, and the same password is used by the thumbnail loader and by Apply. Closing the window drops the password (an assertion that no attribute still references it is brittle; instead assert it is cleared on close). Markup in the file name is escaped, as in phase 3.
-- [ ] **Step 3: Implement** an `Adw.AlertDialog` (Adw 1.5) whose extra child is a `Gtk.PasswordEntry` (GTK 4.4), with Unlock and Cancel responses. The password lives in a single window attribute, is passed to workers, is never put in a log message, and is not stored when the window closes.
-- [ ] **Step 4:** Real-daemon verification on a private `fcd`: an encrypted fixture opens with the right password and shows thumbnails; the wrong password re-prompts; check that nothing lands in the persistent thumbnail cache directory for that file. Commit `feat: unlock password-protected PDFs in PDF Studio`.
+- [x] **Step 1: Client.** `pdf_info`, `pdf_thumbnails` and `run_operation` take an optional `password`; it is sent only when given. Add `password_incorrect` wording to `friendly_error`. Tests assert the field is absent when no password is set and present when it is.
+- [x] **Step 2: Failing tests.** A locked document shows a password prompt instead of the dead-end status page; a wrong password re-prompts with "That password did not work" and keeps the dialog; cancel returns to the status page; a right password loads the editor, and the same password is used by the thumbnail loader and by Apply. Closing the window drops the password (an assertion that no attribute still references it is brittle; instead assert it is cleared on close). Markup in the file name is escaped, as in phase 3.
+- [x] **Step 3: Implement** an `Adw.AlertDialog` (Adw 1.5) whose extra child is a `Gtk.PasswordEntry` (GTK 4.4), with Unlock and Cancel responses. The password lives in a single window attribute, is passed to workers, is never put in a log message, and is not stored when the window closes.
+- [ ] **Step 4:** Real-daemon verification on a private `fcd`: an encrypted fixture opens with the right password and shows thumbnails; the wrong password re-prompts; check that nothing lands in the persistent thumbnail cache directory for that file. Commit `feat: unlock password-protected PDFs in PDF Studio`. **Open:** only the daemon side is verified end to end (`TestDaemonEndToEndLockedDocument`); the Studio against a real private `fcd` and the persistent-cache check are not recorded.
 
 ### Task 11: The Tools tab
 
 **Files:** Modify `window.py`, `panels.py`. Create `pdf_studio/tools_view.py`. Tests: `test_window_smoke.py`, new `test_tools_view.py`.
 
-- [ ] **Step 1: Failing tests.** The Tools tab lists tools grouped by `Tool.group`; choosing one renders its fields from the schema (one widget per `Field.kind`); invalid input shows the field's error under it and keeps Apply from sending; a valid form sends the exact request `Tool.build` produces with the apply bar's output options; switching tools keeps each tool's entered values; a `file` field uses `Gtk.FileDialog` and shows the chosen name. Locked documents show only **Remove password**.
-- [ ] **Step 2: Implement** `tools_view.py` as a generic renderer over `tools.Tool`. The page-spec field shares the grid's selection: a "Use selected pages" button fills it from the Edit tab's selection.
-- [ ] **Step 3:** The window's `_request()` returns the Tools tab's request when that tab is visible. The apply bar, progress, Cancel and Show in Files are reused unchanged.
-- [ ] **Step 4:** Commit `feat: add a Tools tab to PDF Studio`.
+- [x] **Step 1: Failing tests.** The Tools tab lists tools grouped by `Tool.group`; choosing one renders its fields from the schema (one widget per `Field.kind`); invalid input shows the field's error under it and keeps Apply from sending; a valid form sends the exact request `Tool.build` produces with the apply bar's output options; switching tools keeps each tool's entered values; a `file` field uses `Gtk.FileDialog` and shows the chosen name. Locked documents show only **Remove password**.
+- [x] **Step 2: Implement** `tools_view.py` as a generic renderer over `tools.Tool`. The page-spec field shares the grid's selection: a "Use selected pages" button fills it from the Edit tab's selection.
+- [x] **Step 3:** The window's `_request()` returns the Tools tab's request when that tab is visible. The apply bar, progress, Cancel and Show in Files are reused unchanged.
+- [x] **Step 4:** Commit `feat: add a Tools tab to PDF Studio`.
 
 ### Task 12: Optional preview (allowed to slip)
 
-- [ ] **Step 1:** For stamp, crop, resize, N-up and booklet, a **Preview** button runs the same operation on a one-page extract of the current page into a private temporary directory and shows the result in a `Gtk.Picture` using the existing thumbnail service at a larger width. The preview never writes beside the source and is deleted when the dialog closes.
-- [ ] **Step 2:** If this proves flaky or slow, drop it and note it in the manual checklist; nothing else depends on it.
+- [ ] **Step 1:** For stamp, crop, resize, N-up and booklet, a **Preview** button runs the same operation on a one-page extract of the current page into a private temporary directory and shows the result in a `Gtk.Picture` using the existing thumbnail service at a larger width. The preview never writes beside the source and is deleted when the dialog closes. **Not implemented:** no Preview button exists in PDF Studio (allowed to slip).
+- [ ] **Step 2:** If this proves flaky or slow, drop it and note it in the manual checklist; nothing else depends on it. **Open:** record the drop in the manual checklist.
 
 ### Task 13: Nautilus and installer touch-ups
 
-- [ ] **Step 1:** No new Nautilus entries are needed (all phase 4 tools are studio-mode). Confirm `Customise…` opens a locked PDF straight to the password prompt, not an error notification.
-- [ ] **Step 2:** The installer copies the new Studio modules (it copies the whole package already; add a test that every new module imports from the installed layout, the same check used in phase 3).
-- [ ] **Step 3:** Commit `chore: ship the phase 4 Studio modules`.
+- [ ] **Step 1:** No new Nautilus entries are needed (all phase 4 tools are studio-mode). Confirm `Customise…` opens a locked PDF straight to the password prompt, not an error notification. **Open:** unverified; `file_converter.py` has no locked-PDF handling.
+- [x] **Step 2:** The installer copies the new Studio modules (it copies the whole package already; add a test that every new module imports from the installed layout, the same check used in phase 3).
+- [x] **Step 3:** Commit `chore: ship the phase 4 Studio modules`.
 
 ### Task 14: Verification
 
-- [ ] **Step 1:** `go test ./...`, `go vet ./...`, `gofmt -l .`, every Python suite, `git diff --check`.
-- [ ] **Step 2: Version audit.** Re-run the GIR scan from phase 3 (every Gtk, Adw and Gdk class and method called, including inherited ones) against GTK 4.12 and libadwaita 1.5. Anything newer is replaced or guarded.
-- [ ] **Step 3: Secret audit.** Run an encrypted job end to end on a private daemon with a recognisable password, then grep the daemon's stdout and stderr, the journal for the unit if running one, the private runtime and cache directories, and `/proc/<pid>/cmdline` of every child process while it runs. The password may appear nowhere.
+- [x] **Step 1:** `go test ./...`, `go vet ./...`, `gofmt -l .`, every Python suite, `git diff --check`.
+- [ ] **Step 2: Version audit.** Re-run the GIR scan from phase 3 (every Gtk, Adw and Gdk class and method called, including inherited ones) against GTK 4.12 and libadwaita 1.5. Anything newer is replaced or guarded. **Open:** no GIR scan recorded for the phase 4 widgets.
+- [x] **Step 3: Secret audit.** Run an encrypted job end to end on a private daemon with a recognisable password, then grep the daemon's stdout and stderr, the journal for the unit if running one, the private runtime and cache directories, and `/proc/<pid>/cmdline` of every child process while it runs. The password may appear nowhere. Run on 2026-10-22 against a private `fcd` (private XDG dirs, logging shims on PATH for every Poppler/qpdf call, `fcctl` with password files): info, thumbnails, find, extract, rotate, decrypt, reverse, search-redact, encrypt and permissions. The sentinel passwords appear in no daemon stdout/stderr, runtime or cache file, output, `fcctl` output, user journal, or child-process argument. **Found and fixed:** `pdf_find` and its rotation lookup passed `-upw PASSWORD` to `pdftotext` and `pdfinfo`; they now unlock to a private copy first (`TestFindWithAPasswordNeverPutsItOnACommandLine`). `/proc/PID/cmdline` polling is too slow to catch these short-lived tools, hence the shims.
 - [ ] **Step 4: Manual checklist (required).** On real files, record the result of each:
   - Open a password-protected PDF: prompt appears; wrong password re-prompts; right password shows the grid; **Remove password** writes an unlocked copy that opens in a viewer without a prompt.
   - **Password-protect** a PDF, open it in a viewer: the prompt appears; permissions set to "no printing/copying" are honoured by the viewer.
