@@ -19,6 +19,7 @@ _Gio = import_module("gi.repository.Gio")
 
 from .grid import PageGrid  # noqa: E402
 from .model import EditModel  # noqa: E402
+from .reorder import drop_move  # noqa: E402
 from .panels import ApplyBar, MergePanel, SplitPanel  # noqa: E402
 from .requests import RequestError, edit_request  # noqa: E402
 from .toolbar import ACTION_TABLE, SHORTCUTS, dispatch_action, range_box_state  # noqa: E402
@@ -239,7 +240,7 @@ class StudioWindow(Adw.ApplicationWindow):
         edit.append(row)
         model = self._model
         page_count = model.page_count
-        self._grid = PageGrid(model, loader_factory=lambda callback, error: ThumbnailLoader(_make_client, path, page_count, callback=callback, error_callback=error), on_selection_changed=self._refresh_editor)
+        self._grid = PageGrid(model, loader_factory=lambda callback, error: ThumbnailLoader(_make_client, path, page_count, callback=callback, error_callback=error), on_selection_changed=self._refresh_editor, on_reorder=self._reorder)
         self._grid.set_vexpand(True)
         edit.append(self._grid)
 
@@ -262,6 +263,17 @@ class StudioWindow(Adw.ApplicationWindow):
         self._bar = ApplyBar(self._on_apply, self._on_cancel)
         self._bar.set_folder(folder)
         self._editor.append(self._bar)
+
+    def _reorder(self, dragged, target, after):
+        """A page was dropped on another: move it, with its selection, there."""
+        if self._model is None:
+            return
+        move = drop_move(self._model, dragged, target, after)
+        if move is None:
+            return
+        self._model.selection, index = move
+        self._model.move_to(index)
+        self._refresh_editor()
 
     def _range_changed(self, entry):
         if self._model is None:

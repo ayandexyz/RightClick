@@ -18,16 +18,18 @@ try:  # GTK is deliberately an optional import for headless callers.
     gi.require_version("Gtk", "4.0")
     from importlib import import_module
 
+    Gdk = import_module("gi.repository.Gdk")
     Gio = import_module("gi.repository.Gio")
     GLib = import_module("gi.repository.GLib")
     GObject = import_module("gi.repository.GObject")
     Gtk = import_module("gi.repository.Gtk")
 except (ImportError, ValueError):  # pragma: no cover - depends on the host
-    Gio = GLib = GObject = Gtk = None
+    Gdk = Gio = GLib = GObject = Gtk = None
 
 # PyGObject's dynamic modules are intentionally typed as Any.  Keeping the
 # aliases here also prevents static analyzers from treating the unavailable
 # branch as an object with GTK attributes.
+_Gdk: Any = Gdk
 _Gio: Any = Gio
 _GLib: Any = GLib
 _GObject: Any = GObject
@@ -162,11 +164,14 @@ if GTK_AVAILABLE:
         daemon thumbnail mapping or an object with ``path``.
         """
 
-        def __init__(self, model, loader_factory=None, on_selection_changed=None, width=_THUMBNAIL_WIDTH):
+        def __init__(self, model, loader_factory=None, on_selection_changed=None, on_reorder=None, width=_THUMBNAIL_WIDTH):
             super().__init__(orientation=_Gtk.Orientation.VERTICAL)
             self.model = model
             self._loader_factory: Any = loader_factory
             self._on_selection_changed = on_selection_changed or (lambda: None)
+            # Called as on_reorder(dragged_uid, target_uid, after) when a page is
+            # dropped on another; the owner decides what that does to the model.
+            self._on_reorder = on_reorder or (lambda _dragged, _target, _after: None)
             self._rows = {}
             self._width = width
             self._loader = None
@@ -187,6 +192,7 @@ if GTK_AVAILABLE:
             self.view.set_min_columns(1)
             self.view.set_max_columns(12)
             self.view.set_single_click_activate(False)
+            self.view.set_enable_rubberband(True)
             scroller = _Gtk.ScrolledWindow(hscrollbar_policy=_Gtk.PolicyType.NEVER)
             scroller.set_vexpand(True)
             scroller.set_child(self.view)
@@ -239,7 +245,39 @@ if GTK_AVAILABLE:
             return _GLib.SOURCE_REMOVE
 
         def _setup_cell(self, _factory, list_item):
-            list_item.set_child(PageCell())
+            cell = PageCell()
+            list_item.set_child(cell)
+            source = _Gtk.DragSource(actions=_Gdk.DragAction.MOVE)
+            source.connect("prepare", self._drag_prepare, cell)
+            source.connect("drag-begin", self._drag_begin, cell)
+            cell.add_controller(source)
+            target = _Gtk.DropTarget.new(_GObject.TYPE_STRING, _Gdk.DragAction.MOVE)
+            target.connect("drop", self._drop, cell)
+            cell.add_controller(target)
+
+        @staticmethod
+        def _drag_payload(cell):
+            """What a drag from this cell carries: the page's uid as text."""
+            return None if cell.row is None else str(cell.row.item.uid)
+
+        def _drag_prepare(self, _source, _x, _y, cell):
+            payload = self._drag_payload(cell)
+            return None if payload is None else _Gdk.ContentProvider.new_for_value(payload)
+
+        @staticmethod
+        def _drag_begin(source, _drag, cell):
+            source.set_icon(_Gtk.WidgetPaintable.new(cell), 0, 0)
+
+        def _drop(self, _target, value, x, _y, cell):
+            if cell.row is None:
+                return False
+            try:
+                dragged = int(value)
+            except (TypeError, ValueError):
+                return False
+            # The right half of a cell is "after" it, so the very end is reachable.
+            self._on_reorder(dragged, cell.row.item.uid, x > cell.get_width() / 2)
+            return True
 
         def _bind_cell(self, _factory, list_item):
             cell = list_item.get_child()

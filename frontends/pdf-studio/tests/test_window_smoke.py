@@ -267,6 +267,16 @@ class WindowSmokeTests(unittest.TestCase):
         self.assertEqual(self.cancels, [True])
         self.assertTrue(window._bar._apply.get_sensitive())
 
+    def test_dropping_a_page_reorders_the_document(self):
+        self.fake(self.ready(4))
+        window = self.window(["/tmp/a.pdf"])
+        self.assertTrue(self.pump(lambda: self.page(window) == "ready"))
+        items = window._model.items
+        window._reorder(items[3].uid, items[0].uid, False)
+        self.assertEqual([item.src for item in window._model.items], [4, 1, 2, 3])
+        window._model.undo()
+        self.assertEqual([item.src for item in window._model.items], [1, 2, 3, 4])
+
     def test_a_second_apply_while_one_runs_is_ignored(self):
         self._real_run = self.window_module.run_apply
         self.fake(self.ready(4))
@@ -301,6 +311,44 @@ class PageGridTests(unittest.TestCase):
         self.model = EditModel(4)
         changes = []
         return PageGrid(self.model, loader_factory=lambda cb, err: self.loader, on_selection_changed=lambda: changes.append(1))
+
+    def test_the_grid_allows_rubber_band_selection(self):
+        self.assertTrue(self.grid().view.get_enable_rubberband())
+
+    def test_a_drop_on_a_cell_reports_dragged_target_and_side(self):
+        grid = self.grid()
+        seen = []
+        grid._on_reorder = lambda *args: seen.append(args)
+
+        class Cell:
+            def __init__(self, row):
+                self.row = row
+
+            def get_width(self):
+                return 200
+
+        cell = Cell(grid._rows[self.model.items[2].uid])
+        self.assertTrue(grid._drop(None, str(self.model.items[0].uid), 150, 5, cell))
+        self.assertTrue(grid._drop(None, str(self.model.items[0].uid), 20, 5, cell))
+        self.assertEqual(seen, [(self.model.items[0].uid, self.model.items[2].uid, True),
+                                (self.model.items[0].uid, self.model.items[2].uid, False)])
+        self.assertFalse(grid._drop(None, "not-a-uid", 20, 5, cell))
+        self.assertFalse(grid._drop(None, "1", 20, 5, Cell(None)))
+
+    def test_a_drag_carries_the_uid_of_the_page_under_the_pointer(self):
+        grid = self.grid()
+
+        class Cell:
+            row = grid._rows[self.model.items[1].uid]
+
+        self.assertEqual(grid._drag_payload(Cell()), str(self.model.items[1].uid))
+        provider = grid._drag_prepare(None, 0, 0, Cell())
+        from gi.repository import GObject
+
+        # the drop target only accepts text, so the provider must offer text
+        self.assertTrue(provider.ref_formats().contain_gtype(GObject.TYPE_STRING))
+        Cell.row = None
+        self.assertIsNone(grid._drag_prepare(None, 0, 0, Cell()))
 
     def test_a_refresh_keeps_the_selection(self):
         grid = self.grid()
