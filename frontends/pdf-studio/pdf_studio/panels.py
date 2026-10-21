@@ -9,7 +9,7 @@ import os
 import gi
 
 gi.require_version("Gtk", "4.0")
-from gi.repository import GLib, Gtk  # noqa: E402
+from gi.repository import Gio, GLib, Gtk  # noqa: E402
 
 from .output_panel import CONFLICT_CHOICES, build_output_options  # noqa: E402
 from .pagespec import format_pages  # noqa: E402
@@ -49,6 +49,10 @@ class ApplyBar(Gtk.Box):
         row.append(self._conflict)
         spacer = Gtk.Box(hexpand=True)
         row.append(spacer)
+        self._outputs = []
+        self._reveal = Gtk.Button(label="Show in Files", visible=False)
+        self._reveal.connect("clicked", lambda _b: self._show_in_files())
+        row.append(self._reveal)
         self._cancel = Gtk.Button(label="Cancel", visible=False)
         self._cancel.connect("clicked", lambda _b: self._on_cancel())
         row.append(self._cancel)
@@ -88,7 +92,17 @@ class ApplyBar(Gtk.Box):
     def set_message(self, text):
         self._message.set_text(text)
 
+    def _show_in_files(self):
+        """Open the file manager with the first output selected."""
+        if not self._outputs:
+            return
+        # Gtk.FileLauncher is GTK 4.10+, under the 4.12 minimum.
+        Gtk.FileLauncher.new(Gio.File.new_for_path(self._outputs[0])).open_containing_folder(self.get_root(), None, None, None)
+
     def set_applying(self, applying):
+        if applying:
+            self._outputs = []
+            self._reveal.set_visible(False)
         self._apply.set_sensitive(not applying)
         self._cancel.set_visible(applying)
         self._cancel.set_sensitive(True)
@@ -105,6 +119,8 @@ class ApplyBar(Gtk.Box):
             return False
         self.set_applying(False)
         outputs = [path for item in state.files for path in item.get("outputs", ())]
+        self._outputs = outputs
+        self._reveal.set_visible(bool(outputs))
         self._message.set_text({
             "completed": "Saved " + (", ".join(os.path.basename(p) for p in outputs[:3]) + ("…" if len(outputs) > 3 else "")),
             "completed-with-errors": "Saved with errors",

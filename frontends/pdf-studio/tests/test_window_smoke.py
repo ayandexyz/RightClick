@@ -406,6 +406,25 @@ class PanelTests(unittest.TestCase):
         self.assertIn("a-edited.pdf", bar._message.get_text())
         self.assertFalse(bar._cancel.get_visible())
         self.assertTrue(bar._apply.get_sensitive())
+        self.assertTrue(bar._reveal.get_visible())
+        bar.set_applying(True)
+        self.assertFalse(bar._reveal.get_visible())
+        bar.show_state(JobState("cancelled", 0.2))
+        self.assertFalse(bar._reveal.get_visible())
+
+    def test_show_in_files_opens_the_first_output(self):
+        from unittest import mock
+
+        from pdf_studio.apply import JobState
+        from pdf_studio.panels import ApplyBar
+
+        bar = ApplyBar(lambda: None, lambda: None)
+        bar.show_state(JobState("completed", 1.0, ({"outputs": ["/o/a-part-1.pdf", "/o/a-part-2.pdf"]},)))
+        with mock.patch("pdf_studio.panels.Gtk.FileLauncher") as launcher:
+            bar._reveal.emit("clicked")
+        opened = launcher.new.call_args.args[0]
+        self.assertEqual(opened.get_path(), "/o/a-part-1.pdf")
+        launcher.new.return_value.open_containing_folder.assert_called_once()
 
 
 _PNG = bytes.fromhex(
