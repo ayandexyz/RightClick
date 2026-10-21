@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -61,8 +62,16 @@ func (l *LibreOffice) Convert(ctx context.Context, input, output string) error {
 		return err
 	}
 	defer os.RemoveAll(outDir)
+	if err := checkOfficeContent(input); err != nil {
+		return err
+	}
+	// soffice rejects "--", so the input must not look like an option: an
+	// absolute path always starts with a slash.
+	if input, err = filepath.Abs(input); err != nil {
+		return err
+	}
 	args := []string{"--headless", "--norestore", "--convert-to", "pdf", "--outdir", outDir,
-		"-env:UserInstallation=file://" + profile, "--", input}
+		"-env:UserInstallation=file://" + profile, input}
 	if err := l.runner(convertCtx, binary, args); err != nil {
 		if convertCtx.Err() != nil {
 			return convertCtx.Err()
@@ -79,6 +88,36 @@ func (l *LibreOffice) Convert(ctx context.Context, input, output string) error {
 	}
 	if err := os.WriteFile(output, data, 0o600); err != nil {
 		return fmt.Errorf("publish soffice PDF: %w", err)
+	}
+	return nil
+}
+
+// checkOfficeContent refuses a file whose bytes do not match its extension.
+// LibreOffice would otherwise import a damaged ".docx" as plain text and
+// produce a PDF of the garbage, which looks like success.
+func checkOfficeContent(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	head := make([]byte, 8)
+	n, _ := f.Read(head)
+	head = head[:n]
+	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(path), "."))
+	var want []byte
+	switch ext {
+	case "docx", "xlsx", "pptx", "odt", "ods", "odp":
+		want = []byte("PK\x03\x04")
+	case "doc", "xls", "ppt":
+		want = []byte{0xD0, 0xCF, 0x11, 0xE0}
+	case "rtf":
+		want = []byte("{\\rtf")
+	default:
+		return nil
+	}
+	if !bytes.HasPrefix(head, want) {
+		return fmt.Errorf("%s is not a valid .%s document", filepath.Base(path), ext)
 	}
 	return nil
 }

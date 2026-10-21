@@ -3,6 +3,7 @@ package pdfops
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -55,7 +56,7 @@ func TestLibreOfficeConvertUsesPrivateProfileAndCleansIt(t *testing.T) {
 	engine := NewLibreOffice(runner)
 	input := filepath.Join(t.TempDir(), "report.docx")
 	output := filepath.Join(t.TempDir(), "report.pdf")
-	if err := os.WriteFile(input, []byte("office"), 0o600); err != nil {
+	if err := os.WriteFile(input, []byte("PK\x03\x04office"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := engine.Convert(context.Background(), input, output); err == nil {
@@ -81,8 +82,8 @@ func TestLibreOfficeConvertCleansProfileOnSuccess(t *testing.T) {
 			if arg == "--outdir" {
 				outDir = args[i+1]
 			}
-			if arg == "--" {
-				input = args[i+1]
+			if i == len(args)-1 {
+				input = arg
 			}
 		}
 		return os.WriteFile(filepath.Join(outDir, strings.TrimSuffix(filepath.Base(input), filepath.Ext(input))+".pdf"), []byte("%PDF-1.7\n"), 0o600)
@@ -90,7 +91,7 @@ func TestLibreOfficeConvertCleansProfileOnSuccess(t *testing.T) {
 	engine := NewLibreOffice(runner)
 	input := filepath.Join(t.TempDir(), "report.docx")
 	output := filepath.Join(t.TempDir(), "report.pdf")
-	if err := os.WriteFile(input, []byte("office"), 0o600); err != nil {
+	if err := os.WriteFile(input, []byte("PK\x03\x04office"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := engine.Convert(context.Background(), input, output); err != nil {
@@ -110,7 +111,7 @@ func TestLibreOfficeConvertAppliesTimeout(t *testing.T) {
 	}
 	engine := NewLibreOffice(runner)
 	input := filepath.Join(t.TempDir(), "report.docx")
-	if err := os.WriteFile(input, []byte("office"), 0o600); err != nil {
+	if err := os.WriteFile(input, []byte("PK\x03\x04office"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -131,14 +132,14 @@ func TestLibreOfficeConvertRejectsInvalidGeneratedPDF(t *testing.T) {
 			if arg == "--outdir" {
 				outDir = args[i+1]
 			}
-			if arg == "--" {
-				input = args[i+1]
+			if i == len(args)-1 {
+				input = arg
 			}
 		}
 		return os.WriteFile(filepath.Join(outDir, strings.TrimSuffix(filepath.Base(input), filepath.Ext(input))+".pdf"), []byte("not a pdf"), 0o600)
 	}
 	input := filepath.Join(t.TempDir(), "report.docx")
-	if err := os.WriteFile(input, []byte("office"), 0o600); err != nil {
+	if err := os.WriteFile(input, []byte("PK\x03\x04office"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	output := filepath.Join(t.TempDir(), "report.pdf")
@@ -165,7 +166,7 @@ func TestLibreOfficeConvertCleansProfileOnCancellation(t *testing.T) {
 	}
 	engine := NewLibreOffice(runner)
 	input := filepath.Join(t.TempDir(), "report.docx")
-	if err := os.WriteFile(input, []byte("office"), 0o600); err != nil {
+	if err := os.WriteFile(input, []byte("PK\x03\x04office"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := engine.Convert(ctx, input, filepath.Join(t.TempDir(), "report.pdf")); !errors.Is(err, context.Canceled) {
@@ -188,5 +189,58 @@ func TestToolboxMissingLibreOfficeOnlyDisablesOffice(t *testing.T) {
 	pdf, _ := Lookup("pdf-reverse")
 	if got := pdf.UnavailableReason(tb, []string{"report.pdf"}); got != "" {
 		t.Fatalf("pdf-reverse unexpectedly unavailable: %q", got)
+	}
+}
+
+// soffice has no "--" separator and exits with a usage error when given one, so
+// the input goes last and is always an absolute path: a file called "-x.docx"
+// can then never be read as an option.
+func TestLibreOfficeConvertPassesTheInputLastAsAnAbsolutePath(t *testing.T) {
+	var got []string
+	runner := func(_ context.Context, _ string, args []string) error {
+		got = args
+		return fmt.Errorf("stop here")
+	}
+	dir := t.TempDir()
+	_ = NewLibreOffice(runner).Convert(context.Background(), "-x.docx", filepath.Join(dir, "out.pdf"))
+	if len(got) == 0 {
+		t.Skip("soffice is not installed")
+	}
+	for _, arg := range got {
+		if arg == "--" {
+			t.Fatalf("soffice does not accept %q: %v", arg, got)
+		}
+	}
+	if last := got[len(got)-1]; !filepath.IsAbs(last) || filepath.Base(last) != "-x.docx" {
+		t.Fatalf("input = %q, want an absolute path to -x.docx", last)
+	}
+}
+
+func TestCheckOfficeContentRefusesAFileThatIsNotWhatItsNameSays(t *testing.T) {
+	write := func(name, body string) string {
+		path := filepath.Join(t.TempDir(), name)
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	for _, c := range []struct {
+		name, body string
+		ok         bool
+	}{
+		{"a.docx", "PK\x03\x04rest", true},
+		{"a.odt", "this is text", false},
+		{"a.xlsx", "", false},
+		{"a.doc", "\xD0\xCF\x11\xE0\xA1", true},
+		{"a.ppt", "PK\x03\x04", false},
+		{"a.rtf", `{\rtf1 hello}`, true},
+		{"a.rtf", "plain", false},
+		{"a.txt", "anything", true},
+		{"a.csv", "a,b", true},
+		{"A.DOCX", "PK\x03\x04", true},
+	} {
+		if err := checkOfficeContent(write(c.name, c.body)); (err == nil) != c.ok {
+			t.Errorf("%s %q: err = %v, want ok=%v", c.name, c.body, err, c.ok)
+		}
 	}
 }
