@@ -82,7 +82,7 @@ Install the Nautilus integration with `./frontends/nautilus/install.sh`. When GT
 
 If the GTK dependencies are unavailable, the Nautilus extension and daemon still install normally; only the Studio files are skipped. Remove the integration and Studio files with `./frontends/nautilus/uninstall.sh`.
 
-PDF Studio supports page reordering through its toolbar buttons and shortcuts: `Alt+Left`/`Alt+Right` moves the selection one place, while `Alt+Home`/`Alt+End` moves it to the beginning or end. Drag-and-drop is intentionally not required, so these controls remain reliable across GTK versions.
+PDF Studio reorders pages by dragging them (the whole selection moves when you drag a selected page; drop on the left or right half of a page to go before or after it) and through toolbar buttons and shortcuts: `Alt+Left`/`Alt+Right` moves the selection one place, while `Alt+Home`/`Alt+End` moves it to the beginning or end. Drag a rectangle over empty space to select several pages. When merging, the arrows on each row set the order the files are merged in.
 
 ## Backend status
 

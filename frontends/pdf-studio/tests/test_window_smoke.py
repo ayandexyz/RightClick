@@ -248,7 +248,7 @@ class WindowSmokeTests(unittest.TestCase):
         self.fake_apply()
         window = self.window(["/tmp/a.pdf", "/tmp/b.pdf"])
         self.assertTrue(self.pump(lambda: self.page(window) == "ready"))
-        window._merge._entries[1].set_text("2-4")
+        window._merge._rows[1]["entry"].set_text("2-4")
         window._on_apply()
         self.assertTrue(self.pump(lambda: bool(self.requests)))
         self.assertEqual(self.requests[0]["params"], {"file_pages": ["", "2-4"]})
@@ -266,6 +266,17 @@ class WindowSmokeTests(unittest.TestCase):
         self.assertTrue(self.pump(lambda: window._bar.get_visible() and window._bar._message.get_text() == "Cancelled"))
         self.assertEqual(self.cancels, [True])
         self.assertTrue(window._bar._apply.get_sensitive())
+
+    def test_a_reordered_merge_sends_the_files_in_the_new_order(self):
+        self._real_run = self.window_module.run_apply
+        self.fake(self.ready(3), self.ready(5))
+        self.fake_apply()
+        window = self.window(["/tmp/a.pdf", "/tmp/b.pdf"])
+        self.assertTrue(self.pump(lambda: self.page(window) == "ready"))
+        window._merge.move(1, -1)
+        window._on_apply()
+        self.assertTrue(self.pump(lambda: bool(self.requests)))
+        self.assertEqual(self.requests[0]["files"], ["/tmp/b.pdf", "/tmp/a.pdf"])
 
     def test_dropping_a_page_reorders_the_document(self):
         self.fake(self.ready(4))
@@ -421,14 +432,36 @@ class PanelTests(unittest.TestCase):
 
         panel = MergePanel(["/tmp/a.pdf", "/tmp/b.pdf"], [3, 5])
         self.assertEqual(panel.request(), ("pdf-merge", {}))
-        panel._entries[1].set_text("2-9")
+        panel._rows[1]["entry"].set_text("2-9")
         with self.assertRaises(RequestError) as caught:
             panel.request()
         self.assertIn("b.pdf", str(caught.exception))
         self.assertTrue(panel._error.get_text())
-        panel._entries[1].set_text("2-4")
+        panel._rows[1]["entry"].set_text("2-4")
         self.assertEqual(panel.request(), ("pdf-merge", {"file_pages": ["", "2-4"]}))
         self.assertEqual(panel._error.get_text(), "")
+
+    def test_moving_a_merge_row_reorders_the_files_and_keeps_its_range(self):
+        from pdf_studio.panels import MergePanel
+
+        panel = MergePanel(["/t/a.pdf", "/t/b.pdf", "/t/c.pdf"], [3, 5, 4])
+        panel._rows[1]["entry"].set_text("2-3")
+        panel.move(1, -1)
+        self.assertEqual(panel.paths(), ["/t/b.pdf", "/t/a.pdf", "/t/c.pdf"])
+        self.assertEqual(panel.specs(), ["2-3", "", ""])
+        self.assertEqual(panel.request(), ("pdf-merge", {"file_pages": ["2-3", "", ""]}))
+        panel.move(0, -1)  # already first: nothing happens
+        panel.move(2, 1)   # already last
+        self.assertEqual(panel.paths(), ["/t/b.pdf", "/t/a.pdf", "/t/c.pdf"])
+
+    def test_the_first_row_cannot_move_up_and_the_last_cannot_move_down(self):
+        from pdf_studio.panels import MergePanel
+
+        panel = MergePanel(["/t/a.pdf", "/t/b.pdf"], [1, 2])
+        first, last = panel._list.get_first_child(), panel._list.get_last_child()
+        self.assertFalse(first.get_first_child().get_sensitive())
+        self.assertTrue(first.get_first_child().get_next_sibling().get_sensitive())
+        self.assertFalse(last.get_first_child().get_next_sibling().get_sensitive())
 
     def test_the_bar_maps_choices_to_daemon_options(self):
         from pdf_studio.panels import ApplyBar

@@ -327,7 +327,8 @@ class StudioWindow(Adw.ApplicationWindow):
         except RequestError as error:
             self._bar.set_message(str(error))
             return
-        request = {"files": list(self._paths), "op": op, "params": params}
+        files = self._merge.paths() if self._merge is not None else list(self._paths)
+        request = {"files": files, "op": op, "params": params}
         request.update(self._bar.output_options())
         cancel_event = self._cancel_event = threading.Event()
         self._bar.set_applying(True)

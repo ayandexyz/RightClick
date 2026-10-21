@@ -196,30 +196,66 @@ class SplitPanel(Gtk.Box):
 
 
 class MergePanel(Gtk.Box):
-    """One row per file, in the order given, each with an optional page range."""
+    """One row per file, in merge order, each with an optional page range.
+
+    The arrows reorder the files; the order shown is the order merged.
+    """
 
     def __init__(self, paths, page_counts):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         _margins(self, 12, 12)
-        self._paths, self._counts = list(paths), list(page_counts)
-        self._entries = []
-        self._error = Gtk.Label(xalign=0, wrap=True)
-        self._error.add_css_class("error")
-        for path, count in zip(self._paths, self._counts):
-            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-            name = Gtk.Label(label=os.path.basename(path), xalign=0, hexpand=True, ellipsize=3)
-            name.set_tooltip_text(path)
-            row.append(name)
-            row.append(Gtk.Label(label=f"{count} page{'s' if count != 1 else ''}", css_classes=["dim-label"]))
+        # One record per file; the entry keeps its text when the row moves.
+        self._rows = []
+        for path, count in zip(paths, page_counts):
             entry = Gtk.Entry(placeholder_text="All pages", width_chars=14)
             entry.connect("changed", lambda _e: self._validate())
-            self._entries.append(entry)
-            row.append(entry)
-            self.append(row)
+            self._rows.append({"path": path, "count": count, "entry": entry})
+        self._list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        self.append(self._list)
+        self._error = Gtk.Label(xalign=0, wrap=True)
+        self._error.add_css_class("error")
         self.append(self._error)
+        self._rebuild()
+
+    def _rebuild(self):
+        child = self._list.get_first_child()
+        while child is not None:
+            following = child.get_next_sibling()
+            self._list.remove(child)
+            child = following
+        last = len(self._rows) - 1
+        for index, record in enumerate(self._rows):
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            up = Gtk.Button(icon_name="go-up-symbolic", tooltip_text="Merge earlier", sensitive=index > 0)
+            up.connect("clicked", lambda _b, i=index: self.move(i, -1))
+            down = Gtk.Button(icon_name="go-down-symbolic", tooltip_text="Merge later", sensitive=index < last)
+            down.connect("clicked", lambda _b, i=index: self.move(i, 1))
+            row.append(up)
+            row.append(down)
+            name = Gtk.Label(label=f"{index + 1}. {os.path.basename(record['path'])}", xalign=0, hexpand=True, ellipsize=3)
+            name.set_tooltip_text(record["path"])
+            row.append(name)
+            count = record["count"]
+            row.append(Gtk.Label(label=f"{count} page{'s' if count != 1 else ''}", css_classes=["dim-label"]))
+            entry = record["entry"]
+            if entry.get_parent() is not None:
+                entry.unparent()
+            row.append(entry)
+            self._list.append(row)
+
+    def move(self, index, step):
+        target = index + step
+        if not 0 <= target < len(self._rows):
+            return
+        self._rows[index], self._rows[target] = self._rows[target], self._rows[index]
+        self._rebuild()
+        self._validate()
+
+    def paths(self):
+        return [record["path"] for record in self._rows]
 
     def specs(self):
-        return [entry.get_text() for entry in self._entries]
+        return [record["entry"].get_text() for record in self._rows]
 
     def _validate(self):
         try:
@@ -230,5 +266,5 @@ class MergePanel(Gtk.Box):
         self._error.set_text("")
 
     def request(self):
-        names = [os.path.basename(path) for path in self._paths]
-        return merge_request(names, self.specs(), self._counts)
+        names = [os.path.basename(path) for path in self.paths()]
+        return merge_request(names, self.specs(), [record["count"] for record in self._rows])
