@@ -35,17 +35,32 @@ class ApplyTests(unittest.TestCase):
     def test_run_apply_reports_states_and_cancels(self):
         cancelled = threading.Event()
         seen = []
+        states = []
 
         class Client:
             def run_operation(self, paths, op, params=None, **kwargs):
                 seen.append((paths, op, params, kwargs))
-                yield {"event": "job.updated", "data": {"state": "running", "progress": 0.1}}
-                cancelled.set()
-                yield {"event": "job.finished", "data": {"state": "cancelled"}}
+                yield {"event": "job.updated", "data": {"id": "job-1", "state": "running", "progress": 0.1}}
+                while not self.cancelled:
+                    yield {"event": "job.updated", "data": {"id": "job-1", "state": "running", "progress": 0.2}}
+                yield {"event": "job.finished", "data": {"id": "job-1", "state": "cancelled"}}
 
-        run_apply(lambda: Client(), {"files": ["a.pdf"], "op": "pdf-edit", "params": {"edit": []}}, seen.append, cancelled)
-        self.assertEqual(seen[0][1], "pdf-edit")
-        self.assertEqual(seen[-1].status, "cancelled")
+            def __init__(self):
+                self.cancelled = False
+
+            def cancel_job(self, job_id):
+                seen.append(("cancel", job_id))
+                self.cancelled = True
+
+        client = Client()
+        def report(state):
+            states.append(state)
+            if state.status == "running":
+                cancelled.set()
+        run_apply(lambda: client, {"files": ["a.pdf"], "op": "pdf-edit", "params": {"edit": []}}, report, cancelled)
+        self.assertEqual(states[0].status, "running")
+        self.assertIn(("cancel", "job-1"), seen)
+        self.assertEqual(states[-1].status, "cancelled")
 
 
 if __name__ == "__main__":
