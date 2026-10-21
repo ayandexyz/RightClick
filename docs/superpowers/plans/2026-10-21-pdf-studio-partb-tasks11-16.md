@@ -32,11 +32,11 @@
 - `PageCell` renders one `PageItem` and exposes an accessible `Page N` label.
 - `PageGrid(model, loader_factory, on_selection_changed)` owns `Gio.ListStore` and `Gtk.MultiSelection` when GTK is available.
 
-- [ ] Write loader tests for 20-page batching, visible-first ordering, in-flight de-duplication, retry-once, callback delivery, and stop.
-- [ ] Implement the GTK-independent loader using one worker per loader and a dedicated client connection per batch.
-- [ ] Implement `Gtk.GridView` cell factory with fixed-height placeholders, blank-page cells, source badges, rotation state, and accessible labels.
-- [ ] Integrate the grid into the ready window path without blocking the GTK main loop.
-- [ ] Run `python3 -m unittest discover -s frontends/pdf-studio/tests` and commit `feat: add PDF Studio thumbnail grid`.
+- [x] Write loader tests for 20-page batching, visible-first ordering, in-flight de-duplication, retry-once, callback delivery, and stop.
+- [x] Implement the GTK-independent loader using one worker per loader and a dedicated client connection per batch.
+- [x] Implement `Gtk.GridView` cell factory with fixed-height placeholders, blank-page cells, source badges, rotation state, and accessible labels.
+- [x] Integrate the grid into the ready window path without blocking the GTK main loop.
+- [x] Run `python3 -m unittest discover -s frontends/pdf-studio/tests` and commit `feat: add PDF Studio thumbnail grid`.
 
 ### Task 12: Actions, range box, undo/redo, shortcuts
 
@@ -50,10 +50,10 @@
 - `dispatch_action(model, action_id)` returns the model `Outcome`.
 - `range_box_state(model, text)` returns valid/invalid status without mutating selection on invalid input.
 
-- [ ] Test every action ID, enabled-state rules, invalid range preservation, and range round trips.
-- [ ] Implement toolbar buttons, status line, debounced range input, undo/redo, zoom, and documented keyboard shortcuts.
-- [ ] Connect selection changes to the model and preserve selection while updating the range entry.
-- [ ] Run frontend tests and commit `feat: add PDF Studio page actions and shortcuts`.
+- [x] Test every action ID, enabled-state rules, invalid range preservation, and range round trips.
+- [x] Implement toolbar buttons, status line, debounced range input, undo/redo, zoom, and documented keyboard shortcuts.
+- [x] Connect selection changes to the model and preserve selection while updating the range entry.
+- [x] Run frontend tests and commit `feat: add PDF Studio page actions and shortcuts`.
 
 ### Task 13: Reordering
 
@@ -61,9 +61,9 @@
 - Modify: `frontends/pdf-studio/pdf_studio/grid.py`, `toolbar.py`, `window.py`
 - Test: extend `test_actions.py` and model tests as needed
 
-- [ ] Add mandatory move-left/right/start/end controls and `Alt` shortcuts using existing model block semantics.
-- [ ] Add drag/drop only if the GTK API is reliable in the available environment; otherwise document button/keyboard fallback in README.
-- [ ] Run tests and commit `feat: add PDF Studio page reordering`.
+- [x] Add mandatory move-left/right/start/end controls and `Alt` shortcuts using existing model block semantics.
+- [x] Add drag/drop only if the GTK API is reliable in the available environment; otherwise document button/keyboard fallback in README.
+- [x] Run tests and commit `feat: add PDF Studio page reordering`.
 
 ### Task 14: Split and merge views
 
@@ -76,10 +76,10 @@
 - `split_preview(page_count, mode, value)` returns `{parts, error}` and mirrors daemon limits.
 - `merge_preview(files, file_pages)` validates aligned ranges and returns ordered rows/errors.
 
-- [ ] Test bad ranges, empty groups, single-file splits, 200-part ceiling, every-N remainders, aligned merge specs, and per-file errors.
-- [ ] Implement split segmented controls, live preview, read-only page coloring, merge rows, add/remove/reorder controls, and page-range fields.
-- [ ] Integrate mode switching into the window for one versus multiple inputs.
-- [ ] Run tests and commit `feat: add PDF Studio split and merge views`.
+- [x] Test bad ranges, empty groups, single-file splits, 200-part ceiling, every-N remainders, aligned merge specs, and per-file errors.
+- [x] Implement split segmented controls, live preview, read-only page coloring, merge rows, add/remove/reorder controls, and page-range fields.
+- [x] Integrate mode switching into the window for one versus multiple inputs.
+- [x] Run tests and commit `feat: add PDF Studio split and merge views`.
 
 ### Task 15: Apply flow and error handling
 
@@ -94,10 +94,10 @@
 - `friendly_apply_error(code, message)` delegates to `fc_client.messages` wording.
 - `run_apply(client_factory, request, on_event, cancel_event)` uses a dedicated connection and sends cancel on request.
 
-- [ ] Test event reduction, output option mapping, friendly errors, and cancellation behavior without GTK.
-- [ ] Implement output destination/conflict popover, worker-thread apply, progress/cancel, retry for daemon-down, success toast, and Show in Files fallback.
-- [ ] Add unsaved-edits close confirmation and keep source model unchanged after success.
-- [ ] Run tests and commit `feat: add PDF Studio apply flow`.
+- [x] Test event reduction, output option mapping, friendly errors, and cancellation behavior without GTK.
+- [x] Implement output destination/conflict popover, worker-thread apply, progress/cancel, retry for daemon-down, success toast, and Show in Files fallback.
+- [x] Add unsaved-edits close confirmation and keep source model unchanged after success.
+- [x] Run tests and commit `feat: add PDF Studio apply flow`.
 
 ### Task 16: Nautilus, installer, desktop entry, verification
 
@@ -106,11 +106,11 @@
 - Create: `frontends/pdf-studio/io.fileconverter.PdfStudio.desktop`
 - Test: `frontends/nautilus/tests/test_extension_menu.py`, `test_install.py`
 
-- [ ] Test Customise visibility and activation for PDF-only selections, missing launcher, mixed selections, and ordered paths.
-- [ ] Implement launcher detection and `_spawn_helper` activation as the last PDF Tools entry.
-- [ ] Implement dependency-gated Studio installation, exact uninstallation, launcher path setup, desktop entry, and update-desktop-database.
-- [ ] Run all Go checks and every Python test directory; run the GUI/manual checklist where GTK/display/dependencies permit and record skipped checks honestly.
-- [ ] Commit `feat: open PDF Studio from Nautilus and install it`.
+- [x] Test Customise visibility and activation for PDF-only selections, missing launcher, mixed selections, and ordered paths.
+- [x] Implement launcher detection and `_spawn_helper` activation as the last PDF Tools entry.
+- [x] Implement dependency-gated Studio installation, exact uninstallation, launcher path setup, desktop entry, and update-desktop-database.
+- [ ] Run all Go checks and every Python test directory; run the GUI/manual checklist where GTK/display/dependencies permit and record skipped checks honestly. **Open (manual part):** Go and Python suites pass; the GUI checklist was not recorded.
+- [x] Commit `feat: open PDF Studio from Nautilus and install it`.
 
 ## Final Verification
 

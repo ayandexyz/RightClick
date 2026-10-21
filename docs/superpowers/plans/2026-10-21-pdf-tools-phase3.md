@@ -57,10 +57,10 @@
 
 The Nautilus extension and the Studio both need the client and the same friendly error wording, so neither may own it.
 
-- [ ] **Step 1:** `git mv` the package; update `install.sh` to copy from `frontends/common/fc_client` (installed layout unchanged: `extensions/fc_client/`), update `uninstall.sh` if paths changed, and make tests import from the new location. Do the Omarchy plugin too if it imports the client.
-- [ ] **Step 2:** Move the error-code-to-sentence mapping out of `file_converter.py` into `messages.py` as `friendly_error(code, message, name) -> str` covering `password_required`, `invalid_pdf`, and a default; keep wording identical so existing notification tests pass unchanged. Add tests for each code.
-- [ ] **Step 3:** Run `python3 -m unittest discover -s frontends/nautilus/tests`, the Omarchy tests, and the new common tests. Reinstall is not needed to run the tests, but note in the commit that users must rerun `install.sh`.
-- [ ] **Step 4: Commit.**
+- [x] **Step 1:** `git mv` the package; update `install.sh` to copy from `frontends/common/fc_client` (installed layout unchanged: `extensions/fc_client/`), update `uninstall.sh` if paths changed, and make tests import from the new location. Do the Omarchy plugin too if it imports the client.
+- [x] **Step 2:** Move the error-code-to-sentence mapping out of `file_converter.py` into `messages.py` as `friendly_error(code, message, name) -> str` covering `password_required`, `invalid_pdf`, and a default; keep wording identical so existing notification tests pass unchanged. Add tests for each code.
+- [x] **Step 3:** Run `python3 -m unittest discover -s frontends/nautilus/tests`, the Omarchy tests, and the new common tests. Reinstall is not needed to run the tests, but note in the commit that users must rerun `install.sh`.
+- [x] **Step 4: Commit.**
 
 ```bash
 git add -A frontends
@@ -75,8 +75,8 @@ git commit -m "refactor: share the daemon client and error wording across fronte
 
 The Studio needs a Python page-spec parser (Task 9) for the range box. Two parsers will drift unless both are tested against the same cases.
 
-- [ ] **Step 1:** Extract the existing Go table cases into the JSON file as `{spec, page_count, want: [..] | null, error: bool}` and make the Go test load it. Add cases the Studio needs: `""` (empty selection is an error for Go, but record it so Python can choose to treat it as "no selection"), whitespace, `z`, `-3`, `2-`, overlaps, and out-of-range.
-- [ ] **Step 2:** Run `go test ./internal/pdfops`; commit.
+- [x] **Step 1:** Extract the existing Go table cases into the JSON file as `{spec, page_count, want: [..] | null, error: bool}` and make the Go test load it. Add cases the Studio needs: `""` (empty selection is an error for Go, but record it so Python can choose to treat it as "no selection"), whitespace, `z`, `-3`, `2-`, overlaps, and out-of-range.
+- [x] **Step 2:** Run `go test ./internal/pdfops`; commit.
 
 ```bash
 git add backend/internal/pdfops
@@ -91,8 +91,8 @@ git commit -m "test: share page-spec cases as JSON"
 
 **Behaviour:** page count comes from the pdfcpu backend (its error mapping already yields `password_required` and the daemon already classifies `invalid_pdf`); page sizes and rotations come from `pdfinfo -f 1 -l N` (parse `Page   N size: W x H pts` and `Page   N rot: R`). If `pdfinfo` is missing or its output cannot be parsed, return `pages` only; the Studio does not depend on sizes. Cap parsing at the page ceiling.
 
-- [ ] **Step 1: Write failing tests:** fake-runner output parsing (including an unrecognised line), missing `pdfinfo` yields pages only, protocol validation (absolute path, non-PDF rejected), server round trip for a good, encrypted and corrupt file.
-- [ ] **Step 2: Implement; add `fcctl pdf info FILE`. Run tests; commit.**
+- [x] **Step 1: Write failing tests:** fake-runner output parsing (including an unrecognised line), missing `pdfinfo` yields pages only, protocol validation (absolute path, non-PDF rejected), server round trip for a good, encrypted and corrupt file.
+- [x] **Step 2: Implement; add `fcctl pdf info FILE`. Run tests; commit.**
 
 ```bash
 git add backend docs/PROTOCOL.md
@@ -115,10 +115,10 @@ git commit -m "feat: add pdf_info"
 - Reject `width` outside 64–800, more than 50 pages, pages beyond the document, and encrypted or damaged files with the same codes as `pdf_info`.
 - Add `fcctl pdf thumbs FILE --pages 1-5 --width 200` (prints paths) and `fcctl cache clear`.
 
-- [ ] **Step 1: Write failing tests:** cache hit avoids invoking the renderer (count calls on a fake runner); key is content-based (copy the file elsewhere, same key; change one byte, different key); permissions are 0700/0600; prune by age and by size; young files survive pruning; concurrent identical requests render once; width and page bounds; cancellation leaves no partial file.
-- [ ] **Step 2: Implement. Add a real-binary test (skipped without `pdftocairo`)** that renders a 3-page fixture and checks three decodable PNGs of the requested width.
-- [ ] **Step 3:** Document the privacy note in `docs/PROTOCOL.md` and the README (thumbnails are cached for up to 7 days; `fcctl cache clear` removes them).
-- [ ] **Step 4: Commit.**
+- [x] **Step 1: Write failing tests:** cache hit avoids invoking the renderer (count calls on a fake runner); key is content-based (copy the file elsewhere, same key; change one byte, different key); permissions are 0700/0600; prune by age and by size; young files survive pruning; concurrent identical requests render once; width and page bounds; cancellation leaves no partial file.
+- [x] **Step 2: Implement. Add a real-binary test (skipped without `pdftocairo`)** that renders a 3-page fixture and checks three decodable PNGs of the requested width.
+- [x] **Step 3:** Document the privacy note in `docs/PROTOCOL.md` and the README (thumbnails are cached for up to 7 days; `fcctl cache clear` removes them).
+- [x] **Step 4: Commit.**
 
 ```bash
 git add backend docs README.md
@@ -148,10 +148,10 @@ Assemble(ctx context.Context, input, output string, items []PageItem) error
 
 Validation: `edit` non-empty, at most 1000 items, `rotate` one of the four values, `src` in `0..pageCount` (checked at run time against the real count with a precise message such as `page 12 is past the last page (10)`). `pdf-edit` is studio mode and takes no `pages`, `angle`, `ranges` or `every`.
 
-- [ ] **Step 1: Write failing tests with the fake backend:** exact `Collect`, insert, and `Rotate` call sequences for: reorder only; delete (omitted pages); duplicate; a blank at the start, middle and end; mixed rotations; rotate on a duplicated page rotates only that copy; all-blank rejected; out-of-range source rejected; 1001 items rejected.
-- [ ] **Step 2: Real-binary test** (pdfcpu is linked in; use `pdftotext` for order when present): build a 4-page text fixture, assemble `[3, 1+rot90, blank, 3, 4]`, and assert page count 5, text order `PAGE3 PAGE1 (blank) PAGE3 PAGE4`, rotation of page 2 is 90 and others 0 via `pdfinfo`.
-- [ ] **Step 3:** Wire the protocol `Params.edit` field, validation, and the server; add `fcctl pdf edit FILE --edit '3,1r90,b,3,4'` (a compact form: number = source page, `rN` suffix = rotation, `b` = blank) so the operation is testable without the GUI.
-- [ ] **Step 4: Commit.**
+- [x] **Step 1: Write failing tests with the fake backend:** exact `Collect`, insert, and `Rotate` call sequences for: reorder only; delete (omitted pages); duplicate; a blank at the start, middle and end; mixed rotations; rotate on a duplicated page rotates only that copy; all-blank rejected; out-of-range source rejected; 1001 items rejected.
+- [x] **Step 2: Real-binary test** (pdfcpu is linked in; use `pdftotext` for order when present): build a 4-page text fixture, assemble `[3, 1+rot90, blank, 3, 4]`, and assert page count 5, text order `PAGE3 PAGE1 (blank) PAGE3 PAGE4`, rotation of page 2 is 90 and others 0 via `pdfinfo`.
+- [x] **Step 3:** Wire the protocol `Params.edit` field, validation, and the server; add `fcctl pdf edit FILE --edit '3,1r90,b,3,4'` (a compact form: number = source page, `rN` suffix = rotation, `b` = blank) so the operation is testable without the GUI.
+- [x] **Step 4: Commit.**
 
 ```bash
 git add backend
@@ -170,15 +170,15 @@ Phase 2's `runNumberedOperation` is written for image extraction: it globs `*.pn
 - `pdf-split-ranges` (`ranges`) and `pdf-split-every` (`every`): `Numbered`, `OutputExt: "pdf"`, `Suffix: "-part"`, outputs `<stem>-part-1.pdf`, `-part-2.pdf`, …. Each part is one `Collect` into the staging directory.
 - Rules: `ranges` groups are independent and may overlap; an empty group, a bad spec, or a page out of range fails the whole job before any part is written; `every` must be ≥ 1 and less than the page count, otherwise fail with `split would produce a single file`; a split that would yield more than 200 parts is rejected.
 
-- [ ] **Step 1: Generalise the numbered path (refactor commit).**
+- [x] **Step 1: Generalise the numbered path (refactor commit).**
 
 ```bash
 git add backend
 git commit -m "refactor: let numbered operations choose their extension and empty notice"
 ```
 
-- [ ] **Step 2: Write failing tests** for both split operations (counts, names, page contents via the fake, overlapping ranges, every-N remainder part, rejected inputs, atomic publish: if the third part cannot be published the first two are rolled back, rename conflict only renames the colliding part).
-- [ ] **Step 3: Implement, add `fcctl pdf split-ranges FILE --ranges '1-3;4-6;7-'` and `fcctl pdf split-every FILE --every 5`, add a real-binary e2e test, commit.**
+- [x] **Step 2: Write failing tests** for both split operations (counts, names, page contents via the fake, overlapping ranges, every-N remainder part, rejected inputs, atomic publish: if the third part cannot be published the first two are rolled back, rename conflict only renames the colliding part).
+- [x] **Step 3: Implement, add `fcctl pdf split-ranges FILE --ranges '1-3;4-6;7-'` and `fcctl pdf split-every FILE --every 5`, add a real-binary e2e test, commit.**
 
 ```bash
 git add backend
@@ -193,8 +193,8 @@ git commit -m "feat: add split by ranges and split every N pages"
 
 `pdf-merge` accepts `file_pages` (aligned with `files`; `""` = all pages). For each file with a non-empty spec, `Collect` the pages into a private temp file, then `Merge` the resulting list in the given order. Order is simply the order of `files`. Validation: length must equal the file count; any bad spec fails the job before output; a spec that selects nothing is an error. The Task 1 phase-2 merge pre-check (unreadable-input attribution) must still run first and still blame the right file.
 
-- [ ] **Step 1: Write failing tests:** per-file ranges produce the right `Collect`/`Merge` calls and call order; no specs behaves exactly as before (existing tests unchanged); length mismatch rejected; bad spec attributed to its file in the error message; temp files removed on success, failure and cancel.
-- [ ] **Step 2: Implement; extend `fcctl pdf merge` with `--pages-for 2=1-3`. Commit.**
+- [x] **Step 1: Write failing tests:** per-file ranges produce the right `Collect`/`Merge` calls and call order; no specs behaves exactly as before (existing tests unchanged); length mismatch rejected; bad spec attributed to its file in the error message; temp files removed on success, failure and cancel.
+- [x] **Step 2: Implement; extend `fcctl pdf merge` with `--pages-for 2=1-3`. Commit.**
 
 ```bash
 git add backend
@@ -206,9 +206,9 @@ git commit -m "feat: merge with per-file page ranges"
 **Files:**
 - Modify: `docs/PROTOCOL.md`, `README.md`, `backend/e2e_test.go`
 
-- [ ] **Step 1:** Document `pdf_info`, `pdf_thumbnails`, the new `Params` fields, the three new operations, merge ranges, and the cache privacy note, with the edit-item semantics (blank = `src 0`, rotation is a clockwise delta, blank takes its neighbour's size).
-- [ ] **Step 2:** E2E over the socket (engines permitting): info on good, locked and corrupt files; thumbnails twice with the second served from cache; `pdf-edit` with reorder, rotation and a blank; both splits; merge with ranges; assert page counts and text order.
-- [ ] **Step 3:** Run the full verification commands; commit.
+- [x] **Step 1:** Document `pdf_info`, `pdf_thumbnails`, the new `Params` fields, the three new operations, merge ranges, and the cache privacy note, with the edit-item semantics (blank = `src 0`, rotation is a clockwise delta, blank takes its neighbour's size).
+- [x] **Step 2:** E2E over the socket (engines permitting): info on good, locked and corrupt files; thumbnails twice with the second served from cache; `pdf-edit` with reorder, rotation and a blank; both splits; merge with ranges; assert page counts and text order.
+- [x] **Step 3:** Run the full verification commands; commit.
 
 ```bash
 git add backend docs README.md
@@ -234,8 +234,8 @@ All Studio code lives in `frontends/pdf-studio/` as the package `pdf_studio` wit
 - `requests.py`: builders returning `(op, params)`: `edit_request(model)` → `pdf-edit` with the edit list (`pdf-extract` with a page spec when the user only extracted, `pdf-delete` is not needed since `pdf-edit` covers it); `split_request(...)`; `merge_request(files, file_pages)`.
 - Selection semantics: operations act on the selection; with an empty selection, destructive operations are no-ops that report "nothing selected" rather than acting on everything. Deleting every page is refused. Selecting by spec refers to **current positions**, not source page numbers, and the labels shown on thumbnails are positions, with the source page shown as a smaller badge when it differs.
 
-- [ ] **Step 1: Write failing tests** for every model operation, undo/redo chains, duplicate-then-rotate affecting only the selected copy, selection stability across moves, the range-box round trip (`1-3,7` ↔ selection), refusal to delete everything, `is_identity()`, and the three request builders (exact dictionaries).
-- [ ] **Step 2: Implement. Run `python3 -m unittest discover -s frontends/pdf-studio/tests`. Commit.**
+- [x] **Step 1: Write failing tests** for every model operation, undo/redo chains, duplicate-then-rotate affecting only the selected copy, selection stability across moves, the range-box round trip (`1-3,7` ↔ selection), refusal to delete everything, `is_identity()`, and the three request builders (exact dictionaries).
+- [x] **Step 2: Implement. Run `python3 -m unittest discover -s frontends/pdf-studio/tests`. Commit.**
 
 ```bash
 git add frontends/pdf-studio
@@ -253,10 +253,10 @@ git commit -m "feat: add PDF Studio editing model"
 - Loading state: the window shows a spinner while `pdf_info` runs on a worker thread; then the editor, or a status page (`Adw.StatusPage`) for: daemon not running (with the `systemctl --user start fcd` hint and an automatic `ensure_daemon()` attempt first), password-protected, damaged, or unreadable file.
 - Default size 1000×720; window title is the file name; no state is persisted in this phase.
 
-- [ ] **Step 1: Write failing tests** for argument parsing and path normalisation (pure functions in `__main__`), and for the version check message (inject fake versions).
-- [ ] **Step 2: Implement the shell with an empty content area.**
-- [ ] **Step 3:** Manual smoke: `python3 frontends/pdf-studio/fc-pdf-studio some.pdf` shows the window and the three status pages (stop the daemon, use a locked file, use a corrupt file).
-- [ ] **Step 4: Commit.**
+- [x] **Step 1: Write failing tests** for argument parsing and path normalisation (pure functions in `__main__`), and for the version check message (inject fake versions).
+- [x] **Step 2: Implement the shell with an empty content area.**
+- [ ] **Step 3:** Manual smoke: `python3 frontends/pdf-studio/fc-pdf-studio some.pdf` shows the window and the three status pages (stop the daemon, use a locked file, use a corrupt file). **Open (manual part):** the implementation and its automated tests exist; the manual check on real files / a display was not recorded.
+- [x] **Step 4: Commit.**
 
 ```bash
 git add frontends/pdf-studio
@@ -275,9 +275,9 @@ git commit -m "feat: add PDF Studio application shell"
 - Thumbnail width 200 by default with a zoom control (150/200/300) that triggers re-request at the new width.
 - Accessibility: every cell has an accessible label `Page N` (with `, rotated 90°`, `, blank`, `, selected` as applicable).
 
-- [ ] **Step 1: Tests for the loader. Step 2: Implement the grid with the model from Task 9 driving the store.**
-- [ ] **Step 3:** Manual check on a 200-page PDF: scrolling stays smooth, memory does not grow without bound (check by scrolling to the end and back), and a daemon restart mid-scroll recovers.
-- [ ] **Step 4: Commit.**
+- [x] **Step 1: Tests for the loader. Step 2: Implement the grid with the model from Task 9 driving the store.**
+- [ ] **Step 3:** Manual check on a 200-page PDF: scrolling stays smooth, memory does not grow without bound (check by scrolling to the end and back), and a daemon restart mid-scroll recovers. **Open (manual part):** the implementation and its automated tests exist; the manual check on real files / a display was not recorded.
+- [x] **Step 4: Commit.**
 
 ```bash
 git add frontends/pdf-studio
@@ -296,9 +296,9 @@ git commit -m "feat: add PDF Studio thumbnail grid"
 - Shortcuts: `Ctrl+A`, `Ctrl+Shift+A`, `Delete`, `Ctrl+Z`, `Ctrl+Shift+Z` / `Ctrl+Y`, `[` and `]` rotate, `Ctrl+D` duplicate, `Ctrl+Return` apply, `Escape` clears selection. Register through `Gtk.ShortcutController` so they appear in the shortcuts overlay (`Gtk.ShortcutsWindow`).
 - Status line: `12 pages, 3 selected, 2 edits`.
 
-- [ ] **Step 1: Test the action table** (each toolbar action id maps to the right model call and enabled-state rule).
-- [ ] **Step 2: Implement; manual check that every action works from both toolbar and keyboard and undo restores the exact previous state including selection.**
-- [ ] **Step 3: Commit.**
+- [x] **Step 1: Test the action table** (each toolbar action id maps to the right model call and enabled-state rule).
+- [ ] **Step 2: Implement; manual check that every action works from both toolbar and keyboard and undo restores the exact previous state including selection.** **Open (manual part):** the implementation and its automated tests exist; the manual check on real files / a display was not recorded.
+- [x] **Step 3: Commit.**
 
 ```bash
 git add frontends/pdf-studio
@@ -315,7 +315,7 @@ git commit -m "feat: add PDF Studio page actions, range box, and shortcuts"
 - Drag and drop: `Gtk.DragSource` on cells (content is the selected uids; the drag icon is a small stack of the dragged thumbnails) and a `Gtk.DropTarget` on the grid that computes the insertion index from the pointer position with a visible insertion marker. Auto-scroll when the pointer nears the top or bottom edge. Dropping inside the selection is a no-op.
 - If drag and drop cannot be made reliable with `Gtk.GridView` in the available time-box, ship the buttons, record the limitation in the README, and leave a tracked follow-up; do not ship flaky drag.
 
-- [ ] **Step 1: Implement buttons and shortcuts; manual check. Step 2: Implement DnD; manual check with a 3-page and a 200-page document, including auto-scroll. Step 3: Commit (one commit per step).**
+- [ ] **Step 1: Implement buttons and shortcuts; manual check. Step 2: Implement DnD; manual check with a 3-page and a 200-page document, including auto-scroll. Step 3: Commit (one commit per step).** **Open (manual part):** the implementation and its automated tests exist; the manual check on real files / a display was not recorded.
 
 ```bash
 git add frontends/pdf-studio
@@ -334,9 +334,9 @@ git commit -m "feat: add page reordering by drag and drop"
 - **Split view:** two modes selected by a segmented control: *By ranges* (an entry such as `1-3;4-6;7-`, with the grid reused read-only and coloured per part) and *Every N pages* (spin button). A live preview lists the files that will be created (`name-part-1.pdf: pages 1–3`), counts, and any error (bad range, would produce one file, too many parts), computed locally by pure functions that mirror the daemon rules.
 - **Merge view:** a reorderable list of files (drag handle plus up/down buttons), each row with a small first-page thumbnail, page count, and a "pages" entry for a per-file range; add-files button (`Gtk.FileDialog`, PDF filter); remove button; output name preview (`merged.pdf`). Files that are locked or damaged show a row-level error and block Apply with a clear message instead of failing the job later.
 
-- [ ] **Step 1: Test the preview and validation functions** against the same rules as Task 6 and 7 (including the 200-part ceiling).
-- [ ] **Step 2: Implement both views; manual check with real files.**
-- [ ] **Step 3: Commit.**
+- [x] **Step 1: Test the preview and validation functions** against the same rules as Task 6 and 7 (including the 200-part ceiling).
+- [ ] **Step 2: Implement both views; manual check with real files.** **Open (manual part):** the implementation and its automated tests exist; the manual check on real files / a display was not recorded.
+- [x] **Step 3: Commit.**
 
 ```bash
 git add frontends/pdf-studio
@@ -356,9 +356,9 @@ git commit -m "feat: add PDF Studio split and merge views"
 - **Unsaved edits:** closing the window with a dirty model asks to *Discard* or *Keep editing*.
 - The pure parts (request assembly, job-event reduction to UI state, error mapping) are tested without GTK.
 
-- [ ] **Step 1: Write failing tests** for event reduction (running → completed / completed_with_errors / failed / cancelled), output-option to request mapping, and the friendly error table.
-- [ ] **Step 2: Implement; manual check of success, cancel mid-job (use a large merge), conflict rename/skip/overwrite, daemon killed mid-job, and the unsaved-edits dialog.**
-- [ ] **Step 3: Commit.**
+- [x] **Step 1: Write failing tests** for event reduction (running → completed / completed_with_errors / failed / cancelled), output-option to request mapping, and the friendly error table.
+- [ ] **Step 2: Implement; manual check of success, cancel mid-job (use a large merge), conflict rename/skip/overwrite, daemon killed mid-job, and the unsaved-edits dialog.** **Open (manual part):** the implementation and its automated tests exist; the manual check on real files / a display was not recorded.
+- [x] **Step 3: Commit.**
 
 ```bash
 git add frontends/pdf-studio
@@ -380,10 +380,10 @@ git commit -m "feat: add PDF Studio apply flow and error handling"
 - Copy `pdf_studio/` and `frontends/common/fc_client/` to `~/.local/share/file-converter/studio/`, write the launcher to `~/.local/bin/fc-pdf-studio` (it sets `sys.path` to the installed directory and runs the app), install the `.desktop` file to `~/.local/share/applications/` (no `MimeType`, so it never becomes a default PDF opener), and run `update-desktop-database` if present. Uninstaller removes exactly these.
 - Dependency check, never auto-installed: verify `gi` can import `Gtk 4.0` and `Adw 1` at the required versions and print the Arch and Debian package names otherwise. The Nautilus extension install must still succeed when the Studio's dependencies are missing; only the Studio is skipped, with a clear line saying so.
 
-- [ ] **Step 1: Write failing extension tests:** Customise appears for PDFs when the launcher exists, is absent when it does not, is absent for images and mixed selections, and activation spawns the helper with all selected paths in order.
-- [ ] **Step 2: Implement the extension change, installer and uninstaller.** Test the installer's pure path logic with a temporary `HOME`.
-- [ ] **Step 3: Full verification:** `go test ./...`, `go vet ./...`, `gofmt -l .`, every Python `unittest discover`, `git diff --check`.
-- [ ] **Step 4: Manual checklist (required; GUI behaviour cannot be unit-tested).** Reinstall, `nautilus -q`, then on real files confirm each of the following and record the result in the commit message:
+- [x] **Step 1: Write failing extension tests:** Customise appears for PDFs when the launcher exists, is absent when it does not, is absent for images and mixed selections, and activation spawns the helper with all selected paths in order.
+- [x] **Step 2: Implement the extension change, installer and uninstaller.** Test the installer's pure path logic with a temporary `HOME`.
+- [x] **Step 3: Full verification:** `go test ./...`, `go vet ./...`, `gofmt -l .`, every Python `unittest discover`, `git diff --check`.
+- [ ] **Step 4: Manual checklist (required; GUI behaviour cannot be unit-tested).** Reinstall, `nautilus -q`, then on real files confirm each of the following and record the result in the commit message: **Open (manual part):** the implementation and its automated tests exist; the manual check on real files / a display was not recorded.
   - Right-click one PDF > PDF Tools > Customise… opens the Studio on that file; two PDFs open the merge view; an image selection has no Customise.
   - The grid shows thumbnails quickly on a 10-page and a 200-page file; closing and reopening the same file is noticeably faster (cache hit).
   - Select by clicking, shift-click, ctrl-click, rubber-band if supported, and by typing `1-3,7`; the text and selection stay in sync both ways.
@@ -393,7 +393,7 @@ git commit -m "feat: add PDF Studio apply flow and error handling"
   - Cancel a long job; conflict rename/skip/overwrite behave as labelled; Show in Files selects the output.
   - Run on the Omarchy (Hyprland) session; if possible also on an Ubuntu session with the minimum GTK/Adw versions, since API-version mistakes only show up there.
   - `fcctl cache clear` empties the thumbnail cache; the cache directory is mode 0700.
-- [ ] **Step 5: Commit.**
+- [x] **Step 5: Commit.**
 
 ```bash
 git add frontends README.md

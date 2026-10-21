@@ -43,10 +43,10 @@ Comma-separated items; each is `N`, `N-M`, `N-` (to the last page), `-M` (from p
 **Files:**
 - Modify: `backend/go.mod`, `backend/go.sum`
 
-- [ ] **Step 1: Check the licence.** Fetch the pinned release's LICENSE from the upstream repository and confirm it is Apache-2.0 (or otherwise compatible). If not, stop and report; the fallback is a `qpdf` backend (see the spec).
-- [ ] **Step 2: Add the module.** From `backend/`: `go get github.com/pdfcpu/pdfcpu@v0.12.0` (the version `pdf-utils-go` builds against; use a newer release only if it is verified). Do not import it yet; `go mod tidy` will drop it, so skip tidy until Task 3.
-- [ ] **Step 3: Record the pin.** Add a one-line note to the README PDF section: pdfcpu is pinned at the version above.
-- [ ] **Step 4: Commit.**
+- [x] **Step 1: Check the licence.** Fetch the pinned release's LICENSE from the upstream repository and confirm it is Apache-2.0 (or otherwise compatible). If not, stop and report; the fallback is a `qpdf` backend (see the spec).
+- [x] **Step 2: Add the module.** From `backend/`: `go get github.com/pdfcpu/pdfcpu@v0.12.0` (the version `pdf-utils-go` builds against; use a newer release only if it is verified). Do not import it yet; `go mod tidy` will drop it, so skip tidy until Task 3.
+- [x] **Step 3: Record the pin.** Add a one-line note to the README PDF section: pdfcpu is pinned at the version above.
+- [x] **Step 4: Commit.**
 
 ```bash
 git add backend/go.mod backend/go.sum
@@ -65,10 +65,10 @@ git commit -m "build: add pdfcpu dependency"
 - `Complement(pages []int, pageCount int) []int` returns every page not in `pages`, sorted.
 - `Format(pages []int) string` collapses back to a canonical spec (`1-3,7`), used in error messages and later by the Studio.
 
-- [ ] **Step 1: Write failing table tests.** Cover every example in the grammar section, `z` on a 1-page document, open ends on both sides, overlap (`1-3,2-4`), whitespace, and all error cases (`0`, `5-3`, `abc`, `,`, `1,,2`, `9` with `pageCount` 3, empty string, a spec that expands to more than `maxPDFPages` entries).
-- [ ] **Step 2: Run** `go test ./internal/pdfops`; expect compile failure.
-- [ ] **Step 3: Implement** the parser as a small hand-written scanner (no regexp backtracking), returning errors that name the offending item.
-- [ ] **Step 4: Run tests, then commit.**
+- [x] **Step 1: Write failing table tests.** Cover every example in the grammar section, `z` on a 1-page document, open ends on both sides, overlap (`1-3,2-4`), whitespace, and all error cases (`0`, `5-3`, `abc`, `,`, `1,,2`, `9` with `pageCount` 3, empty string, a spec that expands to more than `maxPDFPages` entries).
+- [x] **Step 2: Run** `go test ./internal/pdfops`; expect compile failure.
+- [x] **Step 3: Implement** the parser as a small hand-written scanner (no regexp backtracking), returning errors that name the offending item.
+- [x] **Step 4: Run tests, then commit.**
 
 ```bash
 git add backend/internal/pdfops
@@ -116,9 +116,9 @@ func (o Operation) Run(ctx context.Context, b Backend, inputs []string, output s
 
 `Run` resolves the page spec against `PageCount`, then maps to Backend calls: extract = `Collect(pages)`, delete = `Collect(Complement(pages))` (error if nothing would remain), reverse = `Collect(n..1)`, rotate = `Rotate`, merge = `Merge`. Reverse, delete and extract therefore need only `Collect`, which pdfcpu provides as `api.CollectFile`.
 
-- [ ] **Step 1: Write failing tests against a fake `Backend`** that records calls: input-count rules (merge with 1 file fails, extract with 0 fails), missing `pages`/`angle`, invalid angle (45), delete-all-pages is rejected, reverse of a 4-page document calls `Collect` with `[4 3 2 1]`, delete of `2` on 4 pages calls `Collect` with `[1 3 4]`, rotate with empty `pages` rotates all pages.
-- [ ] **Step 2: Run, expect failure. Implement. Run, expect pass.**
-- [ ] **Step 3: Commit.**
+- [x] **Step 1: Write failing tests against a fake `Backend`** that records calls: input-count rules (merge with 1 file fails, extract with 0 fails), missing `pages`/`angle`, invalid angle (45), delete-all-pages is rejected, reverse of a 4-page document calls `Collect` with `[4 3 2 1]`, delete of `2` on 4 pages calls `Collect` with `[1 3 4]`, rotate with empty `pages` rotates all pages.
+- [x] **Step 2: Run, expect failure. Implement. Run, expect pass.**
+- [x] **Step 3: Commit.**
 
 ```bash
 git add backend/internal/pdfops
@@ -133,9 +133,9 @@ git commit -m "feat: add PDF operation catalogue"
 
 pdfcpu entry points to use (verify exact names and signatures against the pinned version before coding): `api.PageCountFile`, `api.MergeCreateFile`, `api.CollectFile`, `api.RotateFile`, `api.DisableConfigDir`, `model.NewDefaultConfiguration`.
 
-- [ ] **Step 1: Write failing tests that build their own fixtures.** Generate a small N-page PDF at test time (via the backend or by writing a minimal valid PDF byte string), run each backend method, and verify page counts with `PageCount`. Where `pdftotext` exists, also assert page order for reverse by giving each fixture page distinct text; skip that assertion when the binary is missing.
-- [ ] **Step 2: Implement.** Constructor calls `api.DisableConfigDir()` once (guard with `sync.Once`). Every method runs the pdfcpu call in a goroutine with `defer recover()` converting panics to errors, and returns `ctx.Err()` if the context ends first (the goroutine is left to finish writing to a temp file the job layer will delete). Map pdfcpu's encrypted-file error to a sentinel `ErrPasswordRequired`. `Available()` always returns nil (linked in).
-- [ ] **Step 3: Run `go mod tidy`, tests, and `go vet`. Commit.**
+- [x] **Step 1: Write failing tests that build their own fixtures.** Generate a small N-page PDF at test time (via the backend or by writing a minimal valid PDF byte string), run each backend method, and verify page counts with `PageCount`. Where `pdftotext` exists, also assert page order for reverse by giving each fixture page distinct text; skip that assertion when the binary is missing.
+- [x] **Step 2: Implement.** Constructor calls `api.DisableConfigDir()` once (guard with `sync.Once`). Every method runs the pdfcpu call in a goroutine with `defer recover()` converting panics to errors, and returns `ctx.Err()` if the context ends first (the goroutine is left to finish writing to a temp file the job layer will delete). Map pdfcpu's encrypted-file error to a sentinel `ErrPasswordRequired`. `Available()` always returns nil (linked in).
+- [x] **Step 3: Run `go mod tidy`, tests, and `go vet`. Commit.**
 
 ```bash
 git add backend/go.mod backend/go.sum backend/internal/pdfops
@@ -154,8 +154,8 @@ git commit -m "feat: add pdfcpu PDF backend"
 - `run_operation` params: `{op: string, files: [string], params: {pages?: string, angle?: int}, output_dir?: string, on_conflict?: "rename"|"skip"|"overwrite"}`.
 - `ValidateRequest` accepts both methods. It checks shape only (non-empty `op`, non-empty `files`, absolute paths, valid conflict value, `angle` an integer); per-operation rules stay in `pdfops`.
 
-- [ ] **Step 1: Write failing tests** for valid and invalid shapes of both methods, and assert the existing "unknown method" test still passes for a genuinely unknown name.
-- [ ] **Step 2: Implement. Run `go test ./internal/protocol`. Commit.**
+- [x] **Step 1: Write failing tests** for valid and invalid shapes of both methods, and assert the existing "unknown method" test still passes for a genuinely unknown name.
+- [x] **Step 2: Implement. Run `go test ./internal/protocol`. Commit.**
 
 ```bash
 git add backend/internal/protocol
@@ -195,10 +195,10 @@ Behaviour:
 - Publication, rollback on cancel, `reserved` bookkeeping, and `Finalize` follow `convertFile` exactly. Do not copy-paste it: extract the shared plan, reserve, commit, and pending steps into a helper used by both paths, keeping existing manager tests green.
 - Backend errors map to file errors: `ErrPasswordRequired` becomes code `password_required`; everything else is `internal`.
 
-- [ ] **Step 1: Write failing tests with the fake backend:** merge of three files yields one output and `completed`; extract on two files yields two outputs named `<stem>-extracted.pdf`; conflict policies (`rename` produces `(1)`, `skip` skips, `overwrite` replaces and backs up); output never overwrites the source; cancel mid-run leaves no files; one failing file among two gives `completed_with_errors`; encrypted-file error surfaces as `password_required`; two concurrent operation jobs never pick the same destination.
-- [ ] **Step 2: Run, expect failure.** Add `PlanNamedOutputExcluding` with its own engine test first, then the manager changes.
-- [ ] **Step 3: Refactor the shared publish helper** and run the whole `./internal/jobs` suite to prove conversions are unchanged.
-- [ ] **Step 4: Commit.**
+- [x] **Step 1: Write failing tests with the fake backend:** merge of three files yields one output and `completed`; extract on two files yields two outputs named `<stem>-extracted.pdf`; conflict policies (`rename` produces `(1)`, `skip` skips, `overwrite` replaces and backs up); output never overwrites the source; cancel mid-run leaves no files; one failing file among two gives `completed_with_errors`; encrypted-file error surfaces as `password_required`; two concurrent operation jobs never pick the same destination.
+- [x] **Step 2: Run, expect failure.** Add `PlanNamedOutputExcluding` with its own engine test first, then the manager changes.
+- [x] **Step 3: Refactor the shared publish helper** and run the whole `./internal/jobs` suite to prove conversions are unchanged.
+- [x] **Step 4: Commit.**
 
 ```bash
 git add backend/internal/engine backend/internal/jobs
@@ -211,13 +211,13 @@ git commit -m "feat: run PDF operations through the job manager"
 - Modify: `backend/internal/server/server.go`
 - Test: `backend/internal/server/server_test.go`
 
-- [ ] **Step 1: Write failing server tests:**
+- [x] **Step 1: Write failing server tests:**
   - `operations` for one PDF returns the five operations; `pdf-merge` is disabled with reason `needs at least 2 files`; for two PDFs merge is enabled.
   - For a non-PDF selection, `operations` returns an empty list, not an error.
   - `run_operation` returns `{"job": id}` and the subscriber receives `job.updated` and `job.finished`.
   - Invalid params give `bad_request`; an unknown op gives `bad_request`; an encrypted input surfaces `password_required` in the file error.
-- [ ] **Step 2: Implement** the two cases in `handle`, following the `convert` case. `Dependencies` gains `PDFBackend pdfops.Backend`; `operations` consults `pdfops.Catalogue()` and `Backend.Available()`.
-- [ ] **Step 3: Run `go test ./internal/server`. Commit.**
+- [x] **Step 2: Implement** the two cases in `handle`, following the `convert` case. `Dependencies` gains `PDFBackend pdfops.Backend`; `operations` consults `pdfops.Catalogue()` and `Backend.Available()`.
+- [x] **Step 3: Run `go test ./internal/server`. Commit.**
 
 ```bash
 git add backend/internal/server
@@ -230,9 +230,9 @@ git commit -m "feat: serve PDF operations over the protocol"
 - Modify: `backend/cmd/fcd/main.go`
 - Test: `backend/cmd/fcd/main_test.go`
 
-- [ ] **Step 1:** Construct the pdfcpu backend, pass it to `jobs.Manager.SetPDFBackend` and `server.Dependencies.PDFBackend`, and register a `pdfcpu` entry in the engine status list so `fcctl engines` reports it.
-- [ ] **Step 2:** Test that `hello` lists the engine and that startup does not create `~/.config/pdfcpu` (set `HOME` and `XDG_CONFIG_HOME` to a temp dir and assert it stays empty).
-- [ ] **Step 3: Commit.**
+- [x] **Step 1:** Construct the pdfcpu backend, pass it to `jobs.Manager.SetPDFBackend` and `server.Dependencies.PDFBackend`, and register a `pdfcpu` entry in the engine status list so `fcctl engines` reports it.
+- [x] **Step 2:** Test that `hello` lists the engine and that startup does not create `~/.config/pdfcpu` (set `HOME` and `XDG_CONFIG_HOME` to a temp dir and assert it stays empty).
+- [x] **Step 3: Commit.**
 
 ```bash
 git add backend/cmd/fcd
@@ -256,9 +256,9 @@ fcctl pdf reverse file.pdf
 fcctl pdf list    file.pdf        # prints applicable operations
 ```
 
-- [ ] **Step 1: Write failing parse tests** (flags, positional files, missing `--pages`, bad `--angle`) and request-building tests asserting the exact JSON for `operations` and `run_operation`.
-- [ ] **Step 2: Implement** `pdf` as a command that maps to `run_operation` and waits for `job.finished` like `convert` does; `--json` and the human formatter behave identically to `convert`.
-- [ ] **Step 3: Commit.**
+- [x] **Step 1: Write failing parse tests** (flags, positional files, missing `--pages`, bad `--angle`) and request-building tests asserting the exact JSON for `operations` and `run_operation`.
+- [x] **Step 2: Implement** `pdf` as a command that maps to `run_operation` and waits for `job.finished` like `convert` does; `--json` and the human formatter behave identically to `convert`.
+- [x] **Step 3: Commit.**
 
 ```bash
 git add backend/cmd/fcctl
@@ -271,10 +271,10 @@ git commit -m "feat: add fcctl pdf command"
 - Modify: `backend/e2e_test.go`, `docs/PROTOCOL.md`, `README.md`
 - Create: none
 
-- [ ] **Step 1: E2E:** start a real daemon on a temp socket with the real pdfcpu backend, build a 4-page fixture, then run extract, delete, rotate, reverse, and merge through the socket; assert page counts with `PageCount` and (when `pdftotext` exists) page order and rotation via `pdfinfo`.
-- [ ] **Step 2: Docs.** Add `operations` and `run_operation` (params, results, error codes including `password_required`) to `docs/PROTOCOL.md`; add a "PDF tools" section to the README listing the five operations, the page-spec grammar, the output naming table, and the pdfcpu pin. Update the sentence in the PDF conversions section that says page selection is unsupported so it points to extract/delete.
-- [ ] **Step 3: Full verification:** `go test ./...`, `go vet ./...`, `gofmt -l .`, `git diff --check`, plus `python3 -m unittest discover -s frontends/nautilus/tests` to prove the frontend is untouched.
-- [ ] **Step 4: Commit.**
+- [x] **Step 1: E2E:** start a real daemon on a temp socket with the real pdfcpu backend, build a 4-page fixture, then run extract, delete, rotate, reverse, and merge through the socket; assert page counts with `PageCount` and (when `pdftotext` exists) page order and rotation via `pdfinfo`.
+- [x] **Step 2: Docs.** Add `operations` and `run_operation` (params, results, error codes including `password_required`) to `docs/PROTOCOL.md`; add a "PDF tools" section to the README listing the five operations, the page-spec grammar, the output naming table, and the pdfcpu pin. Update the sentence in the PDF conversions section that says page selection is unsupported so it points to extract/delete.
+- [x] **Step 3: Full verification:** `go test ./...`, `go vet ./...`, `gofmt -l .`, `git diff --check`, plus `python3 -m unittest discover -s frontends/nautilus/tests` to prove the frontend is untouched.
+- [x] **Step 4: Commit.**
 
 ```bash
 git add backend/e2e_test.go docs/PROTOCOL.md README.md

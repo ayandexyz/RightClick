@@ -56,10 +56,10 @@ Behaviour:
 - Classification is engine-agnostic: when an operation fails with an error that is not `ErrPasswordRequired` and not a cancellation, probe the input with `PageCount`. If the probe also fails (and is not a password error), report `invalid_pdf` and keep the original message in the daemon log only. If the probe succeeds, the failure is the operation's own and stays `internal`.
 - `Merge` (job layer, before calling the backend) probes each input with `PageCount` and returns an `InputError` naming the first unreadable file. `mergeOperation` then marks that file `failed` with its code (`password_required`, `invalid_pdf`) and every other entry `skipped` with notice `not merged: <basename> could not be read`. Job state becomes `failed`.
 
-- [ ] **Step 1: Write failing tests** with the fake backend: corrupt input yields `invalid_pdf`; a genuine operation failure on a readable file stays `internal`; merge of good + locked marks only the locked file failed and the good one skipped with the notice; merge of good + corrupt likewise with `invalid_pdf`; cancellation is never classified as invalid.
-- [ ] **Step 2: Run, expect failure. Implement. Run `go test ./internal/jobs ./internal/pdfops`.**
-- [ ] **Step 3: Extend the e2e corrupt-file case** in `backend/e2e_test.go` to assert the `invalid_pdf` code over the socket.
-- [ ] **Step 4: Commit.**
+- [x] **Step 1: Write failing tests** with the fake backend: corrupt input yields `invalid_pdf`; a genuine operation failure on a readable file stays `internal`; merge of good + locked marks only the locked file failed and the good one skipped with the notice; merge of good + corrupt likewise with `invalid_pdf`; cancellation is never classified as invalid.
+- [x] **Step 2: Run, expect failure. Implement. Run `go test ./internal/jobs ./internal/pdfops`.**
+- [x] **Step 3: Extend the e2e corrupt-file case** in `backend/e2e_test.go` to assert the `invalid_pdf` code over the socket.
+- [x] **Step 4: Commit.**
 
 ```bash
 git add backend
@@ -107,10 +107,10 @@ Protocol `operations`:
 
 Catalogue changes: add `pdf-rotate-cw` (90), `pdf-rotate-ccw` (270), `pdf-rotate-180`, all `instant`; change `pdf-rotate` to `studio`. Update the phase 1 tests and `docs/PROTOCOL.md` accordingly.
 
-- [ ] **Step 1: Write failing tests** for `Validate` with fixed angles, `Toolbox.Available` with absent engines, `operations` for PDF-only, image-only, mixed, and empty selections, and for an engine reported unavailable.
-- [ ] **Step 2: Refactor** the call sites mechanically first (signature changes only) and confirm the whole phase 1 suite is green before adding behaviour.
-- [ ] **Step 3: Implement the new fields and `operations` logic. Run all backend tests.**
-- [ ] **Step 4: Commit.**
+- [x] **Step 1: Write failing tests** for `Validate` with fixed angles, `Toolbox.Available` with absent engines, `operations` for PDF-only, image-only, mixed, and empty selections, and for an engine reported unavailable.
+- [x] **Step 2: Refactor** the call sites mechanically first (signature changes only) and confirm the whole phase 1 suite is green before adding behaviour.
+- [x] **Step 3: Implement the new fields and `operations` logic. Run all backend tests.**
+- [x] **Step 4: Commit.**
 
 ```bash
 git add backend docs/PROTOCOL.md
@@ -128,10 +128,10 @@ git commit -m "refactor: generalise PDF operations over engines and input kinds"
 - `type QPDF struct{ runner engine.Runner }`, `NewQPDF(runner)`, `Available() error`, `Repair(ctx, in, out)`, `Linearize(ctx, in, out)`, `Flatten(ctx, in, out)`.
 - Check against `qpdf --help=all`: repair is a plain rewrite (`qpdf in out`; qpdf exits 3 on recoverable warnings and still writes output — treat exit 3 as success and surface the warning as a notice only if easy, otherwise ignore); linearize is `--linearize`; flatten is `--flatten-annotations=all` combined with `--generate-appearances`. Encrypted input (exit with a password message) maps to `ErrPasswordRequired`.
 
-- [ ] **Step 1: Write failing tests with a fake runner** asserting exact argument lists, exit-3 handling, password mapping, and that missing `qpdf` makes `Available()` return a descriptive error.
-- [ ] **Step 2: Implement.**
-- [ ] **Step 3: Add a real-binary test** (skipped without qpdf) that repairs a truncated-xref fixture generated at test time, linearizes a fixture and checks `qpdf --check` reports linearization, and flattens a fixture with an annotation.
-- [ ] **Step 4: Commit.**
+- [x] **Step 1: Write failing tests with a fake runner** asserting exact argument lists, exit-3 handling, password mapping, and that missing `qpdf` makes `Available()` return a descriptive error.
+- [x] **Step 2: Implement.**
+- [x] **Step 3: Add a real-binary test** (skipped without qpdf) that repairs a truncated-xref fixture generated at test time, linearizes a fixture and checks `qpdf --check` reports linearization, and flattens a fixture with an annotation.
+- [x] **Step 4: Commit.**
 
 ```bash
 git add backend/internal/pdfops
@@ -150,10 +150,10 @@ Behaviour:
 - **No-gain rule:** if a compress output is not smaller than its input, the file is reported `skipped` with notice `already as small as it can get` and the output is discarded. Implement by having `Run` return a typed `ErrNoGain` that `runOneOperation` maps to `skipped`.
 - Encrypted input maps to `ErrPasswordRequired`.
 
-- [ ] **Step 1: Write failing fake-runner tests:** exact args for each level and for grayscale, filename-beginning-with-`-` safety, password mapping, `ErrNoGain` produces a skipped file and removes the temp output.
-- [ ] **Step 2: Implement.**
-- [ ] **Step 3: Real-binary test** (skipped without `gs`): compress a fixture containing a large generated image and assert the output is smaller; grayscale a coloured fixture and verify with `pdfimages -list` or `gs -sDEVICE=inkcov` that no colour remains.
-- [ ] **Step 4: Commit.**
+- [x] **Step 1: Write failing fake-runner tests:** exact args for each level and for grayscale, filename-beginning-with-`-` safety, password mapping, `ErrNoGain` produces a skipped file and removes the temp output.
+- [x] **Step 2: Implement.**
+- [x] **Step 3: Real-binary test** (skipped without `gs`): compress a fixture containing a large generated image and assert the output is smaller; grayscale a coloured fixture and verify with `pdfimages -list` or `gs -sDEVICE=inkcov` that no colour remains.
+- [x] **Step 4: Commit.**
 
 ```bash
 git add backend/internal/pdfops
@@ -174,9 +174,9 @@ pdfcpu entry points to check in the pinned source before coding: `api.ImportImag
 - **Strip metadata acceptance test:** after the operation, none of `Title`, `Author`, `Subject`, `Keywords`, `Creator`, `Producer` may be non-empty in `pdfinfo`, and the catalog must have no `/Metadata` stream. **If pdfcpu removes the Info dictionary but not the XMP stream**, remove XMP by the means pdfcpu offers or, if it offers none, drop `pdf-strip-metadata` from phase 2 and record that in the spec rather than shipping a half-clean result.
 - Add `pdf-strip-metadata`, `pdf-rotate-*` wiring and `pdf-from-images` (`Inputs: InputImage`, `Merges: true`, name from first input's stem) to the catalogue.
 
-- [ ] **Step 1: Write failing tests** with fixtures that have all metadata fields set, and with PNG and JPEG inputs (generated at test time).
-- [ ] **Step 2: Implement. Run `go test ./internal/pdfops`.**
-- [ ] **Step 3: Commit.**
+- [x] **Step 1: Write failing tests** with fixtures that have all metadata fields set, and with PNG and JPEG inputs (generated at test time).
+- [x] **Step 2: Implement. Run `go test ./internal/pdfops`.**
+- [x] **Step 3: Commit.**
 
 ```bash
 git add backend/internal/pdfops
@@ -197,10 +197,10 @@ git commit -m "feat: add metadata stripping and images-to-PDF"
 
 Job layer: `runOneOperation` branches on `op.Numbered`. Factor the publish-many logic out of `convertMany` (`backend/internal/jobs/manager.go`) into a helper used by both, rather than copying it, and keep the existing PDF-to-image tests green. Names: `<stem>-image-1.png`, `<stem>-image-2.png`, … via `PlanNamedOutputExcluding` with the base `<stem>-image-N`.
 
-- [ ] **Step 1: Write failing tests:** fake-runner argument lists; text output extension and conflict handling; numbered outputs published atomically and in order; zero images gives skipped with the notice; cancellation mid-way leaves no partial set; a name collision on `-image-2` renames only that file.
-- [ ] **Step 2: Implement; run `go test ./internal/jobs ./internal/pdfops ./internal/engine`.**
-- [ ] **Step 3: Real-binary test** (skipped without Poppler): extract text from a fixture and compare; extract images from a fixture containing two images and assert two PNGs.
-- [ ] **Step 4: Commit.**
+- [x] **Step 1: Write failing tests:** fake-runner argument lists; text output extension and conflict handling; numbered outputs published atomically and in order; zero images gives skipped with the notice; cancellation mid-way leaves no partial set; a name collision on `-image-2` renames only that file.
+- [x] **Step 2: Implement; run `go test ./internal/jobs ./internal/pdfops ./internal/engine`.**
+- [x] **Step 3: Real-binary test** (skipped without Poppler): extract text from a fixture and compare; extract images from a fixture containing two images and assert two PNGs.
+- [x] **Step 4: Commit.**
 
 ```bash
 git add backend
@@ -213,11 +213,11 @@ git commit -m "feat: add PDF text and image extraction"
 - Modify: `backend/cmd/fcd/main.go`, `backend/cmd/fcctl/main.go`, `docs/PROTOCOL.md`, `README.md`
 - Test: `backend/cmd/fcd/main_test.go`, `backend/cmd/fcctl/main_test.go`, `backend/e2e_test.go`
 
-- [ ] **Step 1:** Build the `Toolbox` in `fcd` with real runners and pass it to the manager and server. `fcctl engines` must list all five engines with reasons for any that are missing.
-- [ ] **Step 2:** `fcctl pdf` becomes table-driven from `pdfops.Catalogue()` for instant operations: `fcctl pdf <name> file.pdf…` where `<name>` is the ID without the `pdf-` prefix (`compress-balanced`, `grayscale`, `repair`, `linearize`, `flatten`, `strip-metadata`, `to-text`, `extract-images`, `rotate-cw`, `rotate-ccw`, `rotate-180`, `ocr`, `from-images`). Phase 1 subcommands keep working unchanged. `fcctl pdf list` shows engine and enabled state with reason. Unknown names list the valid ones.
-- [ ] **Step 3: Tests:** argument parsing and exact request JSON for several operations; the e2e suite gains one test per engine (skipped without the binary) running through the socket and asserting output names, page counts, and the `no gain` and `no images` skips.
-- [ ] **Step 4: Docs:** add the new operations, output names, error codes (`invalid_pdf`), and the `engine` field to `docs/PROTOCOL.md` and the README PDF section, including which system packages each operation needs.
-- [ ] **Step 5: Commit.**
+- [x] **Step 1:** Build the `Toolbox` in `fcd` with real runners and pass it to the manager and server. `fcctl engines` must list all five engines with reasons for any that are missing.
+- [x] **Step 2:** `fcctl pdf` becomes table-driven from `pdfops.Catalogue()` for instant operations: `fcctl pdf <name> file.pdf…` where `<name>` is the ID without the `pdf-` prefix (`compress-balanced`, `grayscale`, `repair`, `linearize`, `flatten`, `strip-metadata`, `to-text`, `extract-images`, `rotate-cw`, `rotate-ccw`, `rotate-180`, `ocr`, `from-images`). Phase 1 subcommands keep working unchanged. `fcctl pdf list` shows engine and enabled state with reason. Unknown names list the valid ones.
+- [ ] **Step 3: Tests:** argument parsing and exact request JSON for several operations; the e2e suite gains one test per engine (skipped without the binary) running through the socket and asserting output names, page counts, and the `no gain` and `no images` skips. **Open:** only one combined daemon e2e (`TestDaemonEndToEndPDFTools`) plus later per-feature ones; no one-test-per-engine suite with the `no gain` / `no images` assertions over the socket.
+- [x] **Step 4: Docs:** add the new operations, output names, error codes (`invalid_pdf`), and the `engine` field to `docs/PROTOCOL.md` and the README PDF section, including which system packages each operation needs.
+- [x] **Step 5: Commit.**
 
 ```bash
 git add backend docs README.md
@@ -248,10 +248,10 @@ git commit -m "feat: wire PDF engines into fcd and fcctl"
 - Skips show the daemon notice (`already as small as it can get`, `no embedded images`).
 - Error codes get friendly text: `password_required` → `<name> is password-protected (passwords are not supported yet)`; `invalid_pdf` → `<name> is damaged or not a valid PDF`; anything else shows the daemon message.
 
-- [ ] **Step 1: Write failing tests** in the existing style (fake `Nautilus` module): single PDF builds Convert-to plus PDF Tools with the expected group order; two PDFs include Merge; images build a PDF Tools submenu containing only Convert-to-PDF entries; mixed PDF+image selection has no PDF Tools; a studio-mode or disabled operation is never shown; an old daemon without `operations` still yields the Convert-to menu; item activation passes `--op` with the right arguments; notification text for each error code and for the compress sizes.
-- [ ] **Step 2: Implement client changes, then the extension.**
-- [ ] **Step 3: Run** `python3 -m unittest discover -s frontends/nautilus/tests`.
-- [ ] **Step 4: Commit.**
+- [x] **Step 1: Write failing tests** in the existing style (fake `Nautilus` module): single PDF builds Convert-to plus PDF Tools with the expected group order; two PDFs include Merge; images build a PDF Tools submenu containing only Convert-to-PDF entries; mixed PDF+image selection has no PDF Tools; a studio-mode or disabled operation is never shown; an old daemon without `operations` still yields the Convert-to menu; item activation passes `--op` with the right arguments; notification text for each error code and for the compress sizes.
+- [x] **Step 2: Implement client changes, then the extension.**
+- [x] **Step 3: Run** `python3 -m unittest discover -s frontends/nautilus/tests`.
+- [x] **Step 4: Commit.**
 
 ```bash
 git add frontends/nautilus
@@ -272,9 +272,9 @@ Rules:
 - Cancellation must stop both the rasterizer and Tesseract (process-group kill via the shared runner) and remove the temp directory.
 - A PDF that already has a text layer is still processed; do not try to detect it in this phase.
 
-- [ ] **Step 1: Write failing fake-runner tests:** exact command sequence, temp directory cleanup on success, failure, and cancel, page-limit rejection, language validation.
-- [ ] **Step 2: Implement. Add a real-binary test** (skipped without `tesseract` and `pdftocairo`): build a one-page fixture containing rendered text, OCR it, and assert `pdftotext` finds the words.
-- [ ] **Step 3: Add `pdf-ocr` to the catalogue and the Nautilus group table. Commit.**
+- [x] **Step 1: Write failing fake-runner tests:** exact command sequence, temp directory cleanup on success, failure, and cancel, page-limit rejection, language validation.
+- [ ] **Step 2: Implement. Add a real-binary test** (skipped without `tesseract` and `pdftocairo`): build a one-page fixture containing rendered text, OCR it, and assert `pdftotext` finds the words. **Open:** `pdf-ocr` is deliberately unimplemented (README, PROTOCOL); no real-binary OCR test exists.
+- [x] **Step 3: Add `pdf-ocr` to the catalogue and the Nautilus group table. Commit.**
 
 ```bash
 git add backend frontends/nautilus
@@ -286,11 +286,11 @@ git commit -m "feat: add OCR to searchable PDF"
 **Files:**
 - Modify: `frontends/nautilus/install.sh`, `README.md`
 
-- [ ] **Step 1:** After installing the extension, `install.sh` runs `fcctl engines` (if the daemon is reachable) or checks `command -v` for `qpdf gs pdftotext pdfimages tesseract`, and prints one line per missing engine naming the operations it disables and the package to install (`pacman -S qpdf ghostscript poppler tesseract tesseract-data-eng`; `apt-get install qpdf ghostscript poppler-utils tesseract-ocr`). It never installs them automatically. Add a shell test or `--dry-run` check if the existing script has one.
-- [ ] **Step 2:** README lists each PDF operation with its engine and output name.
-- [ ] **Step 3: Full verification:** the commands in Global Constraints.
-- [ ] **Step 4: Manual check in Nautilus** (cannot be automated here): reinstall the extension, run `nautilus -q`, then confirm on real files that a single PDF shows PDF Tools with the expected groups, two PDFs add Merge, selected PNGs show Convert to PDF, a PDF plus a PNG shows no PDF Tools, compress shows sizes in the notification, a locked PDF shows the friendly message, and uninstalling a binary (rename `qpdf` on PATH for the daemon) hides only its operations.
-- [ ] **Step 5: Commit.**
+- [x] **Step 1:** After installing the extension, `install.sh` runs `fcctl engines` (if the daemon is reachable) or checks `command -v` for `qpdf gs pdftotext pdfimages tesseract`, and prints one line per missing engine naming the operations it disables and the package to install (`pacman -S qpdf ghostscript poppler tesseract tesseract-data-eng`; `apt-get install qpdf ghostscript poppler-utils tesseract-ocr`). It never installs them automatically. Add a shell test or `--dry-run` check if the existing script has one.
+- [x] **Step 2:** README lists each PDF operation with its engine and output name.
+- [x] **Step 3: Full verification:** the commands in Global Constraints.
+- [ ] **Step 4: Manual check in Nautilus** (cannot be automated here): reinstall the extension, run `nautilus -q`, then confirm on real files that a single PDF shows PDF Tools with the expected groups, two PDFs add Merge, selected PNGs show Convert to PDF, a PDF plus a PNG shows no PDF Tools, compress shows sizes in the notification, a locked PDF shows the friendly message, and uninstalling a binary (rename `qpdf` on PATH for the daemon) hides only its operations. **Open:** manual Nautilus check never recorded.
+- [x] **Step 5: Commit.**
 
 ```bash
 git add frontends/nautilus/install.sh README.md
