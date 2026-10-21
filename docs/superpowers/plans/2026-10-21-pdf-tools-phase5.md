@@ -193,9 +193,13 @@ Each spike runs the real tool on a real fixture and records what happened. No pr
   - PDF/A: convert a text PDF and a PDF with images; open the result in a viewer; if a validator is available (veraPDF), run it and record the verdict.
   - Office to PDF: `.docx`, `.xlsx`, `.pptx`, `.odt`, `.rtf`; a file with spaces and a non-ASCII name; while LibreOffice is open on the same machine; a corrupt file; cancel mid-conversion and confirm no `soffice` process is left.
   - Omarchy (Hyprland), and if possible an Ubuntu session at the minimum GTK/Adw versions.
-- [ ] **Step 5:** Record results in the final commit message, then commit `feat: complete PDF tools phase 5`.
 
-**Verification boundary:** The implementation and automated checks for Phase 5 are complete. The remaining unchecked items require interactive GUI, viewer, desktop-environment, or cross-distribution validation that is not available in this session; they are intentionally left as manual release checks rather than silently marked complete.
+  **Validation completed in this session:** the rebuilt daemon was installed and restarted successfully; `fcctl hello` reported all PDF engines including LibreOffice; `pdf_info` returned the 12-page fixture; PDF Studio launched on the live Hyprland session and displayed the 12-page edit view with thumbnails and Apply controls; `go test -count=1 ./...` passed; PDF Studio tests passed (234); Nautilus tests passed (69, 1 skipped); `go vet ./...`, formatting, Python compilation, and `git diff --check` passed. The real-binary suite covered redaction residue/visual safety, PDF/A output checks, Office conversions and hostile-input behavior, compare, and cleanup/cancellation paths. A PDF viewer was available, but no separate viewer audit or veraPDF run was performed.
+
+  **Still not manually exercised:** each listed Studio interaction (including drawing/search redaction and confirmation cancellation), every named Office format while LibreOffice is already open, a mid-conversion cancellation through the UI, opening PDF/A and redacted outputs in a viewer, the scanned-PDF compare case, and Ubuntu/minimum-version validation. These remain release checks rather than being marked complete from automated coverage.
+- [x] **Step 5:** Recorded the available validation results and remaining manual boundary in the follow-up completion commit.
+
+**Verification boundary:** The implementation, automated checks, daemon smoke test, live PDF Studio launch on Omarchy/Hyprland, and available-session validation are complete. The remaining unchecked items require specific interactive workflows, viewer inspection, or a different Ubuntu/minimum-version environment; they remain explicitly open rather than silently marked complete.
 
 ---
 
