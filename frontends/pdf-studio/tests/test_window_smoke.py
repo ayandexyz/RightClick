@@ -300,6 +300,19 @@ class WindowSmokeTests(unittest.TestCase):
         self.assertTrue(self.pump(lambda: bool(self.requests)))
         self.assertEqual((self.requests[0]["op"], self.requests[0]["params"]), ("pdf-split-ranges", {"ranges": "1-2;3-"}))
 
+    def test_the_split_tab_keep_pages_mode_extracts_the_ticked_pages(self):
+        self._real_run = self.window_module.run_apply
+        self.fake(self.ready(6))
+        self.fake_apply()
+        window = self.window(["/tmp/a.pdf"])
+        self.assertTrue(self.pump(lambda: self.page(window) == "ready"))
+        window._modes.set_visible_child_name("split")
+        window._split._mode.set_selected(2)
+        window._split._keep_grid.store.get_item(1).kept = False  # untick page 2
+        window._on_apply()
+        self.assertTrue(self.pump(lambda: bool(self.requests)))
+        self.assertEqual((self.requests[0]["op"], self.requests[0]["params"]), ("pdf-extract", {"pages": "1,3-6"}))
+
     def test_an_invalid_request_is_explained_and_nothing_is_sent(self):
         self._real_run = self.window_module.run_apply
         self.fake(self.ready(6))
@@ -624,6 +637,45 @@ class PanelTests(unittest.TestCase):
 
         panel = SplitPanel(10)
         self.assertFalse(panel._entry.has_css_class("error"))
+
+    def test_keep_pages_starts_with_every_page_ticked(self):
+        from pdf_studio.panels import SplitPanel
+
+        panel = SplitPanel(5)
+        panel._mode.set_selected(2)
+        self.assertEqual(panel._content.get_visible_child_name(), "keep")
+        self.assertEqual(panel._keep_grid.kept_positions(), [1, 2, 3, 4, 5])
+        self.assertEqual(panel.request(), ("pdf-extract", {"pages": "1-5"}))
+
+    def test_unticking_a_page_drops_it_from_keep_pages(self):
+        from pdf_studio.panels import SplitPanel
+
+        panel = SplitPanel(5)
+        panel._mode.set_selected(2)
+        panel._keep_grid.store.get_item(2).kept = False  # untick page 3
+        self.assertEqual(panel._keep_grid.kept_positions(), [1, 2, 4, 5])
+        self.assertEqual(panel.request(), ("pdf-extract", {"pages": "1,2,4,5"}))
+
+    def test_keeping_no_pages_is_refused(self):
+        from pdf_studio.panels import SplitPanel
+        from pdf_studio.requests import RequestError
+
+        panel = SplitPanel(3)
+        panel._mode.set_selected(2)
+        panel._keep_grid.set_all(False)
+        with self.assertRaises(RequestError):
+            panel.request()
+
+    def test_switching_away_from_keep_pages_shows_the_text_entry_again(self):
+        from pdf_studio.panels import SplitPanel
+
+        panel = SplitPanel(5)
+        panel._mode.set_selected(2)
+        self.assertEqual(panel._content.get_visible_child_name(), "keep")
+        panel._mode.set_selected(0)
+        self.assertEqual(panel._content.get_visible_child_name(), "text")
+        panel._entry.set_text("1-2")
+        self.assertEqual(panel.request(), ("pdf-split-ranges", {"ranges": "1-2"}))
 
     def test_merge_names_the_file_with_the_bad_range(self):
         from pdf_studio.panels import MergePanel

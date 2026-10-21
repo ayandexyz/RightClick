@@ -11,9 +11,10 @@ import gi
 gi.require_version("Gtk", "4.0")
 from gi.repository import Gio, GLib, Gtk  # noqa: E402
 
+from .grid import KeepPagesGrid  # noqa: E402
 from .output_panel import CONFLICT_CHOICES, build_output_options  # noqa: E402
 from .pagespec import format_pages  # noqa: E402
-from .requests import RequestError, merge_request, split_parts, split_request  # noqa: E402
+from .requests import RequestError, keep_pages_request, merge_request, split_parts, split_request  # noqa: E402
 
 _DONE = ("completed", "completed-with-errors", "failed", "cancelled")
 
@@ -142,29 +143,56 @@ class ApplyBar(Gtk.Box):
 
 
 class SplitPanel(Gtk.Box):
-    """Split by page ranges or every N pages, with a live preview of the files."""
+    """Split by page ranges, every N pages, or by keeping ticked pages.
 
-    def __init__(self, page_count, on_change=None):
+    The first two modes show a live text preview of the files that would be
+    produced. "Keep pages" instead shows every page as a thumbnail with a
+    checkbox, ticked by default; unticking a page drops it, and Apply writes
+    one file with the ticked pages in document order.
+    """
+
+    def __init__(self, page_count, on_change=None, loader_factory=None):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         _margins(self, 12, 12)
         self._page_count = page_count
         self._on_change = on_change or (lambda: None)
-        self._modes = ("ranges", "every")
-        self._mode = Gtk.DropDown.new_from_strings(["Page ranges", "Every N pages"])
+        self._modes = ("ranges", "every", "keep")
+        self._mode = Gtk.DropDown.new_from_strings(["Page ranges", "Every N pages", "Keep pages"])
         self._mode.connect("notify::selected", self._mode_changed)
         self.append(self._mode)
+
+        text_view = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self._entry = Gtk.Entry()
         self._entry.connect("changed", lambda _e: self._update())
-        self.append(self._entry)
+        text_view.append(self._entry)
         self._preview = Gtk.Label(xalign=0, yalign=0, wrap=True, selectable=True)
         scroller = Gtk.ScrolledWindow(vexpand=True)
         scroller.set_child(self._preview)
-        self.append(scroller)
+        text_view.append(scroller)
+
+        keep_view = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        self._keep_status = Gtk.Label(xalign=0)
+        self._keep_status.add_css_class("dim-label")
+        keep_view.append(self._keep_status)
+        self._keep_grid = KeepPagesGrid(page_count, loader_factory=loader_factory, on_change=self._keep_changed)
+        keep_view.append(self._keep_grid)
+
+        self._content = Gtk.Stack(vexpand=True)
+        self._content.add_named(text_view, "text")
+        self._content.add_named(keep_view, "keep")
+        self.append(self._content)
         self._mode_changed()
 
     def _mode_changed(self, *_args):
-        ranges = self._modes[self._mode.get_selected()] == "ranges"
-        self._entry.set_placeholder_text("1-3;4-6;7-" if ranges else "Pages per file, e.g. 5")
+        mode = self._modes[self._mode.get_selected()]
+        if mode == "keep":
+            self._content.set_visible_child_name("keep")
+            self._keep_grid.ensure_loaded()
+            self._update_keep_status()
+            self._on_change()
+            return
+        self._content.set_visible_child_name("text")
+        self._entry.set_placeholder_text("1-3;4-6;7-" if mode == "ranges" else "Pages per file, e.g. 5")
         self._entry.set_text("")
         self._update()
 
@@ -197,9 +225,23 @@ class SplitPanel(Gtk.Box):
             self._entry.remove_css_class("error")
         self._on_change()
 
+    def _keep_changed(self):
+        self._update_keep_status()
+        self._on_change()
+
+    def _update_keep_status(self):
+        kept = len(self._keep_grid.kept_positions())
+        self._keep_status.set_text(f"Keeping {kept} of {self._page_count} page{'s' if self._page_count != 1 else ''}")
+
     def request(self):
-        mode, value = self._value()
+        mode = self._modes[self._mode.get_selected()]
+        if mode == "keep":
+            return keep_pages_request(self._keep_grid.kept_positions())
+        _, value = self._value()
         return split_request(mode, value, self._page_count)
+
+    def close(self):
+        self._keep_grid.close()
 
 
 class MergePanel(Gtk.Box):

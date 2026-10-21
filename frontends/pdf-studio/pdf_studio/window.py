@@ -258,7 +258,10 @@ class StudioWindow(Adw.ApplicationWindow):
         self._grid.set_vexpand(True)
         edit.append(self._grid)
 
-        self._split = SplitPanel(page_count)
+        self._split = SplitPanel(
+            page_count,
+            loader_factory=lambda callback, error: ThumbnailLoader(_make_client, path, page_count, callback=callback, error_callback=error, password=self._password),
+        )
         self._modes = Gtk.Stack(vexpand=True)
         self._modes.add_titled(edit, "edit", "Edit pages")
         self._modes.add_titled(self._split, "split", "Split")

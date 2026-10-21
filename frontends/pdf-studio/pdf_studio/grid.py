@@ -308,6 +308,196 @@ if GTK_AVAILABLE:
     PageCell = _GtkPageCell
     PageGrid = _GtkPageGrid
 
+
+    class _KeepRow(_GObject.Object):
+        def __init__(self, position):
+            super().__init__()
+            self.position = position
+            self.thumbnail = None
+            self.kept = True
+
+
+    class _KeepPageCell(_Gtk.Box):
+        """A thumbnail with a "keep this page" checkbox at its top-left corner."""
+
+        def __init__(self):
+            super().__init__(orientation=_Gtk.Orientation.VERTICAL, spacing=4)
+            self.set_margin_start(6)
+            self.set_margin_end(6)
+            self.set_margin_top(6)
+            self.set_margin_bottom(6)
+            self.set_size_request(_THUMBNAIL_WIDTH + 12, _THUMBNAIL_HEIGHT + 40)
+
+            self._frame = _Gtk.Overlay()
+            self._frame.set_size_request(_THUMBNAIL_WIDTH, _THUMBNAIL_HEIGHT)
+            self._frame.add_css_class("card")
+            self.append(self._frame)
+            self._picture = _Gtk.Picture(content_fit=_Gtk.ContentFit.CONTAIN)
+            self._picture.set_size_request(_THUMBNAIL_WIDTH, _THUMBNAIL_HEIGHT)
+            self._picture.set_visible(False)
+            self._frame.set_child(self._picture)
+            self._placeholder = _Gtk.Spinner()
+            self._placeholder.set_size_request(_THUMBNAIL_WIDTH, _THUMBNAIL_HEIGHT)
+            self._placeholder.set_halign(_Gtk.Align.CENTER)
+            self._placeholder.set_valign(_Gtk.Align.CENTER)
+            self._frame.add_overlay(self._placeholder)
+
+            self._check = _Gtk.CheckButton()
+            self._check.set_halign(_Gtk.Align.START)
+            self._check.set_valign(_Gtk.Align.START)
+            self._check.set_margin_start(6)
+            self._check.set_margin_top(6)
+            self._check.add_css_class("osd")
+            self._check.set_tooltip_text("Keep this page")
+            self._toggle_handler = self._check.connect("toggled", self._on_toggled)
+            self._frame.add_overlay(self._check)
+
+            self._caption = _Gtk.Label()
+            self.append(self._caption)
+            self.row = None
+            self._on_toggle = None
+
+        def bind(self, row, on_toggle):
+            self.row = row
+            self._on_toggle = on_toggle
+            self._caption.set_label(f"Page {row.position}")
+            with self._check.handler_block(self._toggle_handler):
+                self._check.set_active(row.kept)
+            self._set_thumbnail(row.thumbnail)
+
+        def _set_thumbnail(self, thumbnail):
+            if thumbnail:
+                try:
+                    self._picture.set_filename(thumbnail)
+                    self._picture.set_visible(True)
+                    self._placeholder.set_visible(False)
+                    return
+                except (_GLib.Error, TypeError):
+                    pass
+            self._picture.set_visible(False)
+            self._placeholder.set_visible(True)
+            self._placeholder.start()
+
+        def _on_toggled(self, _check):
+            if self.row is None:
+                return
+            self.row.kept = self._check.get_active()
+            if self._on_toggle:
+                self._on_toggle()
+
+        def unbind(self):
+            self.row = None
+            self._on_toggle = None
+            self._picture.set_visible(False)
+            self._placeholder.stop()
+
+
+    class _GtkKeepPagesGrid(_Gtk.Box):
+        """A grid of page thumbnails, each with a keep/discard checkbox.
+
+        Every page starts ticked (kept); unticking excludes it.
+        ``kept_positions()`` returns the 1-based positions still ticked, in
+        page order.
+        """
+
+        def __init__(self, page_count, loader_factory=None, on_change=None):
+            super().__init__(orientation=_Gtk.Orientation.VERTICAL)
+            self._page_count = page_count
+            self._loader_factory: Any = loader_factory
+            self._on_change = on_change or (lambda: None)
+            self._loader = None
+            self._thumbs = {}
+            self._cells = set()
+
+            self.store = _Gio.ListStore.new(_KeepRow)
+            for position in range(1, page_count + 1):
+                self.store.append(_KeepRow(position))
+            no_selection = _Gtk.NoSelection.new(self.store)
+            factory = _Gtk.SignalListItemFactory()
+            factory.connect("setup", self._setup_cell)
+            factory.connect("bind", self._bind_cell)
+            factory.connect("unbind", self._unbind_cell)
+            self.view = _Gtk.GridView(model=no_selection, factory=factory)
+            self.view.set_min_columns(1)
+            self.view.set_max_columns(12)
+            scroller = _Gtk.ScrolledWindow(hscrollbar_policy=_Gtk.PolicyType.NEVER)
+            scroller.set_vexpand(True)
+            scroller.set_child(self.view)
+            self.append(scroller)
+
+        def ensure_loaded(self):
+            """Start fetching thumbnails, the first time this is shown.
+
+            Thumbnails are not requested until the grid is actually shown, so
+            switching to "Keep pages" does not double the daemon's thumbnail
+            work when the Edit tab's own grid already loaded them.
+            """
+            if self._loader is not None or not self._loader_factory:
+                return
+            self._loader = self._make_loader()
+            self._loader.load(list(range(1, self._page_count + 1)))
+
+        def _make_loader(self):
+            callback = lambda page, result: _GLib.idle_add(self._thumbnail_ready, page, result)
+            error = lambda _error, _pages: None
+            try:
+                return self._loader_factory(callback, error)
+            except TypeError:
+                return self._loader_factory(callback=callback, error_callback=error)
+
+        def _thumbnail_ready(self, page, result):
+            path = result.get("path") if isinstance(result, dict) else getattr(result, "path", None)
+            if not path:
+                return _GLib.SOURCE_REMOVE
+            self._thumbs[page] = path
+            for row in self._rows():
+                if row.position == page:
+                    row.thumbnail = path
+            for cell in list(self._cells):
+                if cell.row is not None and cell.row.position == page:
+                    cell.bind(cell.row, self._on_change)
+            return _GLib.SOURCE_REMOVE
+
+        def _rows(self):
+            for index in range(self.store.get_n_items()):
+                yield self.store.get_item(index)
+
+        def _setup_cell(self, _factory, list_item):
+            list_item.set_child(_KeepPageCell())
+
+        def _bind_cell(self, _factory, list_item):
+            cell = list_item.get_child()
+            row = list_item.get_item()
+            row.thumbnail = self._thumbs.get(row.position)
+            cell.bind(row, self._on_change)
+            self._cells.add(cell)
+
+        def _unbind_cell(self, _factory, list_item):
+            cell = list_item.get_child()
+            self._cells.discard(cell)
+            cell.unbind()
+
+        def kept_positions(self):
+            return [row.position for row in self._rows() if row.kept]
+
+        def set_all(self, kept):
+            for row in self._rows():
+                row.kept = kept
+            for cell in list(self._cells):
+                if cell.row is not None:
+                    with cell._check.handler_block(cell._toggle_handler):
+                        cell._check.set_active(cell.row.kept)
+            self._on_change()
+
+        def close(self):
+            if self._loader:
+                self._loader.stop()
+                self._loader = None
+
+
+    KeepPageCell = _KeepPageCell
+    KeepPagesGrid = _GtkKeepPagesGrid
+
 else:
 
     class PageCell:
@@ -324,4 +514,18 @@ else:
             raise RuntimeError("PageGrid requires GTK 4")
 
 
-__all__ = ["GTK_AVAILABLE", "PageCell", "PageGrid"]
+    class KeepPageCell:
+        """Import-safe placeholder for environments without GTK."""
+
+        def __init__(self, *args, **kwargs):
+            raise RuntimeError("KeepPageCell requires GTK 4")
+
+
+    class KeepPagesGrid:
+        """Import-safe placeholder for environments without GTK."""
+
+        def __init__(self, *args, **kwargs):
+            raise RuntimeError("KeepPagesGrid requires GTK 4")
+
+
+__all__ = ["GTK_AVAILABLE", "PageCell", "PageGrid", "KeepPageCell", "KeepPagesGrid"]

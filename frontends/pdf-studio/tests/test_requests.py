@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
 from pdf_studio.model import EditModel
-from pdf_studio.requests import RequestError, edit_request, merge_request, split_parts, split_request
+from pdf_studio.requests import RequestError, edit_request, keep_pages_request, merge_request, split_parts, split_request
 
 
 def select(model, *positions):
@@ -120,6 +120,18 @@ class SplitRequestTests(unittest.TestCase):
     def test_it_refuses_what_the_daemon_would_refuse(self):
         with self.assertRaises(RequestError):
             split_request("every", 6, 6)
+
+
+class KeepPagesRequestTests(unittest.TestCase):
+    def test_kept_pages_become_an_extract(self):
+        self.assertEqual(keep_pages_request([1, 2, 3, 7]), ("pdf-extract", {"pages": "1-3,7"}))
+
+    def test_order_and_duplicates_do_not_matter(self):
+        self.assertEqual(keep_pages_request([3, 1, 2, 2]), ("pdf-extract", {"pages": "1-3"}))
+
+    def test_keeping_nothing_is_refused(self):
+        with self.assertRaises(RequestError):
+            keep_pages_request([])
 
 
 class MergeRequestTests(unittest.TestCase):

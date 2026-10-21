@@ -8,7 +8,7 @@ exists. The daemon stays the authority: these checks are for the user's
 benefit, not a substitute for its own.
 """
 
-from .pagespec import PageSpecError, parse_pages
+from .pagespec import PageSpecError, format_pages, parse_pages
 
 MAX_SPLIT_PARTS = 200
 
@@ -79,6 +79,18 @@ def split_request(mode, value, page_count):
         groups = ";".join(part.strip() for part in value.split(";"))
         return "pdf-split-ranges", {"ranges": groups}
     return "pdf-split-every", {"every": value}
+
+
+def keep_pages_request(positions):
+    """The ``pdf-extract`` request keeping exactly these 1-based positions.
+
+    This is how the Split tab's "Keep pages" mode is expressed: a page
+    ticked in the grid is kept, an unticked one is dropped, and the result
+    is a single file with the kept pages in document order.
+    """
+    if not positions:
+        raise RequestError("Keep at least one page")
+    return "pdf-extract", {"pages": format_pages(positions)}
 
 
 def merge_request(files, file_pages=None, page_counts=None):
