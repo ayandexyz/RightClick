@@ -14,8 +14,8 @@ import (
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 )
 
-// ErrPasswordRequired marks an encrypted PDF. Passwords arrive in a later
-// phase, so the job layer turns this into a distinct error code.
+// ErrPasswordRequired marks an encrypted PDF. Passwords are not accepted in
+// this phase, so the job layer turns this into a distinct error code.
 var ErrPasswordRequired = errors.New("pdf is encrypted")
 
 // ErrInvalidPDF marks a file that cannot be read as a PDF at all: damaged,
