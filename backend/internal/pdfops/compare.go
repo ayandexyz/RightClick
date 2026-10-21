@@ -50,7 +50,11 @@ func DiffPages(a, b [][]string) (string, error) {
 				out = append(out, fmt.Sprintf("page %d removed", ai+1))
 				ai++
 			default:
-				out = append(out, fmt.Sprintf("page %d differs", ai+1))
+				if ai == bi {
+					out = append(out, fmt.Sprintf("page %d differs", ai+1))
+				} else {
+					out = append(out, fmt.Sprintf("page %d of the first, page %d of the second, differs", ai+1, bi+1))
+				}
 				out = append(out, diffLines(a[ai], b[bi])...)
 				ai++
 				bi++
@@ -122,8 +126,17 @@ func lcsPagePairs(a, b []string) [][2]int {
 	}
 	return out
 }
+
+// maxDiffCells bounds the table a page's line diff builds. Two pages of
+// 2,000 lines each fit; a "page" of tens of thousands of lines, as a text dump
+// can produce, would take gigabytes, so it is reported without a line diff.
+const maxDiffCells = 4_000_000
+
 func diffLines(a, b []string) []string {
 	a, b = normalLines(a), normalLines(b)
+	if len(a)*len(b) > maxDiffCells {
+		return []string{fmt.Sprintf("(too long to compare line by line: %d lines against %d)", len(a), len(b))}
+	}
 	dp := make([][]int, len(a)+1)
 	for i := range dp {
 		dp[i] = make([]int, len(b)+1)
@@ -189,6 +202,11 @@ func (p *Poppler) extractPages(ctx context.Context, input, output string) ([][]s
 		return nil, err
 	}
 	raw := strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\f")
+	// pdftotext ends every page, the last included, with a form feed, which
+	// leaves an empty piece after it that is not a page.
+	if len(raw) > 1 && raw[len(raw)-1] == "" {
+		raw = raw[:len(raw)-1]
+	}
 	pages := make([][]string, len(raw))
 	for i, s := range raw {
 		pages[i] = strings.Split(strings.TrimSpace(s), "\n")
