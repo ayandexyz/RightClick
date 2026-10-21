@@ -19,14 +19,15 @@ _Gio = import_module("gi.repository.Gio")
 
 from .grid import PageGrid  # noqa: E402
 from .model import EditModel  # noqa: E402
-from .requests import edit_request  # noqa: E402
+from .panels import ApplyBar, MergePanel, SplitPanel  # noqa: E402
+from .requests import RequestError, edit_request  # noqa: E402
 from .toolbar import ACTION_TABLE, SHORTCUTS, dispatch_action, range_box_state  # noqa: E402
 from .thumbnails import ThumbnailLoader  # noqa: E402
 
 from fc_client.client import FcClient  # noqa: E402
 from fc_client.daemon import ensure_daemon, socket_path  # noqa: E402
 
-from .apply import build_output_options, friendly_apply_error, run_apply  # noqa: E402
+from .apply import run_apply  # noqa: E402
 from .loading import load_document  # noqa: E402
 
 _ICONS = {
@@ -81,10 +82,12 @@ class StudioWindow(Adw.ApplicationWindow):
         self._grid = None
         self._range_entry = None
         self._status_line = None
-        self._apply_button = None
+        self._bar = None
+        self._modes = None
+        self._split = None
+        self._merge = None
         self._actions = {}
         self._install_actions()
-        self._apply_state = None
         self._cancel_event = None
 
         view = Adw.ToolbarView()
@@ -200,16 +203,20 @@ class StudioWindow(Adw.ApplicationWindow):
             self._ready.set_description(_markup(name))
             self._ready.set_visible(False)
             self._model = EditModel(pages)
+            self._page_count = pages
             self._build_editor(self._paths[0])
         else:
             self._set_title(f"Merge {len(results)} PDFs")
             self._ready.set_title(f"{len(results)} PDFs")
             lines = [f"{_markup(os.path.basename(path))} — {result.pages} page{'s' if result.pages != 1 else ''}" for path, result in zip(self._paths, results)]
             self._ready.set_description("\n".join(lines))
+            self._ready.set_visible(False)
             self._build_merge_editor(results)
         self._stack.set_visible_child_name("ready")
 
     def _build_editor(self, path):
+        self._cancel_event = None
+        edit = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         toolbar.set_margin_start(8)
         toolbar.set_margin_end(8)
@@ -220,7 +227,7 @@ class StudioWindow(Adw.ApplicationWindow):
         # The row is wider than a tiled window, so it scrolls instead of clipping.
         scroller = Gtk.ScrolledWindow(vscrollbar_policy=Gtk.PolicyType.NEVER, hscrollbar_policy=Gtk.PolicyType.AUTOMATIC)
         scroller.set_child(toolbar)
-        self._editor.append(scroller)
+        edit.append(scroller)
         row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         row.set_margin_start(8)
         self._range_entry = Gtk.Entry(placeholder_text="Pages, e.g. 1-3,7")
@@ -229,23 +236,32 @@ class StudioWindow(Adw.ApplicationWindow):
         row.append(self._range_entry)
         self._status_line = Gtk.Label(xalign=0)
         row.append(self._status_line)
-        self._apply_button = Gtk.Button(label="Apply", css_classes=["suggested-action"])
-        self._apply_button.connect("clicked", self._on_apply)
-        row.append(self._apply_button)
-        self._editor.append(row)
+        edit.append(row)
         model = self._model
-        if model is None:
-            return
         page_count = model.page_count
         self._grid = PageGrid(model, loader_factory=lambda callback, error: ThumbnailLoader(_make_client, path, page_count, callback=callback, error_callback=error), on_selection_changed=self._refresh_editor)
         self._grid.set_vexpand(True)
-        self._editor.append(self._grid)
+        edit.append(self._grid)
+
+        self._split = SplitPanel(page_count)
+        self._modes = Gtk.Stack(vexpand=True)
+        self._modes.add_titled(edit, "edit", "Edit pages")
+        self._modes.add_titled(self._split, "split", "Split")
+        self._editor.append(Gtk.StackSwitcher(stack=self._modes, halign=Gtk.Align.CENTER))
+        self._editor.append(self._modes)
+        self._add_apply_bar(os.path.dirname(path))
         self._refresh_editor()
 
     def _build_merge_editor(self, results):
-        self._apply_button = Gtk.Button(label="Apply", css_classes=["suggested-action"])
-        self._apply_button.connect("clicked", self._on_apply)
-        self._editor.append(self._apply_button)
+        self._merge = MergePanel(self._paths, [result.pages for result in results])
+        self._merge.set_vexpand(True)
+        self._editor.append(self._merge)
+        self._add_apply_bar(os.path.dirname(self._paths[0]))
+
+    def _add_apply_bar(self, folder):
+        self._bar = ApplyBar(self._on_apply, self._on_cancel)
+        self._bar.set_folder(folder)
+        self._editor.append(self._bar)
 
     def _range_changed(self, entry):
         if self._model is None:
@@ -283,60 +299,43 @@ class StudioWindow(Adw.ApplicationWindow):
             self.get_application().open_paths(paths)
             self.close()
 
-    def _on_apply(self, _button):
-        if not self._paths:
+    def _request(self):
+        """The operation and parameters for what is on screen."""
+        if self._merge is not None:
+            return self._merge.request()
+        if self._modes.get_visible_child_name() == "split":
+            return self._split.request()
+        return edit_request(self._model)
+
+    def _on_apply(self):
+        if not self._paths or self._bar is None or self._cancel_event is not None:
             return
-        if self._apply_button is None:
+        try:
+            op, params = self._request()
+        except RequestError as error:
+            self._bar.set_message(str(error))
             return
-        self._apply_button.set_sensitive(False)
-        self._cancel_event = threading.Event()
-        if self._model is not None:
-            op, params = edit_request(self._model)
-        else:
-            op, params = "pdf-merge", {}
         request = {"files": list(self._paths), "op": op, "params": params}
-        request.update(build_output_options(os.path.dirname(self._paths[0]), "rename"))
+        request.update(self._bar.output_options())
+        cancel_event = self._cancel_event = threading.Event()
+        self._bar.set_applying(True)
+        self._bar.set_message("Applying…")
 
         def report(state):
-            self._apply_state = state
             GLib.idle_add(self._apply_state_changed, state)
 
-        def work():
-            run_apply(_make_client, request, report, self._cancel_event)
+        threading.Thread(target=run_apply, args=(_make_client, request, report, cancel_event), daemon=True).start()
 
-        threading.Thread(target=work, daemon=True).start()
+    def _on_cancel(self):
+        if self._cancel_event is not None:
+            self._cancel_event.set()
+            self._bar.cancelling()
 
     def _apply_state_changed(self, state):
-        if self._model is not None:
-            return self._single_apply_state_changed(state)
-        if state.status == "completed":
-            self._ready.set_title("Apply complete")
-        elif state.status == "completed-with-errors":
-            self._ready.set_title("Apply completed with errors")
-        elif state.status == "failed":
-            self._ready.set_title("Apply failed")
-            self._ready.set_description(_markup(state.error or "The operation failed"))
-        elif state.status == "cancelled":
-            self._ready.set_title("Apply cancelled")
-        else:
-            self._ready.set_description(f"Applying… {round(state.progress * 100)}%")
-        if state.status in ("completed", "completed-with-errors", "failed", "cancelled") and self._apply_button is not None:
-            self._apply_button.set_sensitive(True)
-        return GLib.SOURCE_REMOVE
-
-    def _single_apply_state_changed(self, state):
-        """Report an apply in the editor's status line, which stays on screen."""
-        done = ("completed", "completed-with-errors", "failed", "cancelled")
-        message = {
-            "completed": "Saved",
-            "completed-with-errors": "Saved with errors",
-            "failed": state.error or "The operation failed",
-            "cancelled": "Cancelled",
-        }.get(state.status, f"Applying… {round(state.progress * 100)}%")
-        if self._status_line is not None:
-            self._status_line.set_text(message)
-        if state.status in done and self._apply_button is not None:
-            self._apply_button.set_sensitive(True)
+        if self._closed or self._bar is None:
+            return GLib.SOURCE_REMOVE
+        if self._bar.show_state(state):
+            self._cancel_event = None
         return GLib.SOURCE_REMOVE
 
     def _show_problems(self):

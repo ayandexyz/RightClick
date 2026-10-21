@@ -1,4 +1,11 @@
-"""GTK-independent output destination helpers."""
+"""Where an apply writes, and what happens when a name is taken."""
+
+# (label shown, daemon on_conflict value); the first is the default.
+CONFLICT_CHOICES = (
+    ("Keep both", "rename"),
+    ("Skip existing", "skip"),
+    ("Replace", "overwrite"),
+)
 
 
 def build_output_options(folder, conflict):
@@ -10,4 +17,4 @@ def build_output_options(folder, conflict):
     return options
 
 
-__all__ = ["build_output_options"]
+__all__ = ["CONFLICT_CHOICES", "build_output_options"]

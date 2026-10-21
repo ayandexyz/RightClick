@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
-from pdf_studio.apply import JobState, build_output_options, friendly_apply_error, reduce_job_event, run_apply
+from pdf_studio.apply import JobState, build_output_options, reduce_job_event, run_apply
 
 
 class JobReducerTests(unittest.TestCase):
@@ -29,8 +29,19 @@ class ApplyTests(unittest.TestCase):
         self.assertEqual(build_output_options("/tmp/out", "rename"), {"output_dir": "/tmp/out", "on_conflict": "rename"})
         self.assertEqual(build_output_options("", "overwrite"), {"on_conflict": "overwrite"})
 
-    def test_friendly_error_uses_shared_wording(self):
-        self.assertIn("passwords are not supported", friendly_apply_error("password_required", "secret"))
+    def test_a_daemon_error_during_apply_uses_the_shared_wording(self):
+        class Locked(Exception):
+            code, message = "password_required", "secret"
+
+        class Client:
+            def run_operation(self, *args, **kwargs):
+                raise Locked()
+                yield
+
+        states = []
+        run_apply(lambda: Client(), {"files": ["a.pdf"], "op": "pdf-edit"}, states.append, threading.Event())
+        self.assertEqual(states[-1].status, "failed")
+        self.assertIn("passwords are not supported", states[-1].error)
 
     def test_run_apply_reports_states_and_cancels(self):
         cancelled = threading.Event()

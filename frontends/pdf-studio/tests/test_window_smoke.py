@@ -185,6 +185,101 @@ class WindowSmokeTests(unittest.TestCase):
         window._loaded(stale, [self.ready(99)])
         self.assertEqual(self.page(window), "loading")
 
+    # -- apply ---------------------------------------------------------------
+
+    def fake_apply(self, finish=True):
+        from pdf_studio.apply import JobState
+
+        self.requests, self.cancels = [], []
+
+        def run(client_factory, request, on_event, cancel_event):
+            self.requests.append(request)
+            on_event(JobState("running", 0.4, job_id="j"))
+            if finish:
+                on_event(JobState("completed", 1.0, ({"outputs": ["/tmp/o.pdf"]},), job_id="j"))
+            else:
+                cancel_event.wait(3)
+                self.cancels.append(True)
+                on_event(JobState("cancelled", 0.4, job_id="j"))
+
+        self.window_module.run_apply = run
+        self.addCleanup(setattr, self.window_module, "run_apply", self._real_run)
+
+    def test_apply_sends_the_edit_with_the_chosen_output_options(self):
+        self._real_run = self.window_module.run_apply
+        self.fake(self.ready(4))
+        self.fake_apply()
+        window = self.window(["/tmp/d/a.pdf"])
+        self.assertTrue(self.pump(lambda: self.page(window) == "ready"))
+        window._bar._conflict.set_selected(1)
+        window._on_apply()
+        self.assertTrue(self.pump(lambda: "o.pdf" in window._bar._message.get_text()))
+        request = self.requests[0]
+        self.assertEqual(request["op"], "pdf-edit")
+        self.assertEqual((request["output_dir"], request["on_conflict"]), ("/tmp/d", "skip"))
+        self.assertTrue(window._bar._apply.get_sensitive())
+
+    def test_the_split_tab_applies_a_split(self):
+        self._real_run = self.window_module.run_apply
+        self.fake(self.ready(6))
+        self.fake_apply()
+        window = self.window(["/tmp/a.pdf"])
+        self.assertTrue(self.pump(lambda: self.page(window) == "ready"))
+        window._modes.set_visible_child_name("split")
+        window._split._entry.set_text("1-2;3-")
+        window._on_apply()
+        self.assertTrue(self.pump(lambda: bool(self.requests)))
+        self.assertEqual((self.requests[0]["op"], self.requests[0]["params"]), ("pdf-split-ranges", {"ranges": "1-2;3-"}))
+
+    def test_an_invalid_request_is_explained_and_nothing_is_sent(self):
+        self._real_run = self.window_module.run_apply
+        self.fake(self.ready(6))
+        self.fake_apply()
+        window = self.window(["/tmp/a.pdf"])
+        self.assertTrue(self.pump(lambda: self.page(window) == "ready"))
+        window._modes.set_visible_child_name("split")
+        window._on_apply()
+        self.assertEqual(self.requests, [])
+        self.assertTrue(window._bar._message.get_text())
+
+    def test_a_merge_window_sends_the_per_file_ranges(self):
+        self._real_run = self.window_module.run_apply
+        self.fake(self.ready(3), self.ready(5))
+        self.fake_apply()
+        window = self.window(["/tmp/a.pdf", "/tmp/b.pdf"])
+        self.assertTrue(self.pump(lambda: self.page(window) == "ready"))
+        window._merge._entries[1].set_text("2-4")
+        window._on_apply()
+        self.assertTrue(self.pump(lambda: bool(self.requests)))
+        self.assertEqual(self.requests[0]["params"], {"file_pages": ["", "2-4"]})
+        self.assertEqual(self.requests[0]["files"], ["/tmp/a.pdf", "/tmp/b.pdf"])
+
+    def test_cancel_reaches_the_running_job(self):
+        self._real_run = self.window_module.run_apply
+        self.fake(self.ready(4))
+        self.fake_apply(finish=False)
+        window = self.window(["/tmp/a.pdf"])
+        self.assertTrue(self.pump(lambda: self.page(window) == "ready"))
+        window._on_apply()
+        self.assertTrue(self.pump(lambda: window._bar._cancel.get_visible()))
+        window._on_cancel()
+        self.assertTrue(self.pump(lambda: window._bar.get_visible() and window._bar._message.get_text() == "Cancelled"))
+        self.assertEqual(self.cancels, [True])
+        self.assertTrue(window._bar._apply.get_sensitive())
+
+    def test_a_second_apply_while_one_runs_is_ignored(self):
+        self._real_run = self.window_module.run_apply
+        self.fake(self.ready(4))
+        self.fake_apply(finish=False)
+        window = self.window(["/tmp/a.pdf"])
+        self.assertTrue(self.pump(lambda: self.page(window) == "ready"))
+        window._on_apply()
+        window._on_apply()
+        self.pump(lambda: False, seconds=0.2)
+        self.assertEqual(len(self.requests), 1)
+        window._on_cancel()
+        self.pump(lambda: window._bar._message.get_text() == "Cancelled")
+
 
 @unittest.skipUnless(TOOLKIT, "needs a display and GTK 4 with libadwaita")
 class PageGridTests(unittest.TestCase):
@@ -238,6 +333,79 @@ class PageGridTests(unittest.TestCase):
         # and a later refresh remembers it, so a moved page is not re-requested blank
         grid.refresh()
         self.assertEqual(grid._rows[self.model.items[1].uid].thumbnail, path)
+
+
+@unittest.skipUnless(TOOLKIT, "needs a display and GTK 4 with libadwaita")
+class PanelTests(unittest.TestCase):
+    def test_split_previews_each_file_and_explains_a_bad_range(self):
+        from pdf_studio.panels import SplitPanel
+
+        panel = SplitPanel(10)
+        panel._entry.set_text("1-3;4-")
+        parts, text = panel.preview_text()
+        self.assertEqual(text, "File 1: pages 1-3\nFile 2: pages 4-10")
+        self.assertEqual(panel.request(), ("pdf-split-ranges", {"ranges": "1-3;4-"}))
+        panel._entry.set_text("1-99")
+        parts, text = panel.preview_text()
+        self.assertIsNone(parts)
+        self.assertIn("99", text)
+        self.assertTrue(panel._entry.has_css_class("error"))
+
+    def test_split_every_n_pages(self):
+        from pdf_studio.panels import SplitPanel
+
+        panel = SplitPanel(10)
+        panel._mode.set_selected(1)
+        panel._entry.set_text("4")
+        parts, _text = panel.preview_text()
+        self.assertEqual([len(part) for part in parts], [4, 4, 2])
+        self.assertEqual(panel.request(), ("pdf-split-every", {"every": 4}))
+
+    def test_an_empty_split_box_is_not_flagged_as_an_error_yet(self):
+        from pdf_studio.panels import SplitPanel
+
+        panel = SplitPanel(10)
+        self.assertFalse(panel._entry.has_css_class("error"))
+
+    def test_merge_names_the_file_with_the_bad_range(self):
+        from pdf_studio.panels import MergePanel
+        from pdf_studio.requests import RequestError
+
+        panel = MergePanel(["/tmp/a.pdf", "/tmp/b.pdf"], [3, 5])
+        self.assertEqual(panel.request(), ("pdf-merge", {}))
+        panel._entries[1].set_text("2-9")
+        with self.assertRaises(RequestError) as caught:
+            panel.request()
+        self.assertIn("b.pdf", str(caught.exception))
+        self.assertTrue(panel._error.get_text())
+        panel._entries[1].set_text("2-4")
+        self.assertEqual(panel.request(), ("pdf-merge", {"file_pages": ["", "2-4"]}))
+        self.assertEqual(panel._error.get_text(), "")
+
+    def test_the_bar_maps_choices_to_daemon_options(self):
+        from pdf_studio.panels import ApplyBar
+
+        bar = ApplyBar(lambda: None, lambda: None)
+        bar.set_folder("/tmp/out/")
+        self.assertEqual(bar.output_options(), {"output_dir": "/tmp/out/", "on_conflict": "rename"})
+        bar._conflict.set_selected(2)
+        self.assertEqual(bar.output_options()["on_conflict"], "overwrite")
+
+    def test_the_bar_shows_progress_then_the_outcome(self):
+        from pdf_studio.apply import JobState
+        from pdf_studio.panels import ApplyBar
+
+        bar = ApplyBar(lambda: None, lambda: None)
+        bar.set_applying(True)
+        self.assertTrue(bar._cancel.get_visible())
+        self.assertFalse(bar._apply.get_sensitive())
+        self.assertFalse(bar.show_state(JobState("running", 0.5)))
+        self.assertEqual(bar._progress.get_fraction(), 0.5)
+        done = JobState("completed", 1.0, ({"outputs": ["/o/a-edited.pdf"]},))
+        self.assertTrue(bar.show_state(done))
+        self.assertIn("a-edited.pdf", bar._message.get_text())
+        self.assertFalse(bar._cancel.get_visible())
+        self.assertTrue(bar._apply.get_sensitive())
 
 
 _PNG = bytes.fromhex(

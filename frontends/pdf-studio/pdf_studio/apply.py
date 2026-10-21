@@ -39,10 +39,8 @@ def reduce_job_event(state, event):
     if "files" in data:
         files = _freeze_files(data["files"])
     if event_name == "job.finished":
-        if status == "cancelled":
-            status = "cancelled"
-        elif status == "failed":
-            status = "failed"
+        if status in ("cancelled", "failed"):
+            pass
         elif any(item.get("state") in ("failed", "skipped") for item in files):
             status = "completed-with-errors"
         else:
@@ -56,23 +54,11 @@ def reduce_job_event(state, event):
     )
 
 
-def friendly_apply_error(code, message):
-    return friendly_error(code, message)
-
-
-def _cancel(client, job_id):
-    for name in ("cancel_job", "cancel"):
-        method = getattr(client, name, None)
-        if method is not None:
-            method(job_id)
-            return
-
-
 def run_apply(client_factory, request, on_event, cancel_event):
     """Run an apply request and report immutable states.
 
     The operation connection is owned by a worker thread.  Cancellation uses a
-    second client connection when the client provides ``cancel_job``/``cancel``;
+    second client connection (``cancel_job``);
     the operation stream is still drained until the daemon reports its result.
     """
     client = client_factory()
@@ -96,7 +82,7 @@ def run_apply(client_factory, request, on_event, cancel_event):
     while True:
         if cancel_event.is_set() and not cancel_sent and state.job_id:
             try:
-                _cancel(client_factory(), state.job_id)
+                client_factory().cancel_job(state.job_id)
             except Exception:
                 pass
             cancel_sent = True
@@ -112,7 +98,7 @@ def run_apply(client_factory, request, on_event, cancel_event):
         elif kind == "error":
             code = getattr(value, "code", "")
             message = getattr(value, "message", str(value))
-            state = JobState("failed", state.progress, state.files, friendly_apply_error(code, message), state.job_id)
+            state = JobState("failed", state.progress, state.files, friendly_error(code, message), state.job_id)
             on_event(state)
             return state
         elif kind == "done":
