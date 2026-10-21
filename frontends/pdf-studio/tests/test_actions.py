@@ -5,7 +5,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
 from pdf_studio.model import EditModel
-from pdf_studio.toolbar import ACTION_TABLE, dispatch_action, range_box_state
+from pdf_studio.toolbar import ACTION_TABLE, SHORTCUTS, dispatch_action, range_box_state
 
 
 def positions(model, *values):
@@ -87,6 +87,20 @@ class RangeBoxTests(unittest.TestCase):
         positions(model, 1)
         self.assertTrue(range_box_state(model, "").valid)
         self.assertEqual(model.positions(), [])
+
+
+class ShortcutTests(unittest.TestCase):
+    def test_every_shortcut_is_a_valid_gtk_accelerator(self):
+        try:
+            import gi
+            gi.require_version("Gtk", "4.0")
+            from gi.repository import Gtk
+        except (ImportError, ValueError):
+            self.skipTest("GTK is not available")
+        for action_id, shortcut in SHORTCUTS.items():
+            with self.subTest(action=action_id):
+                ok, key, _mods = Gtk.accelerator_parse(shortcut)
+                self.assertTrue(ok and key, f"{shortcut!r} does not parse")
 
 
 if __name__ == "__main__":

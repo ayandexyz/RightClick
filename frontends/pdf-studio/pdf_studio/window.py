@@ -66,12 +66,17 @@ class StudioWindow(Adw.ApplicationWindow):
         self._action.connect("clicked", self._on_action)
         self._status.set_child(self._action)
         self._stack.add_named(self._status, "status")
+        # The ready page holds the editor. The status page above it only speaks
+        # for a merge, which has no grid; a single document's editor gets the
+        # whole window.
         self._ready = Adw.StatusPage(icon_name="document-edit-symbolic")
         self._editor = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         self._editor.set_vexpand(True)
         self._editor.set_hexpand(True)
-        self._ready.set_child(self._editor)
-        self._stack.add_named(self._ready, "ready")
+        ready_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        ready_page.append(self._ready)
+        ready_page.append(self._editor)
+        self._stack.add_named(ready_page, "ready")
         self._model = None
         self._grid = None
         self._range_entry = None
@@ -193,6 +198,7 @@ class StudioWindow(Adw.ApplicationWindow):
             self._set_title(name, f"{pages} page{'s' if pages != 1 else ''}")
             self._ready.set_title(f"{pages} page{'s' if pages != 1 else ''}")
             self._ready.set_description(_markup(name))
+            self._ready.set_visible(False)
             self._model = EditModel(pages)
             self._build_editor(self._paths[0])
         else:
@@ -211,7 +217,10 @@ class StudioWindow(Adw.ApplicationWindow):
             button = Gtk.Button(label=action_id.replace("-", " ").title())
             button.set_action_name(f"win.{action_id}")
             toolbar.append(button)
-        self._editor.append(toolbar)
+        # The row is wider than a tiled window, so it scrolls instead of clipping.
+        scroller = Gtk.ScrolledWindow(vscrollbar_policy=Gtk.PolicyType.NEVER, hscrollbar_policy=Gtk.PolicyType.AUTOMATIC)
+        scroller.set_child(toolbar)
+        self._editor.append(scroller)
         row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         row.set_margin_start(8)
         self._range_entry = Gtk.Entry(placeholder_text="Pages, e.g. 1-3,7")
@@ -229,6 +238,7 @@ class StudioWindow(Adw.ApplicationWindow):
             return
         page_count = model.page_count
         self._grid = PageGrid(model, loader_factory=lambda callback, error: ThumbnailLoader(_make_client, path, page_count, callback=callback, error_callback=error), on_selection_changed=self._refresh_editor)
+        self._grid.set_vexpand(True)
         self._editor.append(self._grid)
         self._refresh_editor()
 
@@ -297,6 +307,8 @@ class StudioWindow(Adw.ApplicationWindow):
         threading.Thread(target=work, daemon=True).start()
 
     def _apply_state_changed(self, state):
+        if self._model is not None:
+            return self._single_apply_state_changed(state)
         if state.status == "completed":
             self._ready.set_title("Apply complete")
         elif state.status == "completed-with-errors":
@@ -309,6 +321,21 @@ class StudioWindow(Adw.ApplicationWindow):
         else:
             self._ready.set_description(f"Applying… {round(state.progress * 100)}%")
         if state.status in ("completed", "completed-with-errors", "failed", "cancelled") and self._apply_button is not None:
+            self._apply_button.set_sensitive(True)
+        return GLib.SOURCE_REMOVE
+
+    def _single_apply_state_changed(self, state):
+        """Report an apply in the editor's status line, which stays on screen."""
+        done = ("completed", "completed-with-errors", "failed", "cancelled")
+        message = {
+            "completed": "Saved",
+            "completed-with-errors": "Saved with errors",
+            "failed": state.error or "The operation failed",
+            "cancelled": "Cancelled",
+        }.get(state.status, f"Applying… {round(state.progress * 100)}%")
+        if self._status_line is not None:
+            self._status_line.set_text(message)
+        if state.status in done and self._apply_button is not None:
             self._apply_button.set_sensitive(True)
         return GLib.SOURCE_REMOVE
 

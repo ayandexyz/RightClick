@@ -89,8 +89,8 @@ def range_box_state(model, text):
 SHORTCUTS = {
     "select-all": "<Primary>a",
     "select-none": "<Primary><Shift>a",
-    "rotate-left": "<Primary>[",
-    "rotate-right": "<Primary>]",
+    "rotate-left": "<Primary>bracketleft",
+    "rotate-right": "<Primary>bracketright",
     "delete": "Delete",
     "duplicate": "<Primary>d",
     "insert-blank": "<Primary><Shift>b",
