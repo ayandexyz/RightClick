@@ -42,6 +42,26 @@ def hello(file):
     file.flush()
 
 
+class PdfThumbnailsTests(unittest.TestCase):
+    def test_sends_file_pages_and_width_and_returns_the_items(self):
+        seen = {}
+
+        def handler(file):
+            hello(file)
+            seen.update(json.loads(file.readline()))
+            file.write(b'{"id":2,"result":{"pages":[{"page":2,"path":"/c/x.png","w":200,"h":259}]}}\n')
+            file.flush()
+
+        server = OneShotServer(handler)
+        try:
+            items = FcClient(server.path).pdf_thumbnails("/tmp/a.pdf", [2], 150)
+        finally:
+            server.close()
+        self.assertEqual(seen["method"], "pdf_thumbnails")
+        self.assertEqual(seen["params"], {"file": "/tmp/a.pdf", "pages": [2], "width": 150})
+        self.assertEqual(items, [{"page": 2, "path": "/c/x.png", "w": 200, "h": 259}])
+
+
 class PdfInfoTests(unittest.TestCase):
     def test_returns_pages_and_sizes(self):
         seen = {}

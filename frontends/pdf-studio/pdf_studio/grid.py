@@ -103,9 +103,11 @@ if GTK_AVAILABLE:
             self._caption = _Gtk.Label()
             self._caption.set_ellipsize(3)  # PANGO_ELLIPSIZE_END
             self.append(self._caption)
+            self.row = None
             self.item = None
 
         def bind(self, row):
+            self.row = row
             self.item = row.item
             self._caption.set_label(f"Page {row.position}")
             details = [f"Page {row.position}"]
@@ -145,6 +147,7 @@ if GTK_AVAILABLE:
             self._placeholder.start()
 
         def unbind(self):
+            self.row = None
             self.item = None
             self._picture.set_visible(False)
             self._placeholder.stop()
@@ -167,6 +170,11 @@ if GTK_AVAILABLE:
             self._rows = {}
             self._width = width
             self._loader = None
+            # Thumbnails by source page outlive a refresh: an edit moves pages
+            # around but never changes what a source page looks like.
+            self._thumbs = {}
+            self._cells = set()
+            self._refreshing = False
 
             self.store = _Gio.ListStore.new(_GtkRow)
             self.selection = _Gtk.MultiSelection.new(self.store)
@@ -179,24 +187,34 @@ if GTK_AVAILABLE:
             self.view.set_min_columns(1)
             self.view.set_max_columns(12)
             self.view.set_single_click_activate(False)
-            self.append(self.view)
+            scroller = _Gtk.ScrolledWindow(hscrollbar_policy=_Gtk.PolicyType.NEVER)
+            scroller.set_vexpand(True)
+            scroller.set_child(self.view)
+            self.append(scroller)
             self.refresh()
 
         def refresh(self):
-            self.store.remove_all()
-            self._rows.clear()
-            for position, item in enumerate(self.model.items, 1):
-                row = _GtkRow(item, position)
-                self._rows[item.uid] = row
-                self.store.append(row)
-            for index, item in enumerate(self.model.items):
-                if item.uid in self.model.selection:
-                    self.selection.select_item(index, False)
-            if self._loader:
-                self._loader.stop()
+            # Rebuilding the store makes the selection model report an empty
+            # selection; that must not overwrite the model's own.
+            self._refreshing = True
+            try:
+                self.store.remove_all()
+                self._rows.clear()
+                for position, item in enumerate(self.model.items, 1):
+                    row = _GtkRow(item, position)
+                    row.thumbnail = self._thumbs.get(item.src) if not item.blank else None
+                    self._rows[item.uid] = row
+                    self.store.append(row)
+                for index, item in enumerate(self.model.items):
+                    if item.uid in self.model.selection:
+                        self.selection.select_item(index, False)
+            finally:
+                self._refreshing = False
             if self._loader_factory:
-                self._loader = self._make_loader()
-                self._loader.load([item.src for item in self.model.items if not item.blank])
+                if self._loader is None:
+                    self._loader = self._make_loader()
+                if self._loader is not None:
+                    self._loader.load([item.src for item in self.model.items if not item.blank])
 
         def _make_loader(self):
             callback = lambda page, result: _GLib.idle_add(self._thumbnail_ready, page, result)
@@ -208,22 +226,34 @@ if GTK_AVAILABLE:
 
         def _thumbnail_ready(self, page, result):
             path = result.get("path") if isinstance(result, dict) else getattr(result, "path", None)
+            if not path:
+                return _GLib.SOURCE_REMOVE
+            self._thumbs[page] = path
             for row in self._rows.values():
                 if row.item.src == page:
                     row.thumbnail = path
-            self.view.queue_allocate()
+            # A cell already on screen keeps what it was bound with, so bind it again.
+            for cell in list(self._cells):
+                if cell.row is not None and cell.row.item.src == page:
+                    cell.bind(cell.row)
             return _GLib.SOURCE_REMOVE
 
         def _setup_cell(self, _factory, list_item):
             list_item.set_child(PageCell())
 
         def _bind_cell(self, _factory, list_item):
-            list_item.get_child().bind(list_item.get_item())
+            cell = list_item.get_child()
+            cell.bind(list_item.get_item())
+            self._cells.add(cell)
 
         def _unbind_cell(self, _factory, list_item):
-            list_item.get_child().unbind()
+            cell = list_item.get_child()
+            self._cells.discard(cell)
+            cell.unbind()
 
         def _selection_changed(self, selection, _position, _n_items):
+            if self._refreshing:
+                return
             self.model.selection = {
                 self.store.get_item(index).item.uid
                 for index in range(self.store.get_n_items())

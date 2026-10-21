@@ -186,5 +186,65 @@ class WindowSmokeTests(unittest.TestCase):
         self.assertEqual(self.page(window), "loading")
 
 
+@unittest.skipUnless(TOOLKIT, "needs a display and GTK 4 with libadwaita")
+class PageGridTests(unittest.TestCase):
+    def grid(self):
+        from pdf_studio.grid import PageGrid
+        from pdf_studio.model import EditModel
+
+        class Loader:
+            def __init__(self):
+                self.requested = []
+
+            def load(self, pages, visible_pages=()):
+                self.requested.append(list(pages))
+
+            def stop(self):
+                pass
+
+        self.loader = Loader()
+        self.model = EditModel(4)
+        changes = []
+        return PageGrid(self.model, loader_factory=lambda cb, err: self.loader, on_selection_changed=lambda: changes.append(1))
+
+    def test_a_refresh_keeps_the_selection(self):
+        grid = self.grid()
+        self.model.select_spec("2-3")
+        grid.refresh()
+        self.assertEqual(self.model.positions(), [2, 3])
+
+    def test_one_loader_serves_every_refresh(self):
+        made = []
+        grid = self.grid()
+        grid._loader_factory = lambda cb, err: made.append(1) or self.loader
+        grid._loader = None
+        grid.refresh()
+        grid.refresh()
+        self.assertEqual(len(made), 1)
+
+    def test_a_thumbnail_that_arrives_late_reaches_a_cell_already_on_screen(self):
+        from pdf_studio.grid import PageCell
+
+        grid = self.grid()
+        cell = PageCell()
+        cell.bind(grid._rows[self.model.items[1].uid])
+        grid._cells.add(cell)
+        self.assertFalse(cell._picture.get_visible())
+        path = str(Path(__file__).parent / "thumb.png")
+        Path(path).write_bytes(_PNG)
+        self.addCleanup(os.unlink, path)
+        grid._thumbnail_ready(2, {"page": 2, "path": path})
+        self.assertTrue(cell._picture.get_visible())
+        # and a later refresh remembers it, so a moved page is not re-requested blank
+        grid.refresh()
+        self.assertEqual(grid._rows[self.model.items[1].uid].thumbnail, path)
+
+
+_PNG = bytes.fromhex(
+    "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489"
+    "0000000d49444154789c6360000002000001e221bc330000000049454e44ae426082"
+)
+
+
 if __name__ == "__main__":
     unittest.main()

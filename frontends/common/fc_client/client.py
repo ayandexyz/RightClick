@@ -183,6 +183,22 @@ class FcClient:
                 result = self._request(sock, file, "pdf_info", {"file": path}, timeout=self.info_timeout)
         return PdfInfo(pages=int(result.get("pages", 0)), sizes=list(result.get("sizes") or []))
 
+    def pdf_thumbnails(self, file, pages, width=200):
+        """Thumbnails of the given pages, as ``[{page, path, w, h}]``.
+
+        The daemon renders them into its private cache and returns the PNG
+        paths; at most 50 pages go in one request.
+        """
+        with self._connect() as sock:
+            with sock.makefile("rwb") as stream:
+                self._hello(sock, stream)
+                result = self._request(
+                    sock, stream, "pdf_thumbnails",
+                    {"file": file, "pages": list(pages), "width": width},
+                    timeout=self.info_timeout,
+                )
+        return list(result.get("pages") or [])
+
     def cancel_job(self, job_id):
         """Ask the daemon to cancel a running job."""
         with self._connect() as sock:
