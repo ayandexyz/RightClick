@@ -46,7 +46,7 @@ class RequestError(_RequestError):
 class Field:
     key: str
     label: str
-    kind: str  # text, number, choice, colour, file, pages, switch, password, flags
+    kind: str  # text, number, choice, colour, file, pages, switch, password, flags, regions, terms
     default: object = None
     required: bool = False
     help: str = ""
@@ -280,6 +280,8 @@ def _metadata(clean):
 
 
 def _redact(clean):
+    if not clean["areas"] and not clean["terms"]:
+        raise RequestError("areas", "Draw at least one box or add a search term")
     return {"redact": {"areas": clean["areas"], "terms": clean["terms"], "dpi": clean["dpi"]}}
 
 

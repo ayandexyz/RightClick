@@ -193,6 +193,39 @@ class ValidationTests(unittest.TestCase):
         self.assertIn("at most 100", str(caught.exception))
 
 
+class RedactValidationTests(unittest.TestCase):
+    assertBlames = ValidationTests.assertBlames
+    BOX = {"page": 2, "x": 0.1, "y": 0.2, "w": 0.3, "h": 0.1}
+
+    def test_a_request_needs_a_box_or_a_term(self):
+        self.assertBlames("areas", "pdf-redact")
+        self.assertBlames("areas", "pdf-redact", areas=[], terms=["  ", ""])
+
+    def test_boxes_and_terms_become_the_daemons_redact_params(self):
+        op, params = build("pdf-redact", areas=[self.BOX], terms="Secret\n\n  Jane Doe ")
+        self.assertEqual(op, "pdf-redact")
+        self.assertEqual(params, {"redact": {"areas": [self.BOX], "terms": ["Secret", "Jane Doe"], "dpi": 150}})
+        self.assertEqual(build("pdf-redact", terms=["x"])[1]["redact"]["areas"], [])
+
+    def test_a_bad_box_is_refused_before_the_daemon_sees_it(self):
+        for bad in (
+            {**self.BOX, "page": 6},  # the document has 5 pages
+            {**self.BOX, "page": 0},
+            {**self.BOX, "w": 0},
+            {**self.BOX, "x": 0.8},  # runs off the right edge
+            {**self.BOX, "y": -0.1},
+            {"page": 1, "x": 0.1},
+        ):
+            self.assertBlames("areas", "pdf-redact", areas=[bad])
+        self.assertBlames("areas", "pdf-redact", areas=[self.BOX] * 501)
+        self.assertBlames("areas", "pdf-redact", areas="1,0,0,1,1")
+
+    def test_terms_are_bounded(self):
+        self.assertBlames("terms", "pdf-redact", terms=["x"] * 51)
+        self.assertBlames("terms", "pdf-redact", terms=["x" * 101])
+        self.assertBlames("dpi", "pdf-redact", areas=[self.BOX], dpi=50)
+
+
 class AvailabilityTests(unittest.TestCase):
     def ids(self, **kwargs):
         return [tool.id for tool in available_tools(**kwargs)]

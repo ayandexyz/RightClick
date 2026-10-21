@@ -14,6 +14,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
 from gi.repository import Gdk, Gtk  # noqa: E402
 
+from .regions import Region, RegionModel  # noqa: E402
 from .tools import RequestError  # noqa: E402
 
 
@@ -62,8 +63,18 @@ class FieldRow(Gtk.Box):
             self._widget = Gtk.Button(label="Choose…", halign=Gtk.Align.START)
             self._widget.connect("clicked", self._choose_file)
         elif kind == "regions":
-            self._entry = Gtk.Entry(hexpand=True, placeholder_text="page,x,y,w,h; …")
-            self._widget = self._entry
+            # The boxes themselves are drawn on the page canvas, which hands
+            # them over through set(); this row keeps the list and says what
+            # it holds.
+            self._regions = []
+            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            self._summary = Gtk.Label(xalign=0, hexpand=True)
+            clear = Gtk.Button(label="Clear")
+            clear.connect("clicked", lambda _b: self.set([]))
+            box.append(self._summary)
+            box.append(clear)
+            self._widget = box
+            self._show_regions()
         elif kind == "terms":
             self._entry = Gtk.TextView(wrap_mode=Gtk.WrapMode.WORD_CHAR, hexpand=True)
             self._entry.set_size_request(-1, 80)
@@ -112,7 +123,9 @@ class FieldRow(Gtk.Box):
     def get(self):
         kind = self.field.kind
         widget = self._widget
-        if kind in ("text", "password", "regions"):
+        if kind == "regions":
+            return [dict(region) for region in self._regions]
+        if kind in ("text", "password"):
             return widget.get_text()
         if kind == "terms":
             buffer = self._entry.get_buffer()
@@ -135,7 +148,10 @@ class FieldRow(Gtk.Box):
     def set(self, value):
         kind = self.field.kind
         widget = self._widget
-        if kind in ("text", "password", "regions"):
+        if kind == "regions":
+            self._regions = [dict(region) for region in value or ()]
+            self._show_regions()
+        elif kind in ("text", "password"):
             widget.set_text(value or "")
         elif kind == "terms":
             self._entry.get_buffer().set_text("\n".join(value or ()))
@@ -161,6 +177,10 @@ class FieldRow(Gtk.Box):
             chosen = set(value or ())
             for name, check in self._checks.items():
                 check.set_active(name in chosen)
+
+    def _show_regions(self):
+        model = RegionModel(Region(r["page"], r["x"], r["y"], r["w"], r["h"]) for r in self._regions)
+        self._summary.set_label(model.summary())
 
     def show_error(self, message):
         self._error.set_label(message)

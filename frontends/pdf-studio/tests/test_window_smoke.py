@@ -429,6 +429,26 @@ class WindowSmokeTests(unittest.TestCase):
         self.assertTrue(view.rows["pages"]._error.get_visible())
         self.assertFalse(view.rows["text"]._error.get_visible(), "an earlier error is cleared")
 
+    def test_the_redaction_form_keeps_boxes_and_terms_and_sends_them(self):
+        window = self.open_tools()
+        view = self.pick(window, "pdf-redact")
+        box = {"page": 2, "x": 0.1, "y": 0.2, "w": 0.3, "h": 0.1}
+        self.assertIn("No redaction", view.rows["areas"]._summary.get_label())
+        window._on_apply()  # nothing to redact yet
+        self.assertEqual(self.requests, [])
+        self.assertTrue(view.rows["areas"]._error.get_visible())
+        view.rows["areas"].set([box])
+        view.rows["terms"].set(["Secret", "Jane Doe"])
+        self.assertEqual(view.rows["areas"].get(), [box])
+        self.assertEqual(view.rows["terms"].get(), ["Secret", "Jane Doe"])
+        self.assertIn("1 box on pages 2", view.rows["areas"]._summary.get_label())
+        view = self.pick(window, "pdf-stamp-text")
+        view = self.pick(window, "pdf-redact")
+        self.assertEqual(view.rows["areas"].get(), [box], "boxes survive a tool switch")
+        window._on_apply()
+        self.assertTrue(self.pump(lambda: bool(self.requests)))
+        self.assertEqual(self.requests[0]["params"], {"redact": {"areas": [box], "terms": ["Secret", "Jane Doe"], "dpi": 150}})
+
     def test_switching_tools_keeps_what_was_entered_but_never_a_password(self):
         window = self.open_tools()
         view = self.pick(window, "pdf-header-footer")
