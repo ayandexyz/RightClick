@@ -183,7 +183,14 @@ class FcClient:
                 result = self._request(sock, file, "pdf_info", {"file": path}, timeout=self.info_timeout)
         return PdfInfo(pages=int(result.get("pages", 0)), sizes=list(result.get("sizes") or []))
 
-    def run_operation(self, paths, op, params=None):
+    def cancel_job(self, job_id):
+        """Ask the daemon to cancel a running job."""
+        with self._connect() as sock:
+            with sock.makefile("rwb") as file:
+                self._hello(sock, file)
+                return self._request(sock, file, "cancel", {"job": job_id}, self.request_timeout)
+
+    def run_operation(self, paths, op, params=None, output_dir=None, on_conflict=None):
         """Run one PDF operation and yield job events until it finishes."""
         sock = self._connect()
         file = sock.makefile("rwb")
@@ -192,6 +199,10 @@ class FcClient:
             payload = {"files": paths, "op": op}
             if params:
                 payload["params"] = params
+            if output_dir:
+                payload["output_dir"] = output_dir
+            if on_conflict:
+                payload["on_conflict"] = on_conflict
             result = self._request(sock, file, "run_operation", payload, self.convert_timeout)
             job_id = result.get("job")
             if not job_id:
