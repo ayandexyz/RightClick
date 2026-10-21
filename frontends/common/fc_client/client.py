@@ -170,7 +170,7 @@ class FcClient:
         fields = ("id", "label", "group", "mode", "engine", "enabled", "reason")
         return [Operation(**{key: operation.get(key, "") for key in fields}) for operation in result.get("operations", [])]
 
-    def pdf_info(self, path):
+    def pdf_info(self, path, password=None):
         """Page count and sizes of one PDF.
 
         Raises RequestError with code ``password_required`` for a locked file
@@ -180,10 +180,13 @@ class FcClient:
         with self._connect() as sock:
             with sock.makefile("rwb") as file:
                 self._hello(sock, file)
-                result = self._request(sock, file, "pdf_info", {"file": path}, timeout=self.info_timeout)
+                params = {"file": path}
+                if password is not None:
+                    params["password"] = password
+                result = self._request(sock, file, "pdf_info", params, timeout=self.info_timeout)
         return PdfInfo(pages=int(result.get("pages", 0)), sizes=list(result.get("sizes") or []))
 
-    def pdf_thumbnails(self, file, pages, width=200):
+    def pdf_thumbnails(self, file, pages, width=200, password=None):
         """Thumbnails of the given pages, as ``[{page, path, w, h}]``.
 
         The daemon renders them into its private cache and returns the PNG
@@ -192,11 +195,10 @@ class FcClient:
         with self._connect() as sock:
             with sock.makefile("rwb") as stream:
                 self._hello(sock, stream)
-                result = self._request(
-                    sock, stream, "pdf_thumbnails",
-                    {"file": file, "pages": list(pages), "width": width},
-                    timeout=self.info_timeout,
-                )
+                params = {"file": file, "pages": list(pages), "width": width}
+                if password is not None:
+                    params["password"] = password
+                result = self._request(sock, stream, "pdf_thumbnails", params, timeout=self.info_timeout)
         return list(result.get("pages") or [])
 
     def cancel_job(self, job_id):
@@ -206,13 +208,18 @@ class FcClient:
                 self._hello(sock, file)
                 return self._request(sock, file, "cancel", {"job": job_id}, self.request_timeout)
 
-    def run_operation(self, paths, op, params=None, output_dir=None, on_conflict=None):
+    def run_operation(self, paths, op, params=None, output_dir=None, on_conflict=None, password=None):
         """Run one PDF operation and yield job events until it finishes."""
         sock = self._connect()
         file = sock.makefile("rwb")
         try:
             self._hello(sock, file)
             payload = {"files": paths, "op": op}
+            # The daemon reads the password from params, next to the other
+            # operation parameters, and only when one is given.
+            params = dict(params or {})
+            if password is not None:
+                params.setdefault("password", password)
             if params:
                 payload["params"] = params
             if output_dir:

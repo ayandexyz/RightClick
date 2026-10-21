@@ -92,6 +92,9 @@ class ApplyBar(Gtk.Box):
     def set_message(self, text):
         self._message.set_text(text)
 
+    def message(self):
+        return self._message.get_text()
+
     def _show_in_files(self):
         """Open the file manager with the first output selected."""
         if not self._outputs:

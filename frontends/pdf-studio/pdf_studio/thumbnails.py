@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import inspect
 import threading
 from collections import deque
 
@@ -20,9 +19,10 @@ class ThumbnailLoader:
     should hand them back to the main loop.
     """
 
-    def __init__(self, client_factory, file, page_count, width=200, callback=None, error_callback=None):
+    def __init__(self, client_factory, file, page_count, width=200, callback=None, error_callback=None, password=None):
         self._client_factory = client_factory
         self.file = file
+        self.password = password
         self.page_count = page_count
         self.width = width
         self._callback = callback or (lambda _page, _item: None)
@@ -108,14 +108,9 @@ class ThumbnailLoader:
 
     def _request(self, pages):
         client = self._client_factory()
-        method = client.pdf_thumbnails
-        try:
-            parameters = inspect.signature(method).parameters
-        except (TypeError, ValueError):
-            parameters = {}
-        if all(name in parameters for name in ("file", "pages", "width")):
-            return method(file=self.file, pages=list(pages), width=self.width)
-        return method(self.file, list(pages), self.width)
+        # The password is sent only for a document that needed one.
+        extra = {} if self.password is None else {"password": self.password}
+        return client.pdf_thumbnails(self.file, list(pages), self.width, **extra)
 
     @staticmethod
     def _items(result):

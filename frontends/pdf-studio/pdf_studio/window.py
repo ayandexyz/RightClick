@@ -22,8 +22,11 @@ from .model import EditModel  # noqa: E402
 from .reorder import drop_move  # noqa: E402
 from .panels import ApplyBar, MergePanel, SplitPanel  # noqa: E402
 from .requests import RequestError, edit_request  # noqa: E402
+from .password_dialog import ask_password  # noqa: E402
 from .toolbar import ACTION_TABLE, SHORTCUTS, dispatch_action, range_box_state  # noqa: E402
 from .thumbnails import ThumbnailLoader  # noqa: E402
+from .tools import available_tools  # noqa: E402
+from .tools_view import ToolsView  # noqa: E402
 
 from fc_client.client import FcClient  # noqa: E402
 from fc_client.daemon import ensure_daemon, socket_path  # noqa: E402
@@ -52,6 +55,7 @@ class StudioWindow(Adw.ApplicationWindow):
         super().__init__(application=app, default_width=1000, default_height=720)
         self._paths = list(paths)
         self._problems = list(problems)
+        self._password = None
         self._closed = False
         self._load_token = None
         self.connect("close-request", self._on_close_request)
@@ -86,7 +90,9 @@ class StudioWindow(Adw.ApplicationWindow):
         self._bar = None
         self._modes = None
         self._split = None
+        self._tools_view = None
         self._merge = None
+        self._asking = False
         self._actions = {}
         self._install_actions()
         self._cancel_event = None
@@ -145,9 +151,13 @@ class StudioWindow(Adw.ApplicationWindow):
         self._stack.set_visible_child_name("loading")
         token = self._load_token = object()
         paths = list(self._paths)
+        password = self._password
 
         def work():
-            results = [load_document(path, _make_client, ensure_daemon) for path in paths]
+            if password is None:
+                results = [load_document(path, _make_client, ensure_daemon) for path in paths]
+            else:
+                results = [load_document(path, _make_client, ensure_daemon, password=password) for path in paths]
             GLib.idle_add(self._loaded, token, results)
 
         threading.Thread(target=work, daemon=True).start()
@@ -159,12 +169,16 @@ class StudioWindow(Adw.ApplicationWindow):
         problem = next(((path, result) for path, result in zip(self._paths, results) if result.kind != "ready"), None)
         if problem is not None:
             path, result = problem
-            self._action_mode = "retry"
+            self._action_mode = "unlock" if result.kind == "locked" else "retry"
             description = _markup(result.message)
             if result.hint:
                 description += "\n\n" + _markup(result.hint)
             self._set_title(os.path.basename(path))
-            self._show_status(_ICONS.get(result.kind, "dialog-error-symbolic"), result.title, description, "Try again" if result.retry else None)
+            button = "Enter password…" if result.kind == "locked" else ("Try again" if result.retry else None)
+            self._show_status(_ICONS.get(result.kind, "dialog-error-symbolic"), result.title, description, button)
+            if result.kind == "locked":
+                self._password = None  # a refused password is not kept
+                self._prompt_password(path, "That password did not work." if result.password_rejected else "")
             return GLib.SOURCE_REMOVE
         self._show_ready(results)
         return GLib.SOURCE_REMOVE
@@ -240,7 +254,7 @@ class StudioWindow(Adw.ApplicationWindow):
         edit.append(row)
         model = self._model
         page_count = model.page_count
-        self._grid = PageGrid(model, loader_factory=lambda callback, error: ThumbnailLoader(_make_client, path, page_count, callback=callback, error_callback=error), on_selection_changed=self._refresh_editor, on_reorder=self._reorder)
+        self._grid = PageGrid(model, loader_factory=lambda callback, error: ThumbnailLoader(_make_client, path, page_count, callback=callback, error_callback=error, password=self._password), on_selection_changed=self._refresh_editor, on_reorder=self._reorder)
         self._grid.set_vexpand(True)
         edit.append(self._grid)
 
@@ -248,10 +262,35 @@ class StudioWindow(Adw.ApplicationWindow):
         self._modes = Gtk.Stack(vexpand=True)
         self._modes.add_titled(edit, "edit", "Edit pages")
         self._modes.add_titled(self._split, "split", "Split")
+        self._tools_view = ToolsView(selection_spec=model.selection_spec)
+        self._tools_view.set_tools(available_tools(None, locked=self._password is not None), self._tool_context())
+        self._modes.add_titled(self._tools_view, "tools", "Tools")
+        self._load_tool_availability()
         self._editor.append(Gtk.StackSwitcher(stack=self._modes, halign=Gtk.Align.CENTER))
         self._editor.append(self._modes)
         self._add_apply_bar(os.path.dirname(path))
         self._refresh_editor()
+
+    def _tool_context(self):
+        return {"page_count": getattr(self, "_page_count", 0), "password": self._password}
+
+    def _load_tool_availability(self):
+        """Hide tools the daemon cannot run (an older daemon, a missing engine)."""
+        paths = list(self._paths)
+
+        def work():
+            try:
+                enabled = {op.id for op in _make_client().operations(paths) if op.enabled}
+            except Exception:
+                return  # keep offering every tool; applying reports the real problem
+            GLib.idle_add(self._tools_available, enabled)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _tools_available(self, enabled):
+        if not self._closed and self._tools_view is not None:
+            self._tools_view.set_tools(available_tools(enabled, locked=self._password is not None), self._tool_context())
+        return GLib.SOURCE_REMOVE
 
     def _build_merge_editor(self, results):
         self._merge = MergePanel(self._paths, [result.pages for result in results])
@@ -288,10 +327,28 @@ class StudioWindow(Adw.ApplicationWindow):
     # -- actions -------------------------------------------------------------
 
     def _on_action(self, _button):
-        if getattr(self, "_action_mode", "") == "open":
+        mode = getattr(self, "_action_mode", "")
+        if mode == "open":
             self._choose_files()
+        elif mode == "unlock":
+            self._prompt_password(error="")
         else:
             self._start_loading()
+
+    def _prompt_password(self, path=None, error=""):
+        """Ask for the password of the locked document; a right one reloads it."""
+        if self._asking:
+            return
+        path = path or self._paths[0]
+        self._asking = True
+
+        def answered(password):
+            self._asking = False
+            if password and not self._closed:
+                self._password = password
+                self._start_loading()
+
+        ask_password(self, os.path.basename(path), answered, error)
 
     def _choose_files(self):
         pdfs = Gtk.FileFilter()
@@ -317,6 +374,8 @@ class StudioWindow(Adw.ApplicationWindow):
             return self._merge.request()
         if self._modes.get_visible_child_name() == "split":
             return self._split.request()
+        if self._modes.get_visible_child_name() == "tools":
+            return self._tools_view.request(self._tool_context())
         return edit_request(self._model)
 
     def _on_apply(self):
@@ -328,7 +387,7 @@ class StudioWindow(Adw.ApplicationWindow):
             self._bar.set_message(str(error))
             return
         files = self._merge.paths() if self._merge is not None else list(self._paths)
-        request = {"files": files, "op": op, "params": params}
+        request = {"files": files, "op": op, "params": params, "password": self._password}
         request.update(self._bar.output_options())
         cancel_event = self._cancel_event = threading.Event()
         self._bar.set_applying(True)
@@ -349,6 +408,9 @@ class StudioWindow(Adw.ApplicationWindow):
             return GLib.SOURCE_REMOVE
         if self._bar.show_state(state):
             self._cancel_event = None
+            if self._password is not None and state.status == "completed":
+                # Every tool but Password-protect writes from the unlocked copy.
+                self._bar.set_message(self._bar.message() + " — the saved copy has no password unless you protected it")
         return GLib.SOURCE_REMOVE
 
     def _show_problems(self):
@@ -360,4 +422,7 @@ class StudioWindow(Adw.ApplicationWindow):
 
     def _on_close_request(self, _window):
         self._closed = True
+        self._password = None
+        if self._tools_view is not None:
+            self._tools_view.forget()
         return False

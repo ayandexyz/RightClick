@@ -16,7 +16,9 @@ def friendly_error(code, message, name=None):
     """
     subject = f"{name}: " if name else ""
     if code == "password_required":
-        return f"{subject}this PDF is locked — passwords are not supported yet"
+        return f"{subject}this PDF is locked and needs a password"
+    if code == "password_incorrect":
+        return f"{subject}that password did not work"
     if code == "invalid_pdf":
         if message:
             return f"{subject}this PDF could not be read: {message}"

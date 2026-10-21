@@ -42,7 +42,57 @@ def hello(file):
     file.flush()
 
 
+class RunOperationPasswordTests(unittest.TestCase):
+    """The daemon reads a document's password from params, never the top level."""
+
+    def run_with(self, **kwargs):
+        seen = {}
+
+        def handler(file):
+            hello(file)
+            seen.update(json.loads(file.readline()))
+            file.write(b'{"id":2,"result":{"job":"j1"}}\n')
+            file.write(b'{"event":"job.finished","data":{"id":"j1","state":"completed"}}\n')
+            file.flush()
+
+        server = OneShotServer(handler)
+        try:
+            list(FcClient(server.path).run_operation(["/tmp/a.pdf"], "pdf-extract", **kwargs))
+        finally:
+            server.close()
+        return seen["params"]
+
+    def test_password_goes_inside_params_beside_the_other_parameters(self):
+        sent = self.run_with(params={"pages": "1"}, password="secret")
+        self.assertEqual(sent["params"], {"pages": "1", "password": "secret"})
+        self.assertNotIn("password", sent)
+
+    def test_a_password_in_params_is_not_overridden(self):
+        sent = self.run_with(params={"password": "typed"}, password="opened-with")
+        self.assertEqual(sent["params"], {"password": "typed"})
+
+    def test_no_password_means_none_is_sent(self):
+        sent = self.run_with(params={"pages": "1"})
+        self.assertEqual(sent["params"], {"pages": "1"})
+
+
 class PdfThumbnailsTests(unittest.TestCase):
+    def test_sends_password_only_when_given_for_thumbnails(self):
+        seen = {}
+
+        def handler(file):
+            hello(file)
+            seen.update(json.loads(file.readline()))
+            file.write(b'{"id":2,"result":{"pages":[]}}\n')
+            file.flush()
+
+        server = OneShotServer(handler)
+        try:
+            FcClient(server.path).pdf_thumbnails("/tmp/a.pdf", [1], 150, password="secret")
+        finally:
+            server.close()
+        self.assertEqual(seen["params"]["password"], "secret")
+
     def test_sends_file_pages_and_width_and_returns_the_items(self):
         seen = {}
 

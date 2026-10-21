@@ -7,11 +7,14 @@ from fc_client.messages import friendly_error
 
 
 class FriendlyErrorTests(unittest.TestCase):
-    def test_locked_pdf_explains_passwords_are_unsupported(self):
+    def test_locked_pdf_says_it_needs_a_password(self):
         sentence = friendly_error("password_required", "this file is encrypted", "locked.pdf")
         self.assertIn("locked", sentence)
-        self.assertIn("passwords are not supported", sentence)
+        self.assertIn("needs a password", sentence)
         self.assertIn("locked.pdf", sentence)
+
+    def test_wrong_password_says_so(self):
+        self.assertIn("did not work", friendly_error("password_incorrect", "", "locked.pdf"))
 
     def test_damaged_pdf_quotes_the_daemon_message(self):
         sentence = friendly_error("invalid_pdf", "no header found", "broken.pdf")

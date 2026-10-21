@@ -55,13 +55,37 @@ class WindowSmokeTests(unittest.TestCase):
     def setUp(self):
         self._real = self.window_module.load_document
         self.calls = []
+        self.passwords = []
+        self.prompts = []
         self.addCleanup(setattr, self.window_module, "load_document", self._real)
+        # The window must never reach a real daemon from a test: the machine
+        # running them may have the user's own fcd listening.
+        self.daemon_ops = None
+        test = self
+
+        class Offline:
+            def operations(self, paths):
+                if test.daemon_ops is None:
+                    raise OSError("no daemon in tests")
+                return [type("Op", (), {"id": op, "enabled": True})() for op in test.daemon_ops]
+
+            def pdf_thumbnails(self, *args, **kwargs):
+                raise OSError("no daemon in tests")
+
+        self._real_client = self.window_module._make_client
+        self.window_module._make_client = lambda: Offline()
+        self.addCleanup(setattr, self.window_module, "_make_client", self._real_client)
+        # The password dialog is answered by the test, not shown.
+        self._real_ask = self.window_module.ask_password
+        self.window_module.ask_password = lambda parent, name, done, error="": self.prompts.append((name, error, done))
+        self.addCleanup(setattr, self.window_module, "ask_password", self._real_ask)
 
     def fake(self, *results):
         queue = list(results)
 
-        def load(path, make_client, ensure_daemon):
+        def load(path, make_client, ensure_daemon, password=None):
             self.calls.append(path)
+            self.passwords.append(password)
             return queue.pop(0) if len(queue) > 1 else queue[0]
 
         self.window_module.load_document = load
@@ -115,12 +139,57 @@ class WindowSmokeTests(unittest.TestCase):
         self.assertIn("a.pdf — 2 pages", description)
         self.assertIn("b.pdf — 12 pages", description)
 
-    def test_a_locked_file_shows_an_explanation_and_no_retry_button(self):
-        self.fake(self.LoadResult("locked", title="This PDF is password-protected", message="x.pdf is locked."))
+    def locked(self, rejected=False):
+        message = "That password did not work." if rejected else "x.pdf is locked and needs a password."
+        return self.LoadResult("locked", title="This PDF is password-protected", message=message, password_rejected=rejected)
+
+    def test_a_locked_file_explains_itself_and_asks_for_the_password(self):
+        self.fake(self.locked())
         window = self.window(["/tmp/x.pdf"])
         self.assertTrue(self.pump(lambda: self.page(window) == "status"))
         self.assertEqual(window._status.get_title(), "This PDF is password-protected")
-        self.assertFalse(window._action.get_visible())
+        self.assertEqual(window._action.get_label(), "Enter password…")
+        self.assertTrue(self.pump(lambda: bool(self.prompts)))
+        self.assertEqual(self.prompts[0][:2], ("x.pdf", ""))
+
+    def test_the_right_password_opens_the_document_and_is_used_to_load_it(self):
+        self.fake(self.locked(), self.ready(3))
+        window = self.window(["/tmp/x.pdf"])
+        self.assertTrue(self.pump(lambda: bool(self.prompts)))
+        self.prompts[0][2]("s3cret")
+        self.assertTrue(self.pump(lambda: self.page(window) == "ready"))
+        self.assertEqual(self.passwords, [None, "s3cret"])
+
+    def test_a_wrong_password_asks_again_and_says_so(self):
+        self.fake(self.locked(), self.locked(rejected=True), self.ready(2))
+        window = self.window(["/tmp/x.pdf"])
+        self.assertTrue(self.pump(lambda: len(self.prompts) == 1))
+        self.prompts[0][2]("wrong")
+        self.assertTrue(self.pump(lambda: len(self.prompts) == 2))
+        self.assertEqual(self.prompts[1][1], "That password did not work.")
+        self.assertIsNone(window._password, "a refused password is not kept")
+        self.prompts[1][2]("right")
+        self.assertTrue(self.pump(lambda: self.page(window) == "ready"))
+        self.assertEqual(self.passwords, [None, "wrong", "right"])
+
+    def test_cancelling_the_prompt_stays_on_the_status_page_and_can_ask_again(self):
+        self.fake(self.locked())
+        window = self.window(["/tmp/x.pdf"])
+        self.assertTrue(self.pump(lambda: bool(self.prompts)))
+        self.prompts[0][2](None)
+        self.assertEqual(self.page(window), "status")
+        self.assertEqual(len(self.calls), 1)
+        window._action.emit("clicked")
+        self.assertEqual(len(self.prompts), 2)
+
+    def test_closing_the_window_forgets_the_password(self):
+        self.fake(self.locked(), self.ready(2))
+        window = self.window(["/tmp/x.pdf"])
+        self.assertTrue(self.pump(lambda: bool(self.prompts)))
+        self.prompts[0][2]("s3cret")
+        self.assertTrue(self.pump(lambda: self.page(window) == "ready"))
+        window._on_close_request(window)
+        self.assertIsNone(window._password)
 
     def test_try_again_reloads_and_recovers(self):
         down = self.LoadResult("daemon", title="File Converter is not running", message="no answer", hint="Start it with: systemctl --user start fcd", retry=True)
@@ -300,6 +369,103 @@ class WindowSmokeTests(unittest.TestCase):
         self.assertEqual(len(self.requests), 1)
         window._on_cancel()
         self.pump(lambda: window._bar._message.get_text() == "Cancelled")
+
+    # -- tools tab -----------------------------------------------------------
+
+    def open_tools(self, pages=6, daemon_ops=None, locked=False):
+        self._real_run = self.window_module.run_apply
+        results = [self.locked(), self.ready(pages)] if locked else [self.ready(pages)]
+        self.fake(*results)
+        self.fake_apply()
+        self.daemon_ops = daemon_ops
+        window = self.window(["/tmp/a.pdf"])
+        if locked:
+            self.assertTrue(self.pump(lambda: bool(self.prompts)))
+            self.prompts[0][2]("s3cret")
+        self.assertTrue(self.pump(lambda: self.page(window) == "ready"))
+        window._modes.set_visible_child_name("tools")
+        return window
+
+    def pick(self, window, tool_id):
+        view = window._tools_view
+        ids = [tool.id for tool in view._tools]
+        view._picker.set_selected(ids.index(tool_id))
+        return view
+
+    def test_the_tools_tab_lists_the_tools_and_draws_the_chosen_form(self):
+        window = self.open_tools()
+        view = self.pick(window, "pdf-stamp-text")
+        self.assertEqual(set(view.rows), {"text", "position", "size", "color", "opacity", "rotation", "pages", "on_top"})
+        self.assertEqual(view.rows["opacity"].get(), 50)
+        self.assertEqual(view.rows["position"].get(), "mc")
+        self.assertEqual(view.rows["color"].get(), "#808080")
+
+    def test_a_valid_form_sends_the_request_the_tool_builds(self):
+        window = self.open_tools()
+        view = self.pick(window, "pdf-page-numbers")
+        view.rows["format"].set("of-total")
+        view.rows["start"].set(5)
+        view.rows["position"].set("br")
+        window._on_apply()
+        self.assertTrue(self.pump(lambda: bool(self.requests)))
+        request = self.requests[0]
+        self.assertEqual(request["op"], "pdf-page-numbers")
+        self.assertEqual(request["params"], {"stamp": {"format": "of-total", "start": 5, "position": "br"}})
+        self.assertEqual(request["files"], ["/tmp/a.pdf"])
+        self.assertEqual(request["output_dir"], "/tmp")
+
+    def test_an_invalid_form_shows_the_error_under_its_field_and_sends_nothing(self):
+        window = self.open_tools()
+        view = self.pick(window, "pdf-stamp-text")
+        window._on_apply()  # the text is required
+        self.assertEqual(self.requests, [])
+        self.assertTrue(view.rows["text"]._error.get_visible())
+        self.assertIn("required", view.rows["text"]._error.get_label())
+        self.assertFalse(view.rows["opacity"]._error.get_visible())
+        view.rows["text"].set("DRAFT")
+        view.rows["pages"].set("9")  # past the end of a 6 page document
+        window._on_apply()
+        self.assertEqual(self.requests, [])
+        self.assertTrue(view.rows["pages"]._error.get_visible())
+        self.assertFalse(view.rows["text"]._error.get_visible(), "an earlier error is cleared")
+
+    def test_switching_tools_keeps_what_was_entered_but_never_a_password(self):
+        window = self.open_tools()
+        view = self.pick(window, "pdf-header-footer")
+        view.rows["left"].set("Draft")
+        view = self.pick(window, "pdf-encrypt")
+        view.rows["user"].set("hunter2")
+        view = self.pick(window, "pdf-header-footer")
+        self.assertEqual(view.rows["left"].get(), "Draft")
+        view = self.pick(window, "pdf-encrypt")
+        self.assertEqual(view.rows["user"].get(), "", "a password is not carried across a tool switch")
+
+    def test_use_selected_pages_fills_the_page_field_from_the_grid(self):
+        window = self.open_tools()
+        window._model.selection = {2, 3}
+        view = self.pick(window, "pdf-crop")
+        self.assertEqual(view._selection(), "2,3")  # the model writes a selection as a list
+
+    def test_tools_the_daemon_cannot_run_are_not_offered(self):
+        window = self.open_tools(daemon_ops={"pdf-crop", "pdf-resize"})
+        self.assertTrue(self.pump(lambda: [t.id for t in window._tools_view._tools] == ["pdf-crop", "pdf-resize"]))
+
+    def test_remove_password_is_offered_only_for_a_document_that_was_unlocked(self):
+        plain = self.open_tools()
+        self.assertNotIn("pdf-decrypt", [t.id for t in plain._tools_view._tools])
+        locked = self.open_tools(locked=True)
+        self.assertIn("pdf-decrypt", [t.id for t in locked._tools_view._tools])
+        view = self.pick(locked, "pdf-decrypt")
+        self.assertEqual(view.rows["password"].get(), "s3cret")
+
+    def test_a_tool_on_a_locked_document_sends_its_password_with_the_request(self):
+        window = self.open_tools(locked=True)
+        view = self.pick(window, "pdf-resize")
+        view.rows["to"].set("A5")
+        window._on_apply()
+        self.assertTrue(self.pump(lambda: bool(self.requests)))
+        self.assertEqual(self.requests[0]["password"], "s3cret")
+        self.assertEqual(self.requests[0]["params"], {"resize": {"to": "A5"}})
 
 
 @unittest.skipUnless(TOOLKIT, "needs a display and GTK 4 with libadwaita")
@@ -512,6 +678,7 @@ _PNG = bytes.fromhex(
     "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489"
     "0000000d49444154789c6360000002000001e221bc330000000049454e44ae426082"
 )
+
 
 
 if __name__ == "__main__":

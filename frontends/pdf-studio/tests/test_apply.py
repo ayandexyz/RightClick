@@ -41,7 +41,14 @@ class ApplyTests(unittest.TestCase):
         states = []
         run_apply(lambda: Client(), {"files": ["a.pdf"], "op": "pdf-edit"}, states.append, threading.Event())
         self.assertEqual(states[-1].status, "failed")
-        self.assertIn("passwords are not supported", states[-1].error)
+        self.assertIn("needs a password", states[-1].error)
+
+    def test_a_failed_file_explains_itself(self):
+        event = {"event": "job.finished", "data": {"id": "j", "state": "failed", "files": [
+            {"state": "failed", "error": {"code": "internal", "message": "the stamp font cannot draw \"x\""}}]}}
+        state = reduce_job_event(JobState(), event)
+        self.assertEqual(state.status, "failed")
+        self.assertIn("the stamp font cannot draw", state.error)
 
     def test_run_apply_reports_states_and_cancels(self):
         cancelled = threading.Event()

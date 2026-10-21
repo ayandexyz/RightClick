@@ -110,24 +110,23 @@ class ThumbnailLoaderTests(unittest.TestCase):
         release.set()
         self.assertEqual(received, [])
 
-    def test_accepts_a_list_response_and_keyword_only_client(self):
+    def test_accepts_a_list_response_and_sends_the_password_only_when_set(self):
         calls = []
         received = []
 
-        class KeywordClient:
-            def pdf_thumbnails(self, *, file, pages, width):
-                calls.append((file, pages, width))
+        class Client:
+            def pdf_thumbnails(self, file, pages, width, **extra):
+                calls.append((file, pages, width, extra))
                 return [{"page": 1, "path": "one.png"}]
 
-        loader = ThumbnailLoader(lambda: KeywordClient(), "/tmp/a.pdf", 1, callback=lambda page, result: received.append((page, result)))
-        try:
-            loader.load([1])
-            self.wait_for(lambda: received)
-        finally:
-            loader.stop()
-        self.assertEqual(calls, [("/tmp/a.pdf", [1], 200)])
-        self.assertEqual(received, [(1, {"page": 1, "path": "one.png"})])
-
-
-if __name__ == "__main__":
-    unittest.main()
+        for password, want in ((None, {}), ("secret", {"password": "secret"})):
+            calls.clear()
+            received.clear()
+            loader = ThumbnailLoader(lambda: Client(), "/tmp/a.pdf", 1, callback=lambda page, result: received.append((page, result)), password=password)
+            try:
+                loader.load([1])
+                self.wait_for(lambda: received)
+            finally:
+                loader.stop()
+            self.assertEqual(calls, [("/tmp/a.pdf", [1], 200, want)])
+            self.assertEqual(received[0][0], 1)

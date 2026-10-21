@@ -25,6 +25,15 @@ def _freeze_files(files):
     return tuple(MappingProxyType(dict(item)) for item in (files or ()))
 
 
+def _first_file_error(files):
+    """The first failed file's error, in the shared wording, or ""."""
+    for item in files:
+        problem = item.get("error")
+        if problem:
+            return friendly_error(problem.get("code", ""), problem.get("message", ""))
+    return ""
+
+
 def reduce_job_event(state, event):
     """Reduce one daemon job event into a new immutable UI state."""
     data = event.get("data") or {}
@@ -45,11 +54,14 @@ def reduce_job_event(state, event):
             status = "completed-with-errors"
         else:
             status = "completed"
+    error = data.get("error", state.error) or state.error
+    if status == "failed" and not error:
+        error = _first_file_error(files)
     return JobState(
         status=status,
         progress=progress,
         files=files,
-        error=data.get("error", state.error) or state.error,
+        error=error,
         job_id=str(data.get("id", state.job_id) or state.job_id),
     )
 
@@ -69,6 +81,7 @@ def run_apply(client_factory, request, on_event, cancel_event):
             for event in client.run_operation(
                 request.get("files", []), request["op"], request.get("params"),
                 output_dir=request.get("output_dir"), on_conflict=request.get("on_conflict"),
+                password=request.get("password"),
             ):
                 events.put(("event", event))
         except Exception as error:  # surfaced as UI state, not a worker traceback

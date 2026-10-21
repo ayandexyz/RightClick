@@ -23,15 +23,17 @@ class LoadResult:
     message: str = ""
     hint: str = ""
     retry: bool = False  # whether trying again could plausibly work
+    password_rejected: bool = False  # locked, and the password given did not open it
 
 
-def load_document(path, make_client, ensure_daemon):
+def load_document(path, make_client, ensure_daemon, password=None):
     """Ask the daemon about ``path``, starting the daemon once if it is down."""
     name = os.path.basename(path)
     started = False
     while True:
         try:
-            info = make_client().pdf_info(path)
+            extra = {} if password is None else {"password": password}
+            info = make_client().pdf_info(path, **extra)
         except DaemonUnavailable:
             if started:
                 return _daemon_down()
@@ -61,11 +63,13 @@ def _daemon_down():
 
 
 def _from_request_error(error, name):
-    if error.code == "password_required":
+    if error.code in ("password_required", "password_incorrect"):
         return LoadResult(
             "locked",
             title="This PDF is password-protected",
-            message=f"{name} is locked. Opening password-protected PDFs is not supported yet.",
+            message=("That password did not work." if error.code == "password_incorrect" else f"{name} is locked and needs a password."),
+            hint="Enter the password to unlock this PDF.",
+            password_rejected=error.code == "password_incorrect",
         )
     if error.code == "invalid_pdf":
         return LoadResult(

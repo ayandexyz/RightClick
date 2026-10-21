@@ -13,15 +13,16 @@ class FakeClient:
         self.outcomes = list(outcomes)
         self.calls = []
 
-    def pdf_info(self, path):
+    def pdf_info(self, path, **extra):
         self.calls.append(path)
+        self.extras = extra
         outcome = self.outcomes.pop(0)
         if isinstance(outcome, Exception):
             raise outcome
         return outcome
 
 
-def load(path="/tmp/report.pdf", client=None, ensure=None):
+def load(path="/tmp/report.pdf", client=None, ensure=None, password=None):
     started = []
 
     def ensure_daemon():
@@ -29,7 +30,7 @@ def load(path="/tmp/report.pdf", client=None, ensure=None):
         if ensure is not None:
             raise ensure
 
-    result = load_document(path, lambda: client, ensure_daemon)
+    result = load_document(path, lambda: client, ensure_daemon, password=password)
     return result, started
 
 
@@ -48,6 +49,23 @@ class LoadingTests(unittest.TestCase):
         self.assertIn("report.pdf", result.message)
         self.assertIn("password", result.message.lower())
         self.assertFalse(result.retry)
+
+    def test_a_locked_file_with_no_password_is_not_a_rejected_password(self):
+        result, _ = load(client=FakeClient(RequestError("password_required", "")))
+        self.assertFalse(result.password_rejected)
+
+    def test_a_wrong_password_is_reported_as_rejected(self):
+        result, _ = load(client=FakeClient(RequestError("password_incorrect", "")), password="nope")
+        self.assertEqual(result.kind, "locked")
+        self.assertTrue(result.password_rejected)
+        self.assertIn("did not work", result.message)
+
+    def test_the_password_is_sent_only_when_there_is_one(self):
+        client = FakeClient(PdfInfo(pages=1), PdfInfo(pages=1))
+        load(client=client, password="secret")
+        self.assertEqual(client.extras, {"password": "secret"})
+        load(client=client)
+        self.assertEqual(client.extras, {})
 
     def test_a_damaged_file_says_so_and_is_not_retryable(self):
         result, _ = load(client=FakeClient(RequestError("invalid_pdf", "pdf is damaged or not a valid PDF")))
