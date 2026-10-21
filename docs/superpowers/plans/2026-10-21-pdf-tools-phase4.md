@@ -200,7 +200,7 @@ A tool is data: `Tool(id, label, group, op, fields, build)`. A `Field` has `key`
 
 ### Task 13: Nautilus and installer touch-ups
 
-- [ ] **Step 1:** No new Nautilus entries are needed (all phase 4 tools are studio-mode). Confirm `Customise…` opens a locked PDF straight to the password prompt, not an error notification. **Open:** unverified; `file_converter.py` has no locked-PDF handling.
+- [x] **Step 1:** No new Nautilus entries are needed (all phase 4 tools are studio-mode). Confirm `Customise…` opens a locked PDF straight to the password prompt, not an error notification. Verified 2026-10-22: the menu decision never opens the document (`operations` reads only the header, so a locked PDF gets the same menu), **Customise…** spawns `fc-pdf-studio PATH`, and Studio meets a locked file with its status page and password prompt (`test_window_smoke.py`: prompt, wrong password, cancel, close). Against a real daemon, the instant operations that Nautilus also offers for a locked file failed with raw tool text in three cases (`pdf-strip-metadata`, `pdf-to-text`, `pdf-extract-images`: code `internal`); `Operation.Run` now reports `password_required` for any password-less failure on an encrypted input (`TestEveryInstantOperationOnALockedFileAsksForThePassword`). Not exercised: a real Nautilus session.
 - [x] **Step 2:** The installer copies the new Studio modules (it copies the whole package already; add a test that every new module imports from the installed layout, the same check used in phase 3).
 - [x] **Step 3:** Commit `chore: ship the phase 4 Studio modules`.
 

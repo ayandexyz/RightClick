@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -244,6 +245,31 @@ func (o Operation) Validate(files []string, p Params) error {
 // every other operation works on a single input, which the job layer loops
 // over itself.
 func (o Operation) Run(ctx context.Context, tb Toolbox, inputs []string, output string, p Params) error {
+	err := o.run(ctx, tb, inputs, output, p)
+	if err == nil || p.Password != "" || o.InputKind() != InputPDF || errors.Is(err, ErrPasswordRequired) || ctx.Err() != nil || o.handlesItsOwnPasswords() {
+		return err
+	}
+	// A tool run on a locked file fails with whatever its own message is
+	// ("Incorrect password", a qpdf usage error). Name the real reason instead.
+	for _, input := range inputs {
+		if encrypted, probeErr := isEncrypted(ctx, input); probeErr == nil && encrypted {
+			return ErrPasswordRequired
+		}
+	}
+	return err
+}
+
+// handlesItsOwnPasswords marks the operations that read and report passwords
+// themselves (an already-encrypted input is their own error to word).
+func (o Operation) handlesItsOwnPasswords() bool {
+	switch o.ID {
+	case "pdf-decrypt", "pdf-encrypt", "pdf-permissions":
+		return true
+	}
+	return false
+}
+
+func (o Operation) run(ctx context.Context, tb Toolbox, inputs []string, output string, p Params) error {
 	if err := tb.Available(o.EngineID()); err != nil {
 		return err
 	}
