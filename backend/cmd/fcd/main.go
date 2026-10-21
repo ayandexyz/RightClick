@@ -77,7 +77,7 @@ func main() {
 			}
 		}
 	}
-	srv := server.New(server.Dependencies{Jobs: manager, Registry: engines, Engine: enginePath, Version: "0.1.0", PDFToolbox: pdfToolbox, PDFInfo: pdfInfo, Thumbs: thumbCache})
+	srv := server.New(server.Dependencies{Jobs: manager, Registry: engines, Engine: enginePath, Version: "0.1.0", PDFToolbox: pdfToolbox, PDFInfo: pdfInfo, Thumbs: thumbCache, RuntimeDir: os.Getenv("XDG_RUNTIME_DIR")})
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	go func() { <-stop; _ = listener.Close() }()

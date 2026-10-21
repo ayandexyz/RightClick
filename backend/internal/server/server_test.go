@@ -608,6 +608,14 @@ func (s *stubPDFBackend) Assemble(_ context.Context, _ string, _ string, _ []pdf
 func (s *stubPDFBackend) InsertBlankPages(_ context.Context, _ string, _ string, _ []int, _ bool, _ *types.Dim) error {
 	return nil
 }
+func (s *stubPDFBackend) Crop(context.Context, string, string, pdfops.CropParams) error { return nil }
+func (s *stubPDFBackend) Resize(context.Context, string, string, pdfops.ResizeParams) error {
+	return nil
+}
+func (s *stubPDFBackend) NUp(context.Context, string, string, pdfops.NUpParams) error { return nil }
+func (s *stubPDFBackend) Booklet(context.Context, string, string, pdfops.BookletParams) error {
+	return nil
+}
 
 func pdfFixture(t *testing.T, dir, name string) string {
 	t.Helper()
@@ -1173,7 +1181,7 @@ type stubPDFInfo struct {
 	failFor map[string]error
 }
 
-func (s *stubPDFInfo) Pdf(_ context.Context, file string) (pdfops.PDFInfoResult, error) {
+func (s *stubPDFInfo) Pdf(_ context.Context, file, password string) (pdfops.PDFInfoResult, error) {
 	if err := s.failFor[file]; err != nil {
 		return pdfops.PDFInfoResult{}, err
 	}

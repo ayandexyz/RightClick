@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -39,6 +40,10 @@ type Dependencies struct {
 	Thumbs *thumbs.Cache
 	// MenuPath overrides the menu policy file; empty uses menu.Path().
 	MenuPath string
+	// RuntimeDir is where a connection keeps the unlocked copy and thumbnails of
+	// a password-protected document. It should be private and memory-backed
+	// (XDG_RUNTIME_DIR); empty falls back to the system temporary directory.
+	RuntimeDir string
 }
 
 type Server struct {
@@ -106,6 +111,12 @@ func (s *Server) handle(conn net.Conn) {
 	s.active.Add(1)
 	defer s.active.Add(-1)
 	defer conn.Close()
+	var fork func(string) *thumbs.Cache
+	if s.deps.Thumbs != nil {
+		fork = s.deps.Thumbs.Fork
+	}
+	locked := newLockedSession(s.lockedBase(), fork)
+	defer locked.Close()
 	reader := bufio.NewScanner(conn)
 	reader.Buffer(make([]byte, 4096), 8*1024*1024)
 	var writeMu sync.Mutex
@@ -221,7 +232,7 @@ func (s *Server) handle(conn net.Conn) {
 				return
 			}
 		case "pdf_thumbnails":
-			result, code, msg := s.handlePDFThumbnails(ctx, req.Params)
+			result, code, msg := s.handlePDFThumbnails(ctx, req.Params, locked)
 			if code != "" {
 				if writeError(write, req.ID, code, msg) != nil {
 					return
@@ -260,6 +271,7 @@ func (s *Server) handle(conn net.Conn) {
 				Op        string          `json:"op"`
 				Files     []string        `json:"files"`
 				Params    protocol.Params `json:"params"`
+				Password  *string         `json:"password"`
 				OutputDir string          `json:"output_dir"`
 				Conflict  string          `json:"on_conflict"`
 			}
@@ -269,13 +281,39 @@ func (s *Server) handle(conn net.Conn) {
 				}
 				continue
 			}
+			if p.Password != nil && p.Params.Password == nil {
+				p.Params.Password = p.Password
+			}
 			if p.Conflict == "" {
 				p.Conflict = string(protocol.ConflictRename)
 			}
 			id, err := s.deps.Jobs.SubmitOperation(jobs.OperationRequest{
-				Op:        p.Op,
-				Files:     p.Files,
-				Params:    pdfops.Params{Pages: derefString(p.Params.Pages), Angle: derefInt(p.Params.Angle), Edit: editItems(p.Params.Edit), Ranges: derefString(p.Params.Ranges), Every: derefInt(p.Params.Every), FilePages: p.Params.FilePages},
+				Op:    p.Op,
+				Files: p.Files,
+				Params: pdfops.Params{
+					Pages:            derefString(p.Params.Pages),
+					Angle:            derefInt(p.Params.Angle),
+					Password:         derefString(p.Params.Password),
+					Edit:             editItems(p.Params.Edit),
+					Ranges:           derefString(p.Params.Ranges),
+					Every:            derefInt(p.Params.Every),
+					FilePages:        p.Params.FilePages,
+					EncryptUser:      derefString(p.Params.EncryptUser),
+					EncryptOwner:     derefString(p.Params.EncryptOwner),
+					PermissionsOwner: derefString(p.Params.PermissionsOwner),
+					Permissions:      p.Params.Permissions,
+					Crop:             pdfops.CropParams{Unit: p.Params.Crop.Unit, Top: p.Params.Crop.Top, Right: p.Params.Crop.Right, Bottom: p.Params.Crop.Bottom, Left: p.Params.Crop.Left, Pages: p.Params.Crop.Pages},
+					Resize:           pdfops.ResizeParams{To: p.Params.Resize.To, Fit: p.Params.Resize.Fit, Pages: p.Params.Resize.Pages},
+					Layout:           pdfops.LayoutParams{PerSheet: p.Params.Layout.PerSheet, Orientation: p.Params.Layout.Orientation, Margin: p.Params.Layout.Margin, Border: p.Params.Layout.Border},
+					Metadata:         pdfops.MetadataParams{Title: p.Params.Metadata.Title, Author: p.Params.Metadata.Author, Subject: p.Params.Metadata.Subject, Keywords: p.Params.Metadata.Keywords, Custom: p.Params.Metadata.Custom},
+					Stamp: pdfops.StampParams{
+						Kind: p.Params.Stamp.Kind, Text: p.Params.Stamp.Text, Image: p.Params.Stamp.Image,
+						Position: p.Params.Stamp.Position, Opacity: p.Params.Stamp.Opacity, Rotation: p.Params.Stamp.Rotation,
+						Size: p.Params.Stamp.Size, Color: p.Params.Stamp.Color, Pages: p.Params.Stamp.Pages, OnTop: p.Params.Stamp.OnTop,
+						Start: p.Params.Stamp.Start, Format: p.Params.Stamp.Format, Prefix: p.Params.Stamp.Prefix,
+						Left: p.Params.Stamp.Left, Centre: p.Params.Stamp.Centre, Right: p.Params.Stamp.Right, Edge: p.Params.Stamp.Edge,
+					},
+				},
 				OutputDir: p.OutputDir,
 				Conflict:  protocol.ConflictPolicy(p.Conflict),
 				Events:    writeEvent(write),
@@ -552,7 +590,8 @@ func (s *Server) handleMenu(params json.RawMessage) (map[string]any, string, str
 // and a menu phrase a locked or damaged file identically.
 func (s *Server) handlePDFInfo(ctx context.Context, params json.RawMessage) (map[string]any, string, string) {
 	var p struct {
-		File string `json:"file"`
+		File     string  `json:"file"`
+		Password *string `json:"password,omitempty"`
 	}
 	if json.Unmarshal(params, &p) != nil {
 		return nil, "bad_request", "invalid pdf_info params"
@@ -569,7 +608,11 @@ func (s *Server) handlePDFInfo(ctx context.Context, params json.RawMessage) (map
 	if s.deps.PDFInfo == nil {
 		return nil, "internal", "no PDF engine is available"
 	}
-	result, err := s.deps.PDFInfo.Pdf(ctx, p.File)
+	password := ""
+	if p.Password != nil {
+		password = *p.Password
+	}
+	result, err := s.deps.PDFInfo.Pdf(ctx, p.File, password)
 	if err != nil {
 		return nil, pdfops.ErrorCode(err), err.Error()
 	}
@@ -591,11 +634,12 @@ func (s *Server) handlePDFInfo(ctx context.Context, params json.RawMessage) (map
 // Requests for a locked or damaged document fail with the same codes every
 // other PDF surface uses, so a page grid and a context menu phrase one file
 // identically.
-func (s *Server) handlePDFThumbnails(ctx context.Context, params json.RawMessage) (map[string]any, string, string) {
+func (s *Server) handlePDFThumbnails(ctx context.Context, params json.RawMessage, locked *lockedSession) (map[string]any, string, string) {
 	var p struct {
-		File  string `json:"file"`
-		Pages []int  `json:"pages"`
-		Width int    `json:"width"`
+		File     string  `json:"file"`
+		Pages    []int   `json:"pages"`
+		Width    int     `json:"width,omitempty"`
+		Password *string `json:"password,omitempty"`
 	}
 	if json.Unmarshal(params, &p) != nil {
 		return nil, "bad_request", "invalid pdf_thumbnails params"
@@ -609,10 +653,14 @@ func (s *Server) handlePDFThumbnails(ctx context.Context, params json.RawMessage
 	if s.deps.Thumbs == nil {
 		return nil, "internal", "no thumbnail renderer is available"
 	}
+	password := ""
+	if p.Password != nil {
+		password = *p.Password
+	}
 	// The page count bounds the request: asking for page 900 of a 12-page
 	// document should fail as a request error, not as a render failure.
 	if s.deps.PDFInfo != nil {
-		info, err := s.deps.PDFInfo.Pdf(ctx, p.File)
+		info, err := s.deps.PDFInfo.Pdf(ctx, p.File, password)
 		if err != nil {
 			return nil, pdfops.ErrorCode(err), err.Error()
 		}
@@ -622,7 +670,19 @@ func (s *Server) handlePDFThumbnails(ctx context.Context, params json.RawMessage
 			}
 		}
 	}
-	pages, err := s.deps.Thumbs.Render(ctx, thumbs.Request{File: p.File, Pages: p.Pages, Width: p.Width})
+	request := thumbs.Request{File: p.File, Pages: p.Pages, Width: p.Width}
+	// A password-protected document is rendered from this connection's private
+	// copy; anything else goes through the persistent cache as before.
+	pages, handled, err := locked.render(ctx, request, password)
+	if err != nil {
+		if code := pdfops.ErrorCode(err); code != "internal" {
+			return nil, code, err.Error()
+		}
+		return nil, thumbsCode(err), err.Error()
+	}
+	if !handled {
+		pages, err = s.deps.Thumbs.Render(ctx, request)
+	}
 	if err != nil {
 		return nil, thumbsCode(err), err.Error()
 	}
@@ -658,4 +718,13 @@ func (s *Server) handleCacheClear() (map[string]any, string, string) {
 		return nil, "internal", err.Error()
 	}
 	return map[string]any{"removed": removed}, "", ""
+}
+
+// lockedBase is the directory under which a connection's private unlocked
+// document goes.
+func (s *Server) lockedBase() string {
+	if s.deps.RuntimeDir == "" {
+		return ""
+	}
+	return filepath.Join(s.deps.RuntimeDir, "file-converter")
 }

@@ -51,6 +51,14 @@ func (q *QPDF) Flatten(ctx context.Context, input, output string) error {
 	return q.runQPDF(ctx, []string{"--flatten-annotations=all", "--generate-appearances", input, output})
 }
 
+// FlattenRotation applies each page's /Rotate to its content, leaving every
+// page upright with the same appearance. Tools that position things in page
+// coordinates, such as pdfcpu's stamps, otherwise lose track of where a
+// rotated page's corners are.
+func (q *QPDF) FlattenRotation(ctx context.Context, input, output string) error {
+	return q.runQPDF(ctx, []string{"--flatten-rotation", input, output})
+}
+
 // runQPDF dispatches the configured runner and decodes the exit code. qpdf
 // uses three values: 0 ok, 3 warnings (still produced output), anything else a
 // failure.

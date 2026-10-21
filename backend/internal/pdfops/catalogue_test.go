@@ -316,3 +316,24 @@ func TestSupportsImageImportMatchesWhatPDFCPUExtracts(t *testing.T) {
 		}
 	}
 }
+
+// Every phase 4 tool needs parameters, so none may be an instant operation the
+// Nautilus submenu would run with no questions asked.
+func TestPhase4OperationsAreStudioOnlyAndNameTheirOutput(t *testing.T) {
+	suffixes := map[string]string{
+		"pdf-decrypt": "-unlocked", "pdf-encrypt": "-protected", "pdf-permissions": "-restricted",
+		"pdf-stamp-text": "-stamped", "pdf-stamp-image": "-stamped", "pdf-page-numbers": "-numbered",
+		"pdf-header-footer": "-stamped", "pdf-bates": "-bates", "pdf-crop": "-cropped",
+		"pdf-resize": "-resized", "pdf-nup": "-nup", "pdf-booklet": "-booklet",
+	}
+	for id, suffix := range suffixes {
+		op, ok := Lookup(id)
+		if !ok {
+			t.Errorf("%s is not in the catalogue", id)
+			continue
+		}
+		if op.Mode != "studio" || op.Suffix != suffix || op.MaxInputs != 1 {
+			t.Errorf("%s = mode %q suffix %q max %d, want studio %q 1", id, op.Mode, op.Suffix, op.MaxInputs, suffix)
+		}
+	}
+}

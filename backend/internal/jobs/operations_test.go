@@ -103,6 +103,46 @@ func (f *fakePDFBackend) InsertBlankPages(_ context.Context, _ string, output st
 	return writePDFStub(output)
 }
 
+func (f *fakePDFBackend) Crop(_ context.Context, input, output string, _ pdfops.CropParams) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.fail[input]; err != nil {
+		return err
+	}
+	f.destinations = append(f.destinations, output)
+	return writePDFStub(output)
+}
+
+func (f *fakePDFBackend) Resize(_ context.Context, input, output string, _ pdfops.ResizeParams) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.fail[input]; err != nil {
+		return err
+	}
+	f.destinations = append(f.destinations, output)
+	return writePDFStub(output)
+}
+
+func (f *fakePDFBackend) NUp(_ context.Context, input, output string, _ pdfops.NUpParams) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.fail[input]; err != nil {
+		return err
+	}
+	f.destinations = append(f.destinations, output)
+	return writePDFStub(output)
+}
+
+func (f *fakePDFBackend) Booklet(_ context.Context, input, output string, _ pdfops.BookletParams) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.fail[input]; err != nil {
+		return err
+	}
+	f.destinations = append(f.destinations, output)
+	return writePDFStub(output)
+}
+
 func (f *fakePDFBackend) ImportImages(_ context.Context, inputs []string, _ string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

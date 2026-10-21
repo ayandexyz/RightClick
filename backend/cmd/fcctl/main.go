@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -41,12 +42,21 @@ type command struct {
 	pdfInfo  bool
 	// pdfThumbs carries "pdf thumbs", whose page list is parsed here rather
 	// than by the daemon, because the CLI reports the pages it asked for.
-	pdfThumbs   bool
-	pdfWidth    int
-	pdfEdit     string
-	pdfRanges   string
-	pdfEvery    *int
-	pdfPagesFor []string
+	pdfThumbs       bool
+	pdfWidth        int
+	pdfEdit         string
+	pdfRanges       string
+	pdfEvery        *int
+	pdfPagesFor     []string
+	pdfPasswordFile string
+	pdfEncryptUser  string
+	pdfEncryptOwner string
+	pdfPermissions  []string
+	// pdfOpts holds the stamp, crop, resize and layout options by flag name,
+	// still as typed on the command line. They are converted per operation by
+	// pdfToolParams, because the same flag (--right, --margin) means different
+	// things to different operations.
+	pdfOpts map[string]string
 	// cacheSub is "clear" for the cache command; other cache subcommands are
 	// rejected rather than ignored.
 	cacheSub string
@@ -379,7 +389,57 @@ func parsePDFArgs(args []string) (command, error) {
 			}
 			cmd.pdfAngle = &n
 			i = next
+		case "--password-file":
+			value, next, err := optionValue(rest, i)
+			if err != nil {
+				return command{}, err
+			}
+			password, err := readPasswordFile(value)
+			if err != nil {
+				return command{}, fmt.Errorf("read password file: %w", err)
+			}
+			cmd.pdfPasswordFile, i = password, next
+		case "--user-password-file":
+			value, next, err := optionValue(rest, i)
+			if err != nil {
+				return command{}, err
+			}
+			password, err := readPasswordFile(value)
+			if err != nil {
+				return command{}, fmt.Errorf("read user password file: %w", err)
+			}
+			cmd.pdfEncryptUser, i = password, next
+		case "--owner-password-file":
+			value, next, err := optionValue(rest, i)
+			if err != nil {
+				return command{}, err
+			}
+			password, err := readPasswordFile(value)
+			if err != nil {
+				return command{}, fmt.Errorf("read owner password file: %w", err)
+			}
+			cmd.pdfEncryptOwner, i = password, next
+		case "--permissions":
+			value, next, err := optionValue(rest, i)
+			if err != nil {
+				return command{}, err
+			}
+			cmd.pdfPermissions = strings.Split(value, ",")
+			i = next
 		default:
+			if pdfToolBoolFlags[rest[i]] {
+				cmd.setPDFOpt(rest[i], "true")
+				continue
+			}
+			if pdfToolValueFlags[rest[i]] {
+				value, next, err := optionValue(rest, i)
+				if err != nil {
+					return command{}, err
+				}
+				cmd.setPDFOpt(rest[i], value)
+				i = next
+				continue
+			}
 			if strings.HasPrefix(rest[i], "-") {
 				return command{}, fmt.Errorf("unknown option: %s", rest[i])
 			}
@@ -411,6 +471,9 @@ func parsePDFArgs(args []string) (command, error) {
 			return command{}, fmt.Errorf("--pages: %w", err)
 		}
 		return cmd, nil
+	}
+	if _, err := pdfToolParams(cmd); err != nil {
+		return command{}, err
 	}
 	if cmd.op == "pdf-split-ranges" && cmd.pdfRanges == "" {
 		return command{}, fmt.Errorf("pdf split-ranges requires --ranges")
@@ -445,8 +508,10 @@ func parsePDFArgs(args []string) (command, error) {
 	if !opDef.NeedsAngle && cmd.pdfAngle != nil {
 		return command{}, fmt.Errorf("--angle is only valid for pdf rotate")
 	}
-	if !opDef.NeedsPages && !opDef.OptionalPages && cmd.pdfPages != "" {
-		return command{}, fmt.Errorf("--pages is only valid for pdf extract, delete or rotate")
+	// The stamp, crop and resize operations take --pages inside their own
+	// params, which pdfToolParams places and checks.
+	if !opDef.NeedsPages && !opDef.OptionalPages && cmd.pdfPages != "" && !pdfToolTakesPages(cmd.op) {
+		return command{}, fmt.Errorf("--pages is only valid for pdf extract, delete or rotate and the stamp, crop and resize tools")
 	}
 	return cmd, nil
 }
@@ -559,13 +624,30 @@ func commandRequest(cmd command) protocol.Request {
 			params["params"] = map[string]any{"ranges": cmd.pdfRanges}
 		} else if cmd.pdfEvery != nil {
 			params["params"] = map[string]any{"every": *cmd.pdfEvery}
-		} else if cmd.pdfPages != "" || cmd.pdfAngle != nil {
+		} else if toolParams, _ := pdfToolParams(cmd); toolParams != nil {
+			params["params"] = toolParams
+		} else if cmd.pdfPages != "" || cmd.pdfAngle != nil || cmd.pdfPasswordFile != "" || cmd.pdfEncryptUser != "" || cmd.pdfEncryptOwner != "" || len(cmd.pdfPermissions) > 0 {
 			operation := map[string]any{}
 			if cmd.pdfPages != "" {
 				operation["pages"] = cmd.pdfPages
 			}
 			if cmd.pdfAngle != nil {
 				operation["angle"] = *cmd.pdfAngle
+			}
+			if cmd.pdfPasswordFile != "" {
+				operation["password"] = cmd.pdfPasswordFile
+			}
+			// Crypto params for pdf-encrypt
+			if cmd.pdfEncryptUser != "" {
+				operation["encrypt_user"] = cmd.pdfEncryptUser
+			}
+			if cmd.pdfEncryptOwner != "" {
+				operation["encrypt_owner"] = cmd.pdfEncryptOwner
+			}
+			// Crypto params for pdf-permissions
+			if len(cmd.pdfPermissions) > 0 {
+				operation["permissions_owner"] = cmd.pdfEncryptOwner
+				operation["permissions"] = cmd.pdfPermissions
 			}
 			params["params"] = operation
 		}
@@ -586,6 +668,25 @@ func commandRequest(cmd command) protocol.Request {
 		}
 		return protocol.Request{ID: 1, Method: "convert", Params: raw(params)}
 	}
+}
+
+// readPasswordFile reads a password from a file or stdin. Never accepts
+// password as a command-line flag to avoid shell history and /proc visibility.
+func readPasswordFile(path string) (string, error) {
+	var data []byte
+	var err error
+	if path == "-" {
+		data, err = io.ReadAll(os.Stdin)
+	} else {
+		data, err = os.ReadFile(path)
+	}
+	if err != nil {
+		return "", err
+	}
+	// Trim trailing newline that text editors add
+	password := strings.TrimSuffix(string(data), "\n")
+	password = strings.TrimSuffix(password, "\r\n")
+	return password, nil
 }
 
 func writeRequest(conn net.Conn, req protocol.Request) error {
@@ -805,7 +906,7 @@ func absolutePaths(paths []string) []string {
 
 func raw(value any) json.RawMessage { data, _ := json.Marshal(value); return data }
 
-const usageText = "usage: fcctl hello | engines [--json] | targets FILE... [--menu] [--json] | menu show | menu set CATEGORY FORMAT... | menu reset [CATEGORY] | convert FILE... (--to png|jpeg|webp|jxl|avif|gif|bmp|tiff|ico|heic | --preset PRESET) [--quality 1-100] [--max-size PX] [--background COLOR] [--out-dir DIR] [--recursive] [--on-conflict POLICY] [--json] | cancel JOB [--json] | pdf (merge FILE FILE... [--pages-for N=SPEC]... | extract FILE... --pages SPEC | delete FILE... --pages SPEC | rotate FILE... --angle 90|180|270 [--pages SPEC] | reverse FILE... | edit FILE --edit ITEMS | split-ranges FILE --ranges SPEC;SPEC... | split-every FILE --every N | NAME FILE... | list FILE | info FILE | thumbs FILE --pages SPEC) [--width PX] [--out-dir DIR] [--on-conflict POLICY] [--json] | cache clear [--json]"
+const usageText = "usage: fcctl hello | engines [--json] | targets FILE... [--menu] [--json] | menu show | menu set CATEGORY FORMAT... | menu reset [CATEGORY] | convert FILE... (--to png|jpeg|webp|jxl|avif|gif|bmp|tiff|ico|heic | --preset PRESET) [--quality 1-100] [--max-size PX] [--background COLOR] [--out-dir DIR] [--recursive] [--on-conflict POLICY] [--json] | cancel JOB [--json] | pdf (merge FILE FILE... [--pages-for N=SPEC]... | extract FILE... --pages SPEC | delete FILE... --pages SPEC | rotate FILE... --angle 90|180|270 [--pages SPEC] | reverse FILE... | edit FILE --edit ITEMS | split-ranges FILE --ranges SPEC;SPEC... | split-every FILE --every N | decrypt FILE --password-file FILE | encrypt FILE --user-password-file FILE --owner-password-file FILE | permissions FILE --owner-password-file FILE --permissions LIST | stamp-text FILE --text TEXT [--position P] [--opacity 0-100] [--rotation DEG] [--size PT] [--color #rrggbb] [--on-top] [--pages SPEC] | stamp-image FILE --image FILE [--position P] [--opacity 0-100] [--rotation DEG] [--pages SPEC] | page-numbers FILE [--format number|of-total] [--start N] [--position P] [--pages SPEC] | header-footer FILE [--left T] [--centre T] [--right T] [--edge top|bottom] [--pages SPEC] | bates FILE --start N [--prefix TEXT] [--position P] [--pages SPEC] | crop FILE --unit mm|pt|percent [--top N] [--right N] [--bottom N] [--left N] [--pages SPEC] | resize FILE --to A4|A3|A5|Letter|Legal [--pages SPEC] | nup FILE --per-sheet N [--orientation portrait|landscape] [--margin N] [--border] | booklet FILE --per-sheet 2|4 | metadata FILE [--title TEXT] [--author TEXT] [--subject TEXT] [--keywords TEXT] | NAME FILE... | list FILE | info FILE | thumbs FILE --pages SPEC) [--width PX] [--out-dir DIR] [--on-conflict POLICY] [--json] | cache clear [--json]"
 
 func usage()          { fmt.Fprintln(os.Stderr, usageText) }
 func fatal(err error) { fmt.Fprintln(os.Stderr, err); os.Exit(1) }
@@ -929,4 +1030,119 @@ func parseCacheArgs(args []string) (command, error) {
 		}
 	}
 	return cmd, nil
+}
+
+// Options for the stamp, crop, resize and layout operations. They are listed
+// rather than parsed generically so a typo is an "unknown option" error and not
+// a silently ignored flag.
+var pdfToolValueFlags = map[string]bool{
+	"--text": true, "--image": true, "--position": true, "--opacity": true, "--rotation": true,
+	"--size": true, "--color": true, "--start": true, "--format": true, "--prefix": true,
+	"--left": true, "--centre": true, "--right": true, "--edge": true,
+	"--unit": true, "--top": true, "--bottom": true,
+	"--to":        true,
+	"--per-sheet": true, "--orientation": true, "--margin": true,
+}
+
+var pdfToolBoolFlags = map[string]bool{"--on-top": true, "--border": true}
+
+func (c *command) setPDFOpt(flag, value string) {
+	if c.pdfOpts == nil {
+		c.pdfOpts = map[string]string{}
+	}
+	c.pdfOpts[flag] = value
+}
+
+// pdfToolParams turns the stamp, crop, resize and layout options into the
+// params object for the command's operation. It returns nil for any other
+// operation, and an error naming the flag when a value is not the type the
+// operation needs.
+func pdfToolParams(cmd command) (map[string]any, error) {
+	group := ""
+	switch cmd.op {
+	case "pdf-stamp-text", "pdf-stamp-image", "pdf-page-numbers", "pdf-header-footer", "pdf-bates":
+		group = "stamp"
+	case "pdf-crop":
+		group = "crop"
+	case "pdf-resize":
+		group = "resize"
+	case "pdf-nup", "pdf-booklet":
+		group = "layout"
+	default:
+		if len(cmd.pdfOpts) > 0 {
+			return nil, fmt.Errorf("%s does not take %s", strings.TrimPrefix(cmd.op, "pdf-"), firstFlag(cmd.pdfOpts))
+		}
+		return nil, nil
+	}
+	// Which flags each group accepts, and how to read them.
+	type spec struct{ key, kind string }
+	allowed := map[string]map[string]spec{
+		"stamp": {
+			"--text": {"text", "s"}, "--image": {"image", "s"}, "--position": {"position", "s"},
+			"--opacity": {"opacity", "i"}, "--rotation": {"rotation", "i"}, "--size": {"size", "i"},
+			"--color": {"color", "s"}, "--start": {"start", "i"}, "--format": {"format", "s"},
+			"--prefix": {"prefix", "s"}, "--left": {"left", "s"}, "--centre": {"centre", "s"},
+			"--right": {"right", "s"}, "--edge": {"edge", "s"}, "--on-top": {"on_top", "b"},
+		},
+		"crop": {
+			"--unit": {"unit", "s"}, "--top": {"top", "f"}, "--right": {"right", "f"},
+			"--bottom": {"bottom", "f"}, "--left": {"left", "f"},
+		},
+		"resize": {"--to": {"to", "s"}},
+		"layout": {
+			"--per-sheet": {"per_sheet", "i"}, "--orientation": {"orientation", "s"},
+			"--margin": {"margin", "i"}, "--border": {"border", "b"},
+		},
+	}[group]
+	values := map[string]any{}
+	for flag, raw := range cmd.pdfOpts {
+		s, ok := allowed[flag]
+		if !ok {
+			return nil, fmt.Errorf("%s does not take %s", strings.TrimPrefix(cmd.op, "pdf-"), flag)
+		}
+		switch s.kind {
+		case "i":
+			n, err := strconv.Atoi(raw)
+			if err != nil {
+				return nil, fmt.Errorf("%s must be a whole number", flag)
+			}
+			values[s.key] = n
+		case "f":
+			n, err := strconv.ParseFloat(raw, 64)
+			if err != nil {
+				return nil, fmt.Errorf("%s must be a number", flag)
+			}
+			values[s.key] = n
+		case "b":
+			values[s.key] = true
+		default:
+			values[s.key] = raw
+		}
+	}
+	// --pages selects the pages the tool acts on, which these operations take
+	// inside their own group rather than as the generic page selection.
+	if cmd.pdfPages != "" && group != "layout" {
+		values["pages"] = cmd.pdfPages
+	}
+	if cmd.pdfPages != "" && group == "layout" {
+		return nil, fmt.Errorf("%s does not take --pages", strings.TrimPrefix(cmd.op, "pdf-"))
+	}
+	return map[string]any{group: values}, nil
+}
+
+func firstFlag(opts map[string]string) string {
+	flags := make([]string, 0, len(opts))
+	for flag := range opts {
+		flags = append(flags, flag)
+	}
+	sort.Strings(flags)
+	return flags[0]
+}
+
+func pdfToolTakesPages(op string) bool {
+	switch op {
+	case "pdf-stamp-text", "pdf-stamp-image", "pdf-page-numbers", "pdf-header-footer", "pdf-bates", "pdf-crop", "pdf-resize":
+		return true
+	}
+	return false
 }

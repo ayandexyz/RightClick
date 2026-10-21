@@ -584,11 +584,20 @@ func request(t *testing.T, stream *e2eStream, value map[string]any) wireMessage 
 	if err := writeMessage(stream.conn, value); err != nil {
 		t.Fatal(err)
 	}
-	message, err := stream.read(15 * time.Second)
-	if err != nil {
-		t.Fatal(err)
+	for {
+		message, err := stream.read(15 * time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// A late event from an earlier job can arrive ahead of this request's
+		// answer. It is kept for whoever waits on events, not mistaken for the
+		// answer.
+		if _, isEvent := message["event"]; isEvent {
+			stream.pending = append(stream.pending, message)
+			continue
+		}
+		return message
 	}
-	return message
 }
 
 func writeMessage(conn net.Conn, value map[string]any) error {

@@ -14,15 +14,25 @@ import (
 // means "not provided"; whether a given operation requires one is declared by
 // the Operation itself.
 type Params struct {
-	Pages string // page spec, "" means not provided
-	Angle int    // 0 means not provided
+	Pages    string // page spec, "" means not provided
+	Angle    int    // 0 means not provided
+	Password string // password for encrypted PDFs, "" means not provided
 	// Edit is the page list for pdf-edit. It is separate from Pages because an
 	// edit says what happens to every page, including blanks, rather than which
 	// pages of the source to use.
-	Edit      []PageItem
-	Ranges    string
-	Every     int
-	FilePages []string
+	Edit             []PageItem
+	Ranges           string
+	Every            int
+	FilePages        []string
+	EncryptUser      string   // user password for pdf-encrypt
+	EncryptOwner     string   // owner password for pdf-encrypt
+	PermissionsOwner string   // owner password for pdf-permissions
+	Permissions      []string // permission flags for pdf-permissions
+	Stamp            StampParams
+	Crop             CropParams
+	Resize           ResizeParams
+	Layout           LayoutParams
+	Metadata         MetadataParams
 }
 
 // PageItem is one page of an edit: a source page in the original document, with
@@ -54,6 +64,10 @@ type Backend interface {
 	// each of the given pages. It is a step of Assemble rather than a separate
 	// operation, exposed so the pipeline can be asserted step by step.
 	InsertBlankPages(ctx context.Context, input, output string, after []int, before bool, dim *types.Dim) error
+	Crop(ctx context.Context, input, output string, params CropParams) error
+	Resize(ctx context.Context, input, output string, params ResizeParams) error
+	NUp(ctx context.Context, input, output string, params NUpParams) error
+	Booklet(ctx context.Context, input, output string, params BookletParams) error
 }
 
 // Engine IDs name the external tool that performs an operation. They appear in
@@ -97,6 +111,7 @@ type Operation struct {
 	NeedsPages    bool
 	OptionalPages bool // accepts a page selection but defaults to all pages
 	NeedsAngle    bool
+	NeedsPassword bool   // operation requires a password (e.g. pdf-decrypt)
 	Suffix        string // appended to the source name to form the output name; unused by merge
 	Merges        bool   // all inputs produce one output
 	Preset        string // Ghostscript compress preset: "light", "balanced", "strong"
@@ -168,12 +183,21 @@ func (o Operation) Validate(files []string, p Params) error {
 	if o.NeedsPages && p.Pages == "" {
 		return fmt.Errorf("%s needs a page selection", o.ID)
 	}
+	if o.NeedsPassword && p.Password == "" {
+		return fmt.Errorf("%s requires a password", o.ID)
+	}
 	if o.NeedsAngle && o.FixedAngle == 0 {
 		switch p.Angle {
 		case 90, 180, 270:
 		default:
 			return fmt.Errorf("%s needs an angle of 90, 180 or 270", o.ID)
 		}
+	}
+	if o.ID == "pdf-encrypt" && p.EncryptOwner == "" {
+		return fmt.Errorf("%s requires an owner password", o.ID)
+	}
+	if o.ID == "pdf-permissions" && p.PermissionsOwner == "" {
+		return fmt.Errorf("%s requires an owner password", o.ID)
 	}
 	if !o.NeedsPages && !o.OptionalPages && p.Pages != "" {
 		return fmt.Errorf("%s does not take a page selection", o.ID)
@@ -194,6 +218,31 @@ func (o Operation) Run(ctx context.Context, tb Toolbox, inputs []string, output 
 	if err := tb.Available(o.EngineID()); err != nil {
 		return err
 	}
+
+	// Unlock encrypted PDFs if a password is provided and inputs are PDFs
+	var cleanups []func()
+	defer func() {
+		for _, cleanup := range cleanups {
+			cleanup()
+		}
+	}()
+
+	if o.InputKind() == InputPDF && p.Password != "" {
+		pdfcpu, ok := tb.PDFCPU.(*PDFCPU)
+		if ok {
+			unlocked := make([]string, len(inputs))
+			for i, input := range inputs {
+				u, cleanup, err := Unlock(ctx, pdfcpu, input, p.Password)
+				if err != nil {
+					return err
+				}
+				unlocked[i] = u
+				cleanups = append(cleanups, cleanup)
+			}
+			inputs = unlocked
+		}
+	}
+
 	if o.EngineID() != EnginePDFCPU {
 		return o.runExternal(ctx, tb, inputs, output, p)
 	}
@@ -251,6 +300,51 @@ func (o Operation) Run(ctx context.Context, tb Toolbox, inputs []string, output 
 	}
 	if o.ID == "pdf-split-ranges" || o.ID == "pdf-split-every" {
 		return o.split(ctx, b, input, output, p)
+	}
+	// Crypto operations
+	pdfcpu, ok := b.(*PDFCPU)
+	if !ok && (o.ID == "pdf-decrypt" || o.ID == "pdf-encrypt" || o.ID == "pdf-permissions") {
+		return fmt.Errorf("%s requires pdfcpu backend", o.ID)
+	}
+	switch o.ID {
+	case "pdf-decrypt":
+		return pdfcpu.Decrypt(ctx, input, output, p)
+	case "pdf-encrypt":
+		return pdfcpu.Encrypt(ctx, input, output, EncryptParams{
+			User:        p.EncryptUser,
+			Owner:       p.EncryptOwner,
+			Password:    p.Password,
+			Permissions: p.Permissions,
+		})
+	case "pdf-permissions":
+		return pdfcpu.SetPermissions(ctx, input, output, PermissionsParams{
+			Owner:       p.PermissionsOwner,
+			Permissions: p.Permissions,
+			Password:    p.Password,
+		})
+	case "pdf-stamp-text", "pdf-stamp-image", "pdf-page-numbers", "pdf-header-footer", "pdf-bates":
+		// The operation decides the kind, so a request cannot ask for a
+		// different preset than the operation it named.
+		stamp := p.Stamp
+		stamp.Kind = map[string]string{
+			"pdf-stamp-text": StampText, "pdf-stamp-image": StampImage, "pdf-page-numbers": StampPageNumbers,
+			"pdf-header-footer": StampHeaderFooter, "pdf-bates": StampBates,
+		}[o.ID]
+		return pdfcpu.Stamp(ctx, input, output, stamp)
+	case "pdf-crop":
+		return b.Crop(ctx, input, output, p.Crop)
+	case "pdf-resize":
+		return b.Resize(ctx, input, output, p.Resize)
+	case "pdf-nup":
+		return b.NUp(ctx, input, output, NUpParams{PerSheet: p.Layout.PerSheet, Orientation: p.Layout.Orientation, Margin: p.Layout.Margin, Border: p.Layout.Border})
+	case "pdf-booklet":
+		return b.Booklet(ctx, input, output, BookletParams{PerSheet: p.Layout.PerSheet})
+	case "pdf-metadata":
+		pdfcpu, ok := b.(*PDFCPU)
+		if !ok {
+			return fmt.Errorf("pdf-metadata requires pdfcpu backend")
+		}
+		return pdfcpu.SetMetadata(ctx, input, output, p.Metadata)
 	}
 	if !o.NeedsPages && p.Pages == "" {
 		switch {

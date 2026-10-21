@@ -156,6 +156,14 @@ func (c *Cache) Ensure() error {
 	return os.Chmod(c.root, 0o700)
 }
 
+// Fork returns a cache with the same renderer and limits rooted somewhere else.
+// The daemon uses one for thumbnails of password-protected documents, rooted in
+// a directory that goes away with the connection, so those pages never reach
+// the persistent cache.
+func (c *Cache) Fork(root string) *Cache {
+	return NewCache(root, c.limits, c.renderer)
+}
+
 // Root returns the cache directory, for the daemon's start-up prune and for the
 // cache clear command.
 func (c *Cache) Root() string { return c.root }

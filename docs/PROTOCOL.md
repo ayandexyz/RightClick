@@ -18,7 +18,7 @@ Request: `{"id": 1, "method": "convert", "params": {...}}`
 Response: `{"id": 1, "result": {...}}` or `{"id": 1, "error": {"code": "no_route", "message": "..."}}`
 Event (no `id`): `{"event": "job.updated", "data": {...}}`
 
-Error codes: `bad_request`, `not_found`, `no_route`, `unsupported`, `busy`, `cancelled`, `internal`.
+Error codes: `bad_request`, `not_found`, `no_route`, `unsupported`, `busy`, `cancelled`, `password_required`, `password_incorrect`, `invalid_pdf`, `internal`. PDF passwords are accepted only in the documented PDF request params, are limited to 127 UTF-8 bytes, and are never returned in jobs, events, errors, logs, or subprocess arguments.
 Paths are absolute, UTF-8, native to the backend's OS.
 
 ### `hello`
@@ -101,7 +101,7 @@ The selection must be uniformly one kind: all PDFs, or all images that pdfcpu ca
 An operation may be present but `enabled: false` with a `reason`: merge with one file reports `needs at least 2 files`, an image operation over an unsupported format reports `<format> is not supported for PDF import`, and an operation whose engine is not installed reports `<engine> is not installed`. A missing engine disables only its own operations.
 
 ### `run_operation`
-`params: {op, files, params?, output_dir?, on_conflict?}` → `{job: string}`. The job runs through the same lifecycle as conversions: `job.updated` events with progress, `job.finished` with the final state. `params` may contain `{pages?: string, angle?: int, edit?: PageItem[], ranges?: string, every?: int, file_pages?: string[]}`. Passwords are intentionally not part of this protocol: unknown password fields are ignored and no password is copied into a job, event, error, log, or subprocess argument. `pages` follows the spec grammar below; `angle` must be 90, 180 or 270. `edit` is the ordered page list for `pdf-edit` (`src: 0` is blank and `rotate` is 0/90/180/270). `ranges` is semicolon-separated page specs for splitting. `every` is the positive page group size. `file_pages` is aligned with merge `files`; an empty entry means all pages.
+`params: {op, files, params?, output_dir?, on_conflict?}` → `{job: string}`. The job runs through the same lifecycle as conversions: `job.updated` events with progress, `job.finished` with the final state. `params` may contain `{pages?: string, angle?: int, edit?: PageItem[], ranges?: string, every?: int, file_pages?: string[], password?: string, encrypt_user?: string, encrypt_owner?: string, permissions_owner?: string, permissions?: string[], stamp?: Stamp, crop?: Crop, resize?: Resize, layout?: Layout}`. Password fields are read only in memory and are never included in jobs, events, errors, logs, or child-process arguments. `fcctl pdf decrypt` reads `--password-file FILE` (use `-` for stdin); encryption and permissions use `--user-password-file` / `--owner-password-file`, never password values directly on the command line. A password is used only in memory for the unlock stage and is never copied into a job, event, error, log, or subprocess argument. It is limited to 127 UTF-8 bytes. `pages` follows the spec grammar below; `angle` must be 90, 180 or 270. `edit` is the ordered page list for `pdf-edit` (`src: 0` is blank and `rotate` is 0/90/180/270). `ranges` is semicolon-separated page specs for splitting. `every` is the positive page group size. `file_pages` is aligned with merge `files`; an empty entry means all pages.
 
 Operations:
 
@@ -129,6 +129,18 @@ Operations:
 | `pdf-extract-images` | poppler | instant | 1 or more PDFs | `<stem>-image-1.png`, `<stem>-image-2.png`, ... |
 | `pdf-ocr` | tesseract | studio | 1 or more PDFs | not implemented; always `enabled: false` |
 | `pdf-from-images` | pdfcpu | instant | 1 or more JPEG / PNG / TIFF | `images.pdf` in `output_dir` |
+| `pdf-decrypt` | pdfcpu | studio | exactly 1 PDF; `password` required | `<stem>-unlocked.pdf` |
+| `pdf-encrypt` | pdfcpu | studio | exactly 1 PDF; `encrypt_owner` required, optional `encrypt_user` | `<stem>-protected.pdf`; AES-256; optional `permissions` lists what readers may do (`print`, `copy`, `modify`, `annotate`), default all of them |
+| `pdf-permissions` | pdfcpu | studio | exactly 1 PDF; `permissions_owner` required; typed `permissions` | `<stem>-restricted.pdf`; AES-256 |
+| `pdf-stamp-text` | pdfcpu | studio | exactly 1 PDF; `stamp.text` required | `<stem>-stamped.pdf` |
+| `pdf-stamp-image` | pdfcpu | studio | exactly 1 PDF; `stamp.image` required | `<stem>-stamped.pdf` |
+| `pdf-page-numbers` | pdfcpu | studio | exactly 1 PDF | `<stem>-numbered.pdf` |
+| `pdf-header-footer` | pdfcpu | studio | exactly 1 PDF; at least one of `stamp.left`, `centre`, `right` | `<stem>-stamped.pdf` |
+| `pdf-bates` | pdfcpu | studio | exactly 1 PDF; `stamp.start` required | `<stem>-bates.pdf` |
+| `pdf-crop` | pdfcpu | studio | exactly 1 PDF; `crop` required | `<stem>-cropped.pdf` |
+| `pdf-resize` | pdfcpu | studio | exactly 1 PDF; `resize` required | `<stem>-resized.pdf` |
+| `pdf-nup` | pdfcpu | studio | exactly 1 PDF; `layout.per_sheet` required | `<stem>-nup.pdf` |
+| `pdf-booklet` | pdfcpu | studio | exactly 1 PDF; `layout.per_sheet` required | `<stem>-booklet.pdf` |
 
 `pdf-ocr` is not implemented in this phase: producing a searchable PDF requires drawing an invisible text layer positioned over each page image, which no tool in this toolbox does. It is always returned with `enabled: false` and the reason `making a searchable PDF is not supported by this build`, and `run_operation` returns the same error rather than writing a PDF without a text layer.
 
@@ -137,6 +149,33 @@ Studio operations require either `pages` (page spec, see below) or `angle` (90, 
 Compress emits `skipped` with notice `already as small as it can get` when Ghostscript produces output that is not smaller than its input, rather than failing. Extract-images reports `skipped` with notice `no embedded images` for PDFs that contain no images. Split operations reject empty groups, invalid/out-of-range specs, a single-file split, and more than 200 parts before writing any output. Range groups are independent and may overlap; `every` produces a final remainder part when needed.
 
 The page spec is comma-separated items; each is `N`, `N-M`, `N-` (to the last page), `-M` (from page 1), or `z` (the last page). 1-based, whitespace ignored. Duplicates and overlaps are allowed. Out-of-range pages, reversed ranges (`5-3`), garbage, and an empty spec are errors. A selection expanding to more than the daemon's per-document page ceiling (1000) is also rejected. Examples: `1-3,7,10-`, `z`, `-2`.
+
+#### Stamp parameters
+
+The five stamp operations share one object, `stamp`, and the operation decides which preset it is. A client never sends a pdfcpu description string: every field is typed and checked by the daemon.
+
+| Field | Used by | Meaning |
+| --- | --- | --- |
+| `text` | `pdf-stamp-text` | one line, at most 200 characters, Latin-1 only (see below). `%p` is the page number, `%P` the page count, `%t` the date; any other `%` is refused |
+| `image` | `pdf-stamp-image` | absolute path to a PNG or JPEG of at most 20 MB, checked by its header and not its name |
+| `position` | all | `tl tc tr ml mc mr bl bc br`; default `bc`. A stamp is moved 36 points in from the edge it is anchored to |
+| `opacity` | all | 0-100; default 100 |
+| `rotation` | all | -180 to 180 degrees; default 0 (level) |
+| `size` | text kinds | font size 4-200 points; default 12 |
+| `color` | text kinds | `#rrggbb`; default `#000000` |
+| `on_top` | all | draw over the page content instead of beneath it |
+| `pages` | all | page spec; default every page |
+| `format`, `start` | `pdf-page-numbers` | `number` (default) or `of-total`; the number on the first page, default 1 |
+| `prefix`, `start` | `pdf-bates` | text before the counter (no `%`), and the first number. The counter is zero-padded to 6 digits, or more when the last number needs them |
+| `left`, `centre`, `right`, `edge` | `pdf-header-footer` | up to three texts on one line, at the `top` (default) or `bottom` edge |
+
+Text the stamp font cannot draw (anything outside Latin-1: Bengali, Devanagari, Cyrillic, CJK) is rejected with the first offending character named, because pdfcpu would otherwise write a document with those glyphs missing. A document with rotated pages is made upright first (`qpdf --flatten-rotation`), which looks the same, so a stamp lands where the user sees the page's corner; qpdf is required for such a document.
+
+#### Crop, resize and layout parameters
+
+- `crop`: `{unit: "mm"|"pt"|"percent", top, right, bottom, left, pages?}`. Margins are non-negative numbers removed from each edge, measured on the page as the reader sees it (a rotated page is made upright first, which needs qpdf); `unit` is required and at least one margin must be set. A margin that leaves no page is refused naming the first page it fails on. Cropping sets the crop box, so the page content is hidden, not deleted.
+- `resize`: `{to: "A4"|"A3"|"A5"|"Letter"|"Legal", fit?: "scale", pages?}`. Each page is fitted inside the target size, centred, with its proportions kept; a landscape page stays landscape. `fit` may be omitted or `scale`: pdfcpu cannot fill-and-crop or pad to a size, so those modes are refused.
+- `layout`: `{per_sheet, orientation?: "portrait"|"landscape", margin?, border?}`. `pdf-nup` takes `per_sheet` of 2, 4, 6 or 9. The sheet is the size of the document's first page, landscape for 2- and 6-up by default and when `orientation` is `landscape`; a last sheet that is not full is left partly empty. `pdf-booklet` takes 2 (landscape sheet, folded in the middle) or 4 and ignores the rest; a page count that does not fill the last sheet is padded with blank pages.
 
 #### `pdf-edit`, split and merge parameters
 
@@ -155,7 +194,8 @@ Error codes on a file job entry:
 
 | Code | Meaning |
 | --- | --- |
-| `password_required` | the PDF is encrypted; passwords are not accepted in this phase |
+| `password_required` | the PDF is encrypted and no password was supplied |
+| `password_incorrect` | a password was supplied and it does not open the PDF |
 | `invalid_pdf` | the file cannot be read as a PDF, or is damaged |
 
 A failure is reported as `invalid_pdf` only when the input itself cannot be opened; a failure on a readable file is the operation's own and stays `internal`.
@@ -163,7 +203,7 @@ A failure is reported as `invalid_pdf` only when the input itself cannot be open
 Merge attributes an unreadable input to that file alone: the unreadable file is `failed` with its own code, and every other input is `skipped` with the notice `not merged: <basename> could not be read`. The job state becomes `failed`.
 
 ### `pdf_info`
-`params: {file}` → `{pages: int, sizes?: [{w, h, rot}]}`
+`params: {file, password?: string}` → `{pages: int, sizes?: [{w, h, rot}]}`
 
 Reports a document's page count and, when `pdfinfo` is installed, each page's
 size in points and its `/Rotate` value. The page count is authoritative and always
@@ -172,7 +212,7 @@ not treat a missing `sizes` as pages of zero size. Errors: `password_required`,
 `invalid_pdf`, `bad_request`.
 
 ### `pdf_thumbnails`
-`params: {file, pages: [int], width?: int}` → `{pages: [{page, path, w, h}]}`
+`params: {file, pages: [int], width?: int, password?: string}` → `{pages: [{page, path, w, h}]}`
 
 Renders a thumbnail per requested page and returns the path to each PNG. `width`
 is the cap on the longest side in pixels, 64–800, default 200. At most 50 pages
@@ -188,7 +228,7 @@ The cache is bounded by total size (256 MB) and age (7 days) and is pruned at
 daemon start and after each render batch; files younger than 60 seconds are never
 pruned, so a render in flight cannot lose its output.
 
-Errors: `password_required`, `invalid_pdf`, `bad_request`. A render failure is
+Errors: `password_required`, `password_incorrect`, `invalid_pdf`, `bad_request`. A password-unlocked document must not be placed in the persistent cache; its thumbnails are temporary and are removed when the client connection closes. A render failure is
 `internal`; a request the cache rejects (width out of range, too many pages, a
 page below 1) is `bad_request`.
 

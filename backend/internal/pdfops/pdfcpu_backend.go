@@ -14,22 +14,25 @@ import (
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 )
 
-// ErrPasswordRequired marks an encrypted PDF. Passwords are not accepted in
-// this phase, so the job layer turns this into a distinct error code.
+// ErrPasswordRequired marks an encrypted PDF when no password is provided.
 var ErrPasswordRequired = errors.New("pdf is encrypted")
+
+// ErrPasswordIncorrect is defined in unlock.go
 
 // ErrInvalidPDF marks a file that cannot be read as a PDF at all: damaged,
 // truncated, or not a PDF. The job layer turns this into the invalid_pdf code.
 var ErrInvalidPDF = errors.New("pdf is damaged or not a valid PDF")
 
 // ErrorCode maps an engine error onto the protocol error code a client sees.
-// The two sentinels below are the only cases a client can act on differently
+// The sentinels below are the only cases a client can act on differently
 // from any other failure, so they get their own codes; everything else stays
 // internal and is not worth explaining to a user.
 func ErrorCode(err error) string {
 	switch {
 	case errors.Is(err, ErrPasswordRequired):
 		return "password_required"
+	case errors.Is(err, ErrPasswordIncorrect):
+		return "password_incorrect"
 	case errors.Is(err, ErrInvalidPDF):
 		return "invalid_pdf"
 	}

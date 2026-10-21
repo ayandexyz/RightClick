@@ -30,6 +30,18 @@ Beyond rasterizing pages, the backend offers structural PDF tools. The Nautilus 
 | `pdf-to-text` | poppler | instant | extract text to `<stem>-text.txt` |
 | `pdf-extract-images` | poppler | instant | numbered PNGs `<stem>-image-N.png` |
 | `pdf-from-images` | pdfcpu | instant | JPEG / PNG / TIFF to a single PDF |
+| `pdf-decrypt` | pdfcpu | studio | `--password-file FILE` (never a flag value) |
+| `pdf-encrypt` | pdfcpu | studio | `--owner-password-file`, optional `--user-password-file` |
+| `pdf-permissions` | pdfcpu | studio | `--owner-password-file`, `--permissions LIST` |
+| `pdf-stamp-text` | pdfcpu | studio | `--text`, optional `--position --opacity --rotation --size --color --on-top --pages` |
+| `pdf-stamp-image` | pdfcpu | studio | `--image FILE` (PNG or JPEG), same options |
+| `pdf-page-numbers` | pdfcpu | studio | `--format number\|of-total`, `--start N` |
+| `pdf-header-footer` | pdfcpu | studio | `--left --centre --right`, `--edge top\|bottom` |
+| `pdf-bates` | pdfcpu | studio | `--start N`, `--prefix TEXT` |
+| `pdf-crop` | pdfcpu | studio | `--unit mm\|pt\|percent`, `--top --right --bottom --left` |
+| `pdf-resize` | pdfcpu | studio | `--to A4\|A3\|A5\|Letter\|Legal` (fits each page inside, keeping proportions) |
+| `pdf-nup` | pdfcpu | studio | `--per-sheet N`, `--orientation`, `--margin`, `--border` |
+| `pdf-booklet` | pdfcpu | studio | `--per-sheet 2\|4` |
 | `pdf-ocr` | tesseract | studio | not implemented yet; listed but always disabled — see below |
 
 In `--edit`, a number is a source page, `rN` after it rotates that copy clockwise by N degrees on top of any rotation it already has (`3r90`), and `b` inserts a blank page: `--edit '3,1r90,b,3,4'`. Leaving a page out deletes it; naming it twice duplicates it.

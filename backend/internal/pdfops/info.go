@@ -32,7 +32,7 @@ type PDFInfoResult struct {
 // InfoBackend is the surface pdf_info depends on; it lets the server take a
 // stub in tests without depending on pdfcpu or pdfinfo.
 type InfoBackend interface {
-	Pdf(ctx context.Context, file string) (PDFInfoResult, error)
+	Pdf(ctx context.Context, file, password string) (PDFInfoResult, error)
 }
 
 type Info struct {
@@ -49,11 +49,25 @@ func NewInfo(outFunc OutputFunc, backend Backend) *Info {
 }
 
 // Pdf reports the page count, and per-page sizes when pdfinfo is available.
-func (i *Info) Pdf(ctx context.Context, file string) (PDFInfoResult, error) {
+// If the PDF is encrypted and password is provided, it unlocks the PDF first.
+func (i *Info) Pdf(ctx context.Context, file, password string) (PDFInfoResult, error) {
 	if i.backend == nil {
 		return PDFInfoResult{}, fmt.Errorf("no PDF engine is available")
 	}
-	count, err := i.backend.PageCount(ctx, file)
+
+	// Unlock if needed (only for real PDFCPU backend, not fakes in tests)
+	unlocked := file
+	cleanup := func() {}
+	if pdfcpu, ok := i.backend.(*PDFCPU); ok && password != "" {
+		var err error
+		unlocked, cleanup, err = Unlock(ctx, pdfcpu, file, password)
+		if err != nil {
+			return PDFInfoResult{}, err
+		}
+	}
+	defer cleanup()
+
+	count, err := i.backend.PageCount(ctx, unlocked)
 	if err != nil {
 		return PDFInfoResult{}, err
 	}
@@ -61,7 +75,7 @@ func (i *Info) Pdf(ctx context.Context, file string) (PDFInfoResult, error) {
 		return PDFInfoResult{}, fmt.Errorf("document has %d pages, more than the %d page limit", count, maxPages)
 	}
 	result := PDFInfoResult{PageCount: count}
-	sizes, err := i.pageSizes(ctx, file, count)
+	sizes, err := i.pageSizes(ctx, unlocked, count)
 	if err != nil || len(sizes) == 0 {
 		// Sizes are a convenience: the Studio can work without them, so a
 		// missing or unparsable pdfinfo degrades to the page count alone.

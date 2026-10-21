@@ -101,7 +101,7 @@ func TestInfoWorksWithoutPDFInfo(t *testing.T) {
 	// No output function and no pdfinfo on PATH: the service must still answer
 	// with the page count alone.
 	info := NewInfo(nil, newFakeBackend(4, "/tmp/in.pdf"))
-	res, err := info.Pdf(context.Background(), "/tmp/in.pdf")
+	res, err := info.Pdf(context.Background(), "/tmp/in.pdf", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,14 +117,14 @@ func TestInfoWorksWithoutPDFInfo(t *testing.T) {
 // every page-sized structure downstream would be unbounded too.
 func TestInfoRejectsAPageCountAboveTheCeiling(t *testing.T) {
 	info := NewInfo(nil, newFakeBackend(maxPages+1, "/tmp/huge.pdf"))
-	if _, err := info.Pdf(context.Background(), "/tmp/huge.pdf"); err == nil {
+	if _, err := info.Pdf(context.Background(), "/tmp/huge.pdf", ""); err == nil {
 		t.Fatal("a document over the page limit should be rejected")
 	}
 }
 
 func TestInfoAcceptsExactlyTheCeiling(t *testing.T) {
 	info := NewInfo(nil, newFakeBackend(maxPages, "/tmp/big.pdf"))
-	result, err := info.Pdf(context.Background(), "/tmp/big.pdf")
+	result, err := info.Pdf(context.Background(), "/tmp/big.pdf", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,7 @@ func TestInfoReportsThePageCountWhenTheEngineFails(t *testing.T) {
 	backend := newFakeBackend(0, "/tmp/locked.pdf")
 	backend.err = ErrPasswordRequired
 	info := NewInfo(nil, backend)
-	if _, err := info.Pdf(context.Background(), "/tmp/locked.pdf"); !errors.Is(err, ErrPasswordRequired) {
+	if _, err := info.Pdf(context.Background(), "/tmp/locked.pdf", ""); !errors.Is(err, ErrPasswordRequired) {
 		t.Fatalf("err = %v, want ErrPasswordRequired", err)
 	}
 }
@@ -158,7 +158,7 @@ func TestInfoRealPDFInfo(t *testing.T) {
 		t.Skipf("could not build a fixture with pdfcpu: %v", err)
 	}
 	info := NewInfo(nil, NewPDFCPUBackend())
-	result, err := info.Pdf(context.Background(), in)
+	result, err := info.Pdf(context.Background(), in, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +183,7 @@ func TestInfoUsesTheInjectedOutput(t *testing.T) {
 		return "Pages:           3\nPage    1 size:  10 x 20 pts\nPage    1 rot:   0\n", nil
 	}, newFakeBackend(3, "/tmp/in.pdf"))
 
-	result, err := info.Pdf(context.Background(), "/tmp/in.pdf")
+	result, err := info.Pdf(context.Background(), "/tmp/in.pdf", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +203,7 @@ func TestInfoKeepsTheCountWhenTheOutputFunctionFails(t *testing.T) {
 	info := NewInfo(func(_ context.Context, _ string, _ []string) (string, error) {
 		return "", errors.New("pdfinfo blew up")
 	}, newFakeBackend(7, "/tmp/in.pdf"))
-	result, err := info.Pdf(context.Background(), "/tmp/in.pdf")
+	result, err := info.Pdf(context.Background(), "/tmp/in.pdf", "")
 	if err != nil {
 		t.Fatal(err)
 	}

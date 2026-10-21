@@ -28,6 +28,42 @@ func TestSplitRangesAndEvery(t *testing.T) {
 	}
 }
 
+func TestPhase4GeometryAndLayoutOperationsAreCatalogueEntries(t *testing.T) {
+	for _, id := range []string{"pdf-crop", "pdf-resize", "pdf-nup", "pdf-booklet"} {
+		op, ok := Lookup(id)
+		if !ok {
+			t.Fatalf("Lookup(%q) missing", id)
+		}
+		if op.Mode != "studio" || op.MinInputs != 1 || op.MaxInputs != 1 {
+			t.Fatalf("Lookup(%q) = %+v, want a single-input studio operation", id, op)
+		}
+	}
+}
+
+func TestPhase4GeometryAndLayoutDispatch(t *testing.T) {
+	for _, tc := range []struct {
+		id     string
+		params Params
+		want   string
+	}{
+		{"pdf-crop", Params{Crop: CropParams{Unit: "pt", Top: 1, Right: 2, Bottom: 3, Left: 4}}, "crop"},
+		{"pdf-resize", Params{Resize: ResizeParams{To: "A4", Fit: "scale"}}, "resize"},
+		{"pdf-nup", Params{Layout: LayoutParams{PerSheet: 4, Orientation: "portrait"}}, "nup"},
+		{"pdf-booklet", Params{Layout: LayoutParams{PerSheet: 2}}, "booklet"},
+	} {
+		t.Run(tc.id, func(t *testing.T) {
+			fake := newPhase4Backend(4)
+			op, _ := Lookup(tc.id)
+			if err := op.Run(context.Background(), Toolbox{PDFCPU: fake}, []string{"input.pdf"}, t.TempDir()+"/out.pdf", tc.params); err != nil {
+				t.Fatal(err)
+			}
+			if fake.last != tc.want {
+				t.Fatalf("backend call = %q, want %q", fake.last, tc.want)
+			}
+		})
+	}
+}
+
 func TestSplitRejectsInvalidBeforeWriting(t *testing.T) {
 	for _, tc := range []struct {
 		id     string

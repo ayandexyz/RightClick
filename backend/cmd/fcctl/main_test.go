@@ -504,3 +504,59 @@ func TestUsageNamesEveryPDFCommandAndFlag(t *testing.T) {
 		}
 	}
 }
+
+func toolParams(t *testing.T, args ...string) map[string]any {
+	t.Helper()
+	cmd, err := parseArgs(append([]string{"pdf"}, args...))
+	if err != nil {
+		t.Fatalf("parseArgs: %v", err)
+	}
+	var params map[string]any
+	_ = json.Unmarshal(commandRequest(cmd).Params, &params)
+	nested, _ := params["params"].(map[string]any)
+	return nested
+}
+
+func TestStampToolFlagsBuildTheTypedParams(t *testing.T) {
+	stamp, _ := toolParams(t, "page-numbers", "a.pdf", "--format", "of-total", "--start", "5", "--position", "bc", "--pages", "2-4")["stamp"].(map[string]any)
+	if stamp["format"] != "of-total" || stamp["start"] != float64(5) || stamp["position"] != "bc" || stamp["pages"] != "2-4" {
+		t.Fatalf("page-numbers stamp = %v", stamp)
+	}
+	stamp, _ = toolParams(t, "header-footer", "a.pdf", "--left", "Draft", "--right", "%p", "--edge", "bottom")["stamp"].(map[string]any)
+	if stamp["left"] != "Draft" || stamp["right"] != "%p" || stamp["edge"] != "bottom" {
+		t.Fatalf("header-footer stamp = %v", stamp)
+	}
+	stamp, _ = toolParams(t, "stamp-text", "a.pdf", "--text", "DRAFT", "--opacity", "40", "--on-top")["stamp"].(map[string]any)
+	if stamp["text"] != "DRAFT" || stamp["opacity"] != float64(40) || stamp["on_top"] != true {
+		t.Fatalf("text stamp = %v", stamp)
+	}
+}
+
+func TestGeometryAndLayoutFlagsBuildTheTypedParams(t *testing.T) {
+	crop, _ := toolParams(t, "crop", "a.pdf", "--unit", "mm", "--top", "10.5", "--right", "5")["crop"].(map[string]any)
+	if crop["unit"] != "mm" || crop["top"] != 10.5 || crop["right"] != float64(5) {
+		t.Fatalf("crop = %v", crop)
+	}
+	resize, _ := toolParams(t, "resize", "a.pdf", "--to", "A4")["resize"].(map[string]any)
+	if resize["to"] != "A4" {
+		t.Fatalf("resize = %v", resize)
+	}
+	layout, _ := toolParams(t, "nup", "a.pdf", "--per-sheet", "4", "--border")["layout"].(map[string]any)
+	if layout["per_sheet"] != float64(4) || layout["border"] != true {
+		t.Fatalf("layout = %v", layout)
+	}
+}
+
+func TestToolFlagsAreRejectedWhereTheyDoNotApply(t *testing.T) {
+	for name, args := range map[string][]string{
+		"number not whole":           {"pdf", "bates", "a.pdf", "--start", "x"},
+		"crop takes no text":         {"pdf", "crop", "a.pdf", "--text", "hi"},
+		"reverse takes no tool flag": {"pdf", "reverse", "a.pdf", "--per-sheet", "2"},
+		"layout takes no pages":      {"pdf", "nup", "a.pdf", "--per-sheet", "2", "--pages", "1-2"},
+		"margin is not a stamp flag": {"pdf", "bates", "a.pdf", "--margin", "2"},
+	} {
+		if _, err := parseArgs(args); err == nil {
+			t.Errorf("%s: accepted %v", name, args)
+		}
+	}
+}

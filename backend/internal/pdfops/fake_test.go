@@ -101,6 +101,11 @@ func (f *fakeBackend) Assemble(_ context.Context, _, _ string, items []PageItem)
 	return nil
 }
 
+func (f *fakeBackend) Crop(context.Context, string, string, CropParams) error       { return nil }
+func (f *fakeBackend) Resize(context.Context, string, string, ResizeParams) error   { return nil }
+func (f *fakeBackend) NUp(context.Context, string, string, NUpParams) error         { return nil }
+func (f *fakeBackend) Booklet(context.Context, string, string, BookletParams) error { return nil }
+
 func (f *fakeBackend) InsertBlankPages(_ context.Context, _, _ string, after []int, _ bool, _ *types.Dim) error {
 	if err := f.err; err != nil {
 		return err

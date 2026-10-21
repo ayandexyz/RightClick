@@ -6,11 +6,13 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 var backgroundPattern = regexp.MustCompile(`^(white|black|transparent|#[0-9a-f]{3}|#[0-9a-f]{6}|#[0-9a-f]{8})$`)
 
 const maxImageOption = 32768
+const maxPDFPasswordBytes = 127
 
 var supportedPresets = []Target{
 	{Preset: "image-to-png", Label: "PNG Image", Format: "png", Category: "image", Enabled: true},
@@ -232,7 +234,8 @@ func validateConvert(params json.RawMessage) (string, string) {
 // answer, not a reason to reject the request.
 func validatePDFInfo(params json.RawMessage) (string, string) {
 	var p struct {
-		File string `json:"file"`
+		File     string  `json:"file"`
+		Password *string `json:"password,omitempty"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return "bad_request", "invalid pdf_info params"
@@ -243,6 +246,9 @@ func validatePDFInfo(params json.RawMessage) (string, string) {
 	if !filepath.IsAbs(p.File) {
 		return "bad_request", fmt.Sprintf("path must be absolute: %s", p.File)
 	}
+	if p.Password != nil && len([]byte(*p.Password)) > maxPDFPasswordBytes {
+		return "bad_request", fmt.Sprintf("password must be at most %d bytes", maxPDFPasswordBytes)
+	}
 	return "", ""
 }
 
@@ -252,9 +258,10 @@ func validatePDFInfo(params json.RawMessage) (string, string) {
 // requests that cannot mean anything.
 func validatePDFThumbnails(params json.RawMessage) (string, string) {
 	var p struct {
-		File  string `json:"file"`
-		Pages []int  `json:"pages"`
-		Width int    `json:"width"`
+		File     string  `json:"file"`
+		Pages    []int   `json:"pages"`
+		Width    int     `json:"width"`
+		Password *string `json:"password,omitempty"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return "bad_request", "invalid pdf_thumbnails params"
@@ -272,6 +279,9 @@ func validatePDFThumbnails(params json.RawMessage) (string, string) {
 		if page < 1 {
 			return "bad_request", fmt.Sprintf("page numbers start at 1, got %d", page)
 		}
+	}
+	if p.Password != nil && len([]byte(*p.Password)) > maxPDFPasswordBytes {
+		return "bad_request", fmt.Sprintf("password must be at most %d bytes", maxPDFPasswordBytes)
 	}
 	return "", ""
 }
@@ -328,6 +338,9 @@ func validateRunOperation(params json.RawMessage) (string, string) {
 	if p.OutputDir != "" && !filepath.IsAbs(p.OutputDir) {
 		return "bad_request", "output_dir must be absolute"
 	}
+	if p.Params.Password != nil && len([]byte(*p.Params.Password)) > maxPDFPasswordBytes {
+		return "bad_request", fmt.Sprintf("password must be at most %d bytes", maxPDFPasswordBytes)
+	}
 	if p.OnConflict != "" && !isConflictPolicy(p.OnConflict) {
 		return "bad_request", fmt.Sprintf("invalid on_conflict: %s (must be rename, skip, or overwrite)", p.OnConflict)
 	}
@@ -342,6 +355,32 @@ func validateRunOperation(params json.RawMessage) (string, string) {
 	if p.Op == "pdf-split-every" {
 		if p.Params.Every == nil || *p.Params.Every < 1 {
 			return "bad_request", "pdf-split-every requires every >= 1"
+		}
+	}
+	switch p.Op {
+	case "pdf-stamp-text", "pdf-stamp-image", "pdf-page-numbers", "pdf-header-footer", "pdf-bates":
+		if code, msg := validateStamp(p.Op, p.Params.Stamp); code != "" {
+			return code, msg
+		}
+	}
+	if p.Op == "pdf-crop" {
+		if p.Params.Crop.Unit == "" {
+			return "bad_request", "crop unit is required"
+		}
+	}
+	if p.Op == "pdf-resize" {
+		if p.Params.Resize.To == "" {
+			return "bad_request", "resize requires to"
+		}
+	}
+	if p.Op == "pdf-nup" || p.Op == "pdf-booklet" {
+		if p.Params.Layout.PerSheet == 0 {
+			return "bad_request", "layout per_sheet is required"
+		}
+	}
+	if p.Op == "pdf-metadata" {
+		if len(p.Params.Metadata.Custom) == 0 && p.Params.Metadata.Title == "" && p.Params.Metadata.Author == "" && p.Params.Metadata.Subject == "" && p.Params.Metadata.Keywords == "" {
+			return "bad_request", "pdf-metadata requires at least one property"
 		}
 	}
 	if p.Op == "pdf-edit" {
@@ -364,6 +403,65 @@ func validateRunOperation(params json.RawMessage) (string, string) {
 				return "bad_request", fmt.Sprintf("edit item %d has an invalid rotation", i+1)
 			}
 		}
+	}
+	return "", ""
+}
+
+func validateStamp(op string, p StampParams) (string, string) {
+	if op == "pdf-stamp-text" {
+		if p.Text == "" {
+			return "bad_request", "stamp text is required"
+		}
+		if strings.ContainsAny(p.Text, "\r\n") {
+			return "bad_request", "stamp text may not contain a newline"
+		}
+		if !utf8.ValidString(p.Text) || len([]rune(p.Text)) > 200 {
+			return "bad_request", "stamp text must be at most 200 valid characters"
+		}
+	}
+	if p.Start < 0 || p.Start > 999999999 {
+		return "bad_request", "stamp start must be between 1 and 999999999"
+	}
+	if op == "pdf-bates" && p.Start == 0 {
+		return "bad_request", "bates numbering requires a start number"
+	}
+	if op == "pdf-header-footer" && p.Left == "" && p.Centre == "" && p.Right == "" {
+		return "bad_request", "a header or footer needs at least one of left, centre or right"
+	}
+	for _, zone := range []string{p.Left, p.Centre, p.Right, p.Prefix} {
+		if strings.ContainsAny(zone, "\r\n") || !utf8.ValidString(zone) || len([]rune(zone)) > 200 {
+			return "bad_request", "stamp text must be one line of at most 200 valid characters"
+		}
+	}
+	if p.Format != "" && p.Format != "number" && p.Format != "of-total" {
+		return "bad_request", "page number format must be number or of-total"
+	}
+	if p.Edge != "" && p.Edge != "top" && p.Edge != "bottom" {
+		return "bad_request", "header/footer edge must be top or bottom"
+	}
+	if op == "pdf-stamp-image" && p.Image == "" {
+		return "bad_request", "stamp image is required"
+	}
+	if p.Position != "" {
+		valid := map[string]bool{"tl": true, "tc": true, "tr": true, "ml": true, "mc": true, "mr": true, "bl": true, "bc": true, "br": true}
+		if !valid[p.Position] {
+			return "bad_request", "stamp position is invalid"
+		}
+	}
+	if p.Opacity < 0 || p.Opacity > 100 {
+		return "bad_request", "stamp opacity must be between 0 and 100"
+	}
+	if p.Size != 0 && (p.Size < 4 || p.Size > 200) {
+		return "bad_request", "stamp size must be between 4 and 200"
+	}
+	if p.Rotation < -180 || p.Rotation > 180 {
+		return "bad_request", "stamp rotation must be between -180 and 180"
+	}
+	if p.Color != "" && !regexp.MustCompile(`^#[0-9a-fA-F]{6}$`).MatchString(p.Color) {
+		return "bad_request", "stamp color must be #rrggbb"
+	}
+	if p.Image != "" && !filepath.IsAbs(p.Image) {
+		return "bad_request", "stamp image must be an absolute path"
 	}
 	return "", ""
 }

@@ -596,3 +596,29 @@ func TestValidatePDFEdit(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateStampPresets(t *testing.T) {
+	run := func(op, stamp string) string {
+		body := `{"op":"` + op + `","files":["/tmp/a.pdf"],"params":{"stamp":` + stamp + `}}`
+		code, _ := validateRunOperation(json.RawMessage(body))
+		return code
+	}
+	for name, tc := range map[string]struct{ op, stamp, want string }{
+		"page numbers":                {"pdf-page-numbers", `{"format":"of-total","start":5}`, ""},
+		"page numbers bad format":     {"pdf-page-numbers", `{"format":"roman"}`, "bad_request"},
+		"bates":                       {"pdf-bates", `{"prefix":"ABC-","start":1}`, ""},
+		"bates needs a start":         {"pdf-bates", `{"prefix":"ABC-"}`, "bad_request"},
+		"bates start too large":       {"pdf-bates", `{"start":1000000000}`, "bad_request"},
+		"header":                      {"pdf-header-footer", `{"left":"Draft","edge":"bottom"}`, ""},
+		"header needs a zone":         {"pdf-header-footer", `{}`, "bad_request"},
+		"header bad edge":             {"pdf-header-footer", `{"left":"x","edge":"middle"}`, "bad_request"},
+		"zone with a newline":         {"pdf-header-footer", `{"left":"a\nb"}`, "bad_request"},
+		"text stamp needs text":       {"pdf-stamp-text", `{}`, "bad_request"},
+		"image stamp needs a path":    {"pdf-stamp-image", `{}`, "bad_request"},
+		"image path must be absolute": {"pdf-stamp-image", `{"image":"a.png"}`, "bad_request"},
+	} {
+		if got := run(tc.op, tc.stamp); got != tc.want {
+			t.Errorf("%s: code = %q, want %q", name, got, tc.want)
+		}
+	}
+}
