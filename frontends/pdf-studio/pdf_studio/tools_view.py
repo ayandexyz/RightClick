@@ -61,6 +61,14 @@ class FieldRow(Gtk.Box):
         elif kind == "file":
             self._widget = Gtk.Button(label="Choose…", halign=Gtk.Align.START)
             self._widget.connect("clicked", self._choose_file)
+        elif kind == "regions":
+            self._entry = Gtk.Entry(hexpand=True, placeholder_text="page,x,y,w,h; …")
+            self._widget = self._entry
+        elif kind == "terms":
+            self._entry = Gtk.TextView(wrap_mode=Gtk.WrapMode.WORD_CHAR, hexpand=True)
+            self._entry.set_size_request(-1, 80)
+            self._widget = Gtk.ScrolledWindow(min_content_height=80)
+            self._widget.set_child(self._entry)
         elif kind == "pages":
             box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
             self._entry = Gtk.Entry(hexpand=True, placeholder_text="All pages")
@@ -104,8 +112,11 @@ class FieldRow(Gtk.Box):
     def get(self):
         kind = self.field.kind
         widget = self._widget
-        if kind in ("text", "password"):
+        if kind in ("text", "password", "regions"):
             return widget.get_text()
+        if kind == "terms":
+            buffer = self._entry.get_buffer()
+            return buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), False).splitlines()
         if kind == "number":
             return widget.get_value()
         if kind == "choice":
@@ -124,8 +135,10 @@ class FieldRow(Gtk.Box):
     def set(self, value):
         kind = self.field.kind
         widget = self._widget
-        if kind in ("text", "password"):
+        if kind in ("text", "password", "regions"):
             widget.set_text(value or "")
+        elif kind == "terms":
+            self._entry.get_buffer().set_text("\n".join(value or ()))
         elif kind == "number":
             widget.set_value(float(value if value not in (None, "") else 0))
         elif kind == "choice":

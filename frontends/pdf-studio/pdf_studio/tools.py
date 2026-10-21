@@ -13,6 +13,7 @@ checks again; this is for a useful message, not for trust.
 import os
 import re
 from dataclasses import dataclass
+from typing import Any, Callable
 
 from .pagespec import PageSpecError, parse_pages
 from .requests import RequestError as _RequestError
@@ -62,7 +63,7 @@ class Tool:
     group: str
     op: str
     fields: tuple
-    assemble: object  # (clean values) -> params dict
+    assemble: Callable[[dict[str, Any]], dict[str, Any]]
     params_keys: frozenset = frozenset()
     summary: str = ""
     only_locked: bool = False  # offered only for a document opened with a password
@@ -70,7 +71,8 @@ class Tool:
     def defaults(self, context=None):
         """The initial value of every field."""
         values = {f.key: f.default for f in self.fields}
-        if self.id == "pdf-decrypt" and (context or {}).get("password"):
+        context = context or {}
+        if self.id == "pdf-decrypt" and context.get("password"):
             values["password"] = context["password"]
         return values
 
@@ -102,6 +104,10 @@ def _clean(f, value, context):
             if item not in allowed:
                 raise RequestError(f.key, f"{item!r} is not one of the options for {f.label}")
         return chosen
+    if kind == "regions":
+        return _regions(f, value or (), context)
+    if kind == "terms":
+        return _terms(f, value or (), context)
     if _blank(value):
         if f.required:
             raise RequestError(f.key, f"{f.label} is required")
@@ -172,6 +178,40 @@ def _pages(f, value, context):
     return spec
 
 
+def _regions(f, value, context):
+    if not isinstance(value, (list, tuple)):
+        raise RequestError(f.key, f"{f.label} must be a list of regions")
+    if len(value) > 500:
+        raise RequestError(f.key, f"{f.label} may contain at most 500 regions")
+    page_count = int(context.get("page_count", 0))
+    clean = []
+    for index, region in enumerate(value, 1):
+        if not isinstance(region, dict):
+            raise RequestError(f.key, f"region {index} must be an object")
+        try:
+            page = int(region["page"])
+            x, y, w, h = (float(region[name]) for name in ("x", "y", "w", "h"))
+        except (KeyError, TypeError, ValueError):
+            raise RequestError(f.key, f"region {index} must have page, x, y, w and h") from None
+        if page < 1 or page > page_count or w <= 0 or h <= 0 or x < 0 or y < 0 or x + w > 1 or y + h > 1:
+            raise RequestError(f.key, f"region {index} is outside the document")
+        clean.append({"page": page, "x": x, "y": y, "w": w, "h": h})
+    return clean
+
+
+def _terms(f, value, _context):
+    if isinstance(value, str):
+        value = value.splitlines()
+    if not isinstance(value, (list, tuple)):
+        raise RequestError(f.key, f"{f.label} must be one term per line")
+    terms = [str(term).strip() for term in value if str(term).strip()]
+    if len(terms) > 50:
+        raise RequestError(f.key, f"{f.label} may contain at most 50 terms")
+    if any(len(term) < 1 or len(term) > 100 for term in terms):
+        raise RequestError(f.key, f"each {f.label.lower()} must be 1-100 characters")
+    return terms
+
+
 # -- builders ----------------------------------------------------------------
 
 
@@ -237,6 +277,10 @@ def _decrypt(clean):
 
 def _metadata(clean):
     return {"metadata": {key: clean[key] for key in ("title", "author", "subject", "keywords")}}
+
+
+def _redact(clean):
+    return {"redact": {"areas": clean["areas"], "terms": clean["terms"], "dpi": clean["dpi"]}}
 
 
 def _f(key, label, kind, default=None, **options):
@@ -323,6 +367,11 @@ TOOLS = (
         _f("title", "Title", "text", ""), _f("author", "Author", "text", ""),
         _f("subject", "Subject", "text", ""), _f("keywords", "Keywords", "text", ""),
     ), _metadata, frozenset({"metadata"}), summary="Edit the title, author, subject and keywords."),
+    Tool("pdf-redact", "Redact content", "Security", "pdf-redact", (
+        _f("areas", "Regions", "regions", (), help="Page-relative regions to permanently cover"),
+        _f("terms", "Search terms", "terms", (), help="One term per line"),
+        _f("dpi", "Raster quality", "number", 150, minimum=72, maximum=300, integer=True),
+    ), _redact, frozenset({"redact"}), summary="Permanently remove visible content by rasterising every page."),
 )
 
 GROUP_ORDER = ("Stamp and number", "Page layout", "Security", "Document")

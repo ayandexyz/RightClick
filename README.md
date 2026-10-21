@@ -28,6 +28,10 @@ Beyond rasterizing pages, the backend offers structural PDF tools. The Nautilus 
 | `pdf-compress-strong` | ghostscript | instant | `/screen` |
 | `pdf-grayscale` | ghostscript | instant | |
 | `pdf-to-text` | poppler | instant | extract text to `<stem>-text.txt` |
+| `pdf-compare` | poppler | instant | compare exactly two PDFs by text; writes `<first>-compare-<second>.txt` |
+| `pdf-to-pdfa` | ghostscript | instant | best-effort PDF/A-2b conversion; use `--level 1b|2b|3b`; validate archival output independently |
+| `pdf-redact` | pdftocairo + Ghostscript | studio | safe rasterize/rebuild; use regions or search matches; never overwrites the source |
+| `office-to-pdf` | LibreOffice | instant | DOCX, DOC, ODT, RTF, TXT, XLSX, XLS, ODS, CSV, PPTX, PPT, ODP |
 | `pdf-extract-images` | poppler | instant | numbered PNGs `<stem>-image-N.png` |
 | `pdf-from-images` | pdfcpu | instant | JPEG / PNG / TIFF to a single PDF |
 | `pdf-decrypt` | pdfcpu | studio | `--password-file FILE` (never a flag value) |

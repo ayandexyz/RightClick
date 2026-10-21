@@ -80,6 +80,8 @@ func ValidateRequest(req Request) *Error {
 		code, msg = validateOperations(req.Params)
 	case "pdf_info":
 		code, msg = validatePDFInfo(req.Params)
+	case "pdf_find":
+		code, msg = validatePDFFind(req.Params)
 	case "pdf_thumbnails":
 		code, msg = validatePDFThumbnails(req.Params)
 	case "cache_clear":
@@ -256,6 +258,76 @@ func validatePDFInfo(params json.RawMessage) (string, string) {
 // absolute path; the width and page-count bounds are enforced by the thumb
 // cache itself, which is their single source of truth, so this only rejects
 // requests that cannot mean anything.
+func validatePDFFind(params json.RawMessage) (string, string) {
+	var p struct {
+		File     string   `json:"file"`
+		Terms    []string `json:"terms"`
+		Password *string  `json:"password,omitempty"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return "bad_request", "invalid pdf_find params"
+	}
+	if p.File == "" {
+		return "bad_request", "file is required"
+	}
+	if !filepath.IsAbs(p.File) {
+		return "bad_request", fmt.Sprintf("path must be absolute: %s", p.File)
+	}
+	if len(p.Terms) == 0 {
+		return "bad_request", "terms list cannot be empty"
+	}
+	if len(p.Terms) > 50 {
+		return "bad_request", "pdf_find allows at most 50 terms"
+	}
+	for _, term := range p.Terms {
+		if strings.TrimSpace(term) == "" {
+			return "bad_request", "term must not be empty"
+		}
+		if len([]rune(term)) > 100 {
+			return "bad_request", "term must be at most 100 characters"
+		}
+	}
+	if p.Password != nil && len([]byte(*p.Password)) > maxPDFPasswordBytes {
+		return "bad_request", fmt.Sprintf("password must be at most %d bytes", maxPDFPasswordBytes)
+	}
+	return "", ""
+}
+
+func validateRedact(p RedactParams) (string, string) {
+	if len(p.Areas) == 0 && len(p.Terms) == 0 {
+		return "bad_request", "redact requires at least one area or term"
+	}
+	if len(p.Areas) > 500 {
+		return "bad_request", "redact allows at most 500 areas"
+	}
+	if p.DPI != 0 && (p.DPI < 72 || p.DPI > 300) {
+		return "bad_request", "dpi must be between 72 and 300"
+	}
+	for i, area := range p.Areas {
+		if area.Page < 1 {
+			return "bad_request", fmt.Sprintf("area %d page must be at least 1", i+1)
+		}
+		if area.W <= 0 {
+			return "bad_request", fmt.Sprintf("area %d w must be greater than 0", i+1)
+		}
+		if area.H <= 0 {
+			return "bad_request", fmt.Sprintf("area %d h must be greater than 0", i+1)
+		}
+		if area.X < 0 || area.Y < 0 || area.X+area.W > 1 || area.Y+area.H > 1 {
+			return "bad_request", fmt.Sprintf("area %d must be within the page", i+1)
+		}
+	}
+	for _, term := range p.Terms {
+		if strings.TrimSpace(term) == "" {
+			return "bad_request", "redaction term must not be empty"
+		}
+		if len([]rune(term)) > 100 {
+			return "bad_request", "redaction term must be at most 100 characters"
+		}
+	}
+	return "", ""
+}
+
 func validatePDFThumbnails(params json.RawMessage) (string, string) {
 	var p struct {
 		File     string  `json:"file"`
@@ -381,6 +453,11 @@ func validateRunOperation(params json.RawMessage) (string, string) {
 	if p.Op == "pdf-metadata" {
 		if len(p.Params.Metadata.Custom) == 0 && p.Params.Metadata.Title == "" && p.Params.Metadata.Author == "" && p.Params.Metadata.Subject == "" && p.Params.Metadata.Keywords == "" {
 			return "bad_request", "pdf-metadata requires at least one property"
+		}
+	}
+	if p.Op == "pdf-redact" {
+		if code, msg := validateRedact(p.Params.Redact); code != "" {
+			return code, msg
 		}
 	}
 	if p.Op == "pdf-edit" {

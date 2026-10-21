@@ -76,9 +76,6 @@ func (m *Manager) SubmitOperation(req OperationRequest) (string, error) {
 	if len(req.Files) == 0 {
 		return "", fmt.Errorf("%w: no files", formats.ErrInvalidInput)
 	}
-	if m.pdfToolbox().PDFCPU == nil {
-		return "", fmt.Errorf("%w: no PDF backend is available", formats.ErrInvalidInput)
-	}
 	op, ok := pdfops.Lookup(req.Op)
 	if !ok {
 		return "", fmt.Errorf("%w: unknown PDF operation: %s", formats.ErrInvalidInput, req.Op)
@@ -86,7 +83,19 @@ func (m *Manager) SubmitOperation(req OperationRequest) (string, error) {
 	if err := op.Validate(req.Files, req.Params); err != nil {
 		return "", fmt.Errorf("%w: %v", formats.ErrInvalidInput, err)
 	}
+	if op.InputKind() != pdfops.InputOffice && m.pdfToolbox().PDFCPU == nil {
+		return "", fmt.Errorf("%w: no PDF backend is available", formats.ErrInvalidInput)
+	}
 	for _, file := range req.Files {
+		if op.InputKind() == pdfops.InputOffice {
+			if err := formats.ValidateInput(file); err != nil {
+				return "", err
+			}
+			if format, ok := formats.FormatFromExtension(file); !ok || !formats.IsOfficeFormat(format) {
+				return "", fmt.Errorf("%w: %s is not an Office file", formats.ErrInvalidInput, filepath.Base(file))
+			}
+			continue
+		}
 		if op.InputKind() == pdfops.InputImage {
 			// Image inputs are checked by content, the way the conversion path does.
 			if err := formats.ValidateInput(file); err != nil {
@@ -132,12 +141,22 @@ func (m *Manager) SubmitOperation(req OperationRequest) (string, error) {
 // writes one merged.pdf; the rest append their suffix to the source stem.
 func operationOutputName(op pdfops.Operation, source string) string {
 	if op.Merges {
+		if op.ID == "pdf-compare" {
+			return pdfops.CompareOutputName(op, source, source)
+		}
 		if op.InputKind() == pdfops.InputImage {
 			return "images"
 		}
 		return "merged"
 	}
 	return strings.TrimSuffix(filepath.Base(source), filepath.Ext(source)) + op.Suffix
+}
+
+func operationOutputNameForFiles(op pdfops.Operation, sources []string) string {
+	if op.ID == "pdf-compare" && len(sources) == 2 {
+		return pdfops.CompareOutputName(op, sources[0], sources[1])
+	}
+	return operationOutputName(op, sources[0])
 }
 
 // numberedName is the base name for the Nth output of a numbered operation:
@@ -231,7 +250,7 @@ func (m *Manager) mergeOperation(j *job, op pdfops.Operation) []protocol.FileJob
 	// The merge output must not collide with any of its own inputs.
 	source := j.op.Files[0]
 	plan, release, err := m.reserveOutput(func(taken func(string) bool) (engine.OutputPlan, error) {
-		return engine.PlanNamedOutputExcluding(outputDir, source, operationOutputName(op, source), op.OutputExtension(), j.op.Conflict, taken)
+		return engine.PlanNamedOutputExcluding(outputDir, source, operationOutputNameForFiles(op, j.op.Files), op.OutputExtension(), j.op.Conflict, taken)
 	})
 	defer release()
 	if err != nil {
@@ -245,6 +264,20 @@ func (m *Manager) mergeOperation(j *job, op pdfops.Operation) []protocol.FileJob
 	}
 	if err := op.Run(j.ctx, m.pdfToolbox(), j.op.Files, plan.Temp, j.op.Params); err != nil {
 		plan.Rollback()
+		if errors.Is(err, pdfops.ErrIdenticalText) {
+			for i := range files {
+				files[i].State = "skipped"
+				files[i].Notice = "the two documents have identical text"
+			}
+			return files
+		}
+		if errors.Is(err, pdfops.ErrNoTextToCompare) {
+			for i := range files {
+				files[i].State = "skipped"
+				files[i].Notice = "no text to compare"
+			}
+			return files
+		}
 		return failed(err)
 	}
 	output, file := m.publishPlan(j, plan, protocol.FileJob{Source: source, State: "running"})

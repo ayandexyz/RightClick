@@ -83,6 +83,11 @@ func (f *fakeBackend) ImportImages(_ context.Context, inputs []string, _ string)
 	return f.err
 }
 
+func (f *fakeBackend) StripMetadata(_ context.Context, _, _ string) error {
+	f.calls = append(f.calls, "strip_metadata")
+	return f.err
+}
+
 // inserted records one InsertBlankPagesFile call: the final page numbers a
 // blank was inserted beside, and whether the blank goes before them.
 type inserted struct {

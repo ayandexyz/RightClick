@@ -33,6 +33,29 @@ type Params struct {
 	Resize           ResizeParams
 	Layout           LayoutParams
 	Metadata         MetadataParams
+	PDFA             string // PDF/A conformance level, default 2b
+	Redact           RedactParams
+}
+
+// RedactParams describes regions to replace with opaque pixels. Coordinates are
+// fractions of the page as displayed, with an origin at the top-left.
+type RedactParams struct {
+	Areas []RedactArea
+	Terms []string
+	DPI   int
+}
+
+type RedactArea struct {
+	Page int
+	X, Y float64
+	W, H float64
+}
+
+// FindMatch is a search result in visual page coordinates, expressed as page fractions.
+type FindMatch struct {
+	Page       int
+	X, Y, W, H float64
+	Term       string
 }
 
 // PageItem is one page of an edit: a source page in the original document, with
@@ -57,6 +80,7 @@ type Backend interface {
 	Collect(ctx context.Context, input, output string, pages []int) error
 	Rotate(ctx context.Context, input, output string, pages []int, angle int) error
 	ImportImages(ctx context.Context, inputs []string, output string) error
+	StripMetadata(ctx context.Context, input, output string) error
 	// Assemble rewrites a document from an ordered list of page items, which
 	// covers reordering, deleting, duplicating, rotating and inserting blanks.
 	Assemble(ctx context.Context, input, output string, items []PageItem) error
@@ -78,14 +102,16 @@ const (
 	EngineGhostscript = "ghostscript"
 	EnginePoppler     = "poppler"
 	EngineTesseract   = "tesseract"
+	EngineLibreOffice = "libreoffice"
 )
 
 // InputKind is what an operation accepts.
 type InputKind string
 
 const (
-	InputPDF   InputKind = "pdf"
-	InputImage InputKind = "image"
+	InputPDF    InputKind = "pdf"
+	InputImage  InputKind = "image"
+	InputOffice InputKind = "office"
 )
 
 // errEngineMissing is the reason reported for an engine that is not installed.
@@ -345,6 +371,10 @@ func (o Operation) Run(ctx context.Context, tb Toolbox, inputs []string, output 
 			return fmt.Errorf("pdf-metadata requires pdfcpu backend")
 		}
 		return pdfcpu.SetMetadata(ctx, input, output, p.Metadata)
+	case "pdf-strip-metadata":
+		return b.StripMetadata(ctx, input, output)
+	case "pdf-redact":
+		return redactPDF(ctx, input, output, p.Redact)
 	}
 	if !o.NeedsPages && p.Pages == "" {
 		switch {

@@ -143,6 +143,10 @@ func (f *fakePDFBackend) Booklet(_ context.Context, input, output string, _ pdfo
 	return writePDFStub(output)
 }
 
+func (f *fakePDFBackend) StripMetadata(_ context.Context, input, output string) error {
+	return f.Collect(context.Background(), input, output, nil)
+}
+
 func (f *fakePDFBackend) ImportImages(_ context.Context, inputs []string, _ string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -179,6 +183,20 @@ func submitOp(t *testing.T, m *Manager, req OperationRequest) protocol.Job {
 		t.Fatalf("SubmitOperation: %v", err)
 	}
 	return waitJob(t, events)
+}
+
+func TestSubmitOfficeOperationDoesNotRequirePDFBackend(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "report.docx")
+	if err := os.WriteFile(source, []byte("office"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManagerWithRegistry(registry.New())
+	m.SetPDFToolbox(pdfops.Toolbox{})
+	defer m.Close()
+	if _, err := m.SubmitOperation(OperationRequest{Op: "office-to-pdf", Files: []string{source}}); err != nil {
+		t.Fatalf("office operation should not require pdfcpu: %v", err)
+	}
 }
 
 func TestSubmitOperationRejectsBadRequests(t *testing.T) {
@@ -238,6 +256,20 @@ func TestOperationExtractPerInputFile(t *testing.T) {
 		if _, err := os.Stat(output); err != nil {
 			t.Fatalf("output %s missing: %v", output, err)
 		}
+	}
+}
+
+func TestOperationCompareNamesOutputFromBothInputs(t *testing.T) {
+	dir := t.TempDir()
+	first := writePDFSource(t, dir, "alpha.pdf")
+	second := writePDFSource(t, dir, "beta.pdf")
+	m := newOperationManager(t, newFakePDFBackend(2))
+	m.SetPDFToolbox(pdfops.Toolbox{PDFCPU: newFakePDFBackend(2), Poppler: pdfops.NewPoppler(func(_ context.Context, _ string, args []string) error {
+		return os.WriteFile(args[len(args)-1], []byte("same\n\f"), 0o600)
+	})})
+	job := submitOp(t, m, OperationRequest{Op: "pdf-compare", Files: []string{first, second}, Conflict: protocol.ConflictRename})
+	if job.Files[0].State != "skipped" || job.Files[0].Notice != "the two documents have identical text" {
+		t.Fatalf("files = %+v", job.Files)
 	}
 }
 

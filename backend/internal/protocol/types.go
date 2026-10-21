@@ -97,6 +97,32 @@ type Params struct {
 	Resize           ResizeParams   `json:"resize,omitempty"`
 	Layout           LayoutParams   `json:"layout,omitempty"`
 	Metadata         MetadataParams `json:"metadata,omitempty"`
+	PDFA             string          `json:"pdfa,omitempty"`
+	Redact           RedactParams   `json:"redact,omitempty"`
+}
+
+type RedactParams struct {
+	Areas []RedactArea `json:"areas,omitempty"`
+	Terms []string     `json:"terms,omitempty"`
+	DPI   int          `json:"dpi,omitempty"`
+}
+
+// FindMatch is a search result in visual page coordinates, expressed as page fractions.
+type FindMatch struct {
+	Page int     `json:"page"`
+	X    float64 `json:"x"`
+	Y    float64 `json:"y"`
+	W    float64 `json:"w"`
+	H    float64 `json:"h"`
+	Term string  `json:"term"`
+}
+
+type RedactArea struct {
+	Page int     `json:"page"`
+	X    float64 `json:"x"`
+	Y    float64 `json:"y"`
+	W    float64 `json:"w"`
+	H    float64 `json:"h"`
 }
 
 type MetadataParams struct {

@@ -25,7 +25,7 @@ class ToolSchemaTests(unittest.TestCase):
         self.assertEqual(set(ids), {
             "pdf-stamp-text", "pdf-stamp-image", "pdf-page-numbers", "pdf-header-footer", "pdf-bates",
             "pdf-crop", "pdf-resize", "pdf-nup", "pdf-booklet", "pdf-encrypt", "pdf-permissions",
-            "pdf-decrypt", "pdf-metadata",
+            "pdf-decrypt", "pdf-metadata", "pdf-redact",
         })
         for tool in TOOLS:
             self.assertTrue(tool.fields, tool.id)
@@ -83,6 +83,8 @@ class ToolSchemaTests(unittest.TestCase):
             values["owner"] = "x"
         if tool.id == "pdf-decrypt":
             values["password"] = "x"
+        if tool.id == "pdf-redact":
+            values["areas"] = [{"page": 1, "x": 0.1, "y": 0.1, "w": 0.2, "h": 0.2}]
         return values
 
 

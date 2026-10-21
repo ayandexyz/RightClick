@@ -14,7 +14,7 @@ import (
 func TestCatalogueListsPhase2OrganiseOperations(t *testing.T) {
 	want := []string{
 		"pdf-merge", "pdf-extract", "pdf-delete", "pdf-rotate",
-		"pdf-rotate-cw", "pdf-rotate-ccw", "pdf-rotate-180", "pdf-reverse",
+		"pdf-rotate-cw", "pdf-rotate-ccw", "pdf-rotate-180", "pdf-reverse", "pdf-compare",
 	}
 	gotIDs := map[string]bool{}
 	for _, op := range Catalogue() {

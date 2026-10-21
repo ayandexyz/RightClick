@@ -253,6 +253,17 @@ func (s *Server) handle(conn net.Conn) {
 			if write(protocol.Response{ID: req.ID, Result: result}) != nil {
 				return
 			}
+		case "pdf_find":
+			result, code, msg := s.handlePDFFind(ctx, req.Params)
+			if code != "" {
+				if writeError(write, req.ID, code, msg) != nil {
+					return
+				}
+				continue
+			}
+			if write(protocol.Response{ID: req.ID, Result: result}) != nil {
+				return
+			}
 		case "pdf_info":
 			result, code, msg := s.handlePDFInfo(ctx, req.Params)
 			if code != "" {
@@ -306,6 +317,7 @@ func (s *Server) handle(conn net.Conn) {
 					Resize:           pdfops.ResizeParams{To: p.Params.Resize.To, Fit: p.Params.Resize.Fit, Pages: p.Params.Resize.Pages},
 					Layout:           pdfops.LayoutParams{PerSheet: p.Params.Layout.PerSheet, Orientation: p.Params.Layout.Orientation, Margin: p.Params.Layout.Margin, Border: p.Params.Layout.Border},
 					Metadata:         pdfops.MetadataParams{Title: p.Params.Metadata.Title, Author: p.Params.Metadata.Author, Subject: p.Params.Metadata.Subject, Keywords: p.Params.Metadata.Keywords, Custom: p.Params.Metadata.Custom},
+					PDFA:             p.Params.PDFA,
 					Stamp: pdfops.StampParams{
 						Kind: p.Params.Stamp.Kind, Text: p.Params.Stamp.Text, Image: p.Params.Stamp.Image,
 						Position: p.Params.Stamp.Position, Opacity: p.Params.Stamp.Opacity, Rotation: p.Params.Stamp.Rotation,
@@ -427,10 +439,17 @@ func selectionInputKind(files []string) (pdfops.InputKind, bool) {
 			this = pdfops.InputPDF
 		default:
 			format, err := formats.Detect(file)
-			if err != nil || !formats.IsImageFormat(format) {
+			if err != nil {
 				return "", false
 			}
-			this = pdfops.InputImage
+			switch {
+			case formats.IsImageFormat(format):
+				this = pdfops.InputImage
+			case formats.IsOfficeFormat(format):
+				this = pdfops.InputOffice
+			default:
+				return "", false
+			}
 		}
 		if kind == "" {
 			kind = this
@@ -588,6 +607,31 @@ func (s *Server) handleMenu(params json.RawMessage) (map[string]any, string, str
 // convenience that a missing pdfinfo only removes. Failures a client can act on
 // are reported with the same codes every other PDF surface uses, so an editor
 // and a menu phrase a locked or damaged file identically.
+func (s *Server) handlePDFFind(ctx context.Context, params json.RawMessage) (map[string]any, string, string) {
+	var p struct {
+		File     string   `json:"file"`
+		Terms    []string `json:"terms"`
+		Password string   `json:"password,omitempty"`
+	}
+	if json.Unmarshal(params, &p) != nil || p.File == "" || len(p.Terms) == 0 {
+		return nil, "bad_request", "pdf_find needs a file and at least one term"
+	}
+	if err := formats.ValidateInput(p.File); err != nil {
+		return nil, "bad_request", err.Error()
+	}
+	if !isPDFFile(p.File) {
+		return nil, "invalid_pdf", "not a PDF file"
+	}
+	if s.deps.PDFToolbox.Poppler == nil {
+		return nil, "unsupported", "poppler is not installed"
+	}
+	matches, err := s.deps.PDFToolbox.Poppler.FindPassword(ctx, p.File, p.Terms, p.Password)
+	if err != nil {
+		return nil, "invalid_pdf", err.Error()
+	}
+	return map[string]any{"matches": matches}, "", ""
+}
+
 func (s *Server) handlePDFInfo(ctx context.Context, params json.RawMessage) (map[string]any, string, string) {
 	var p struct {
 		File     string  `json:"file"`

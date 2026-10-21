@@ -246,6 +246,27 @@ func TestParsePDFSubcommand(t *testing.T) {
 	}
 }
 
+func TestPDFCompareRequestBody(t *testing.T) {
+	cmd, err := parseArgs([]string{"pdf", "compare", "first.pdf", "second.pdf"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd.op != "pdf-compare" || len(cmd.files) != 2 {
+		t.Fatalf("command = %+v, want pdf-compare with two files", cmd)
+	}
+	req := commandRequest(cmd)
+	if req.Method != "run_operation" {
+		t.Fatalf("method = %q, want run_operation", req.Method)
+	}
+	var params map[string]any
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		t.Fatal(err)
+	}
+	if params["op"] != "pdf-compare" {
+		t.Fatalf("op = %#v", params["op"])
+	}
+}
+
 func TestPDFRequestBodyForRunOperation(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "doc.pdf")

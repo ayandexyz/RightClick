@@ -83,3 +83,41 @@ func TestMetadataOperationIsCatalogued(t *testing.T) {
 		t.Fatalf("Validate: %v", err)
 	}
 }
+
+func TestPDFCPUStripMetadataRemovesInfoFields(t *testing.T) {
+	dir := t.TempDir()
+	backend := NewPDFCPUBackend()
+	input := writeMetadataPDF(t, dir, "input.pdf")
+	withMetadata := filepath.Join(dir, "with-metadata.pdf")
+	if err := backend.SetMetadata(context.Background(), input, withMetadata, MetadataParams{
+		Title: "Title", Author: "Author", Subject: "Subject", Keywords: "one, two",
+	}); err != nil {
+		t.Fatalf("seed metadata: %v", err)
+	}
+	output := filepath.Join(dir, "clean.pdf")
+	if err := backend.StripMetadata(context.Background(), withMetadata, output); err != nil {
+		t.Fatalf("StripMetadata: %v", err)
+	}
+	metadata, err := backend.Metadata(context.Background(), output)
+	if err != nil {
+		t.Fatalf("read stripped metadata: %v", err)
+	}
+	for name, value := range map[string]string{
+		"title": metadata.Title, "author": metadata.Author, "subject": metadata.Subject,
+		"keywords": metadata.Keywords, "creator": metadata.Creator, "producer": metadata.Producer,
+	} {
+		if value != "" {
+			t.Errorf("%s = %q, want empty", name, value)
+		}
+	}
+}
+
+func TestStripMetadataOperationIsCatalogued(t *testing.T) {
+	op, ok := Lookup("pdf-strip-metadata")
+	if !ok {
+		t.Fatal("pdf-strip-metadata is not catalogued")
+	}
+	if err := op.Validate([]string{"/tmp/input.pdf"}, Params{}); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}

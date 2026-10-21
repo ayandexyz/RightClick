@@ -159,6 +159,10 @@ func (b *PDFCPU) Rotate(ctx context.Context, input, output string, pages []int, 
 // one image per page. The format check is performed elsewhere; pdfcpu decodes
 // any supported format and routes every other through its internal image
 // decoder error.
+func (b *PDFCPU) StripMetadata(ctx context.Context, input, output string) error {
+	return defaultRunTool(ctx, "qpdf", []string{"--remove-info", "--remove-metadata", input, output})
+}
+
 func (b *PDFCPU) ImportImages(ctx context.Context, inputs []string, output string) error {
 	if len(inputs) == 0 {
 		return fmt.Errorf("images-to-pdf needs at least one image")

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 )
 
 // ErrNoGain is returned when Ghostscript compresses a PDF but the resulting
@@ -20,6 +22,9 @@ type Ghostscript struct {
 	runner Runner
 	// pages counts a PDF's pages; a field so tests can run without real PDFs.
 	pages func(ctx context.Context, path string) (int, error)
+	// pdfaDefinition is injectable so PDF/A argument construction can be tested
+	// without depending on the host Ghostscript installation.
+	pdfaDefinition func() (string, string, error)
 }
 
 // NewGhostscript wires the engine. Tests substitute a recording runner.
@@ -27,7 +32,7 @@ func NewGhostscript(runner Runner) *Ghostscript {
 	if runner == nil {
 		runner = defaultRunTool
 	}
-	return &Ghostscript{runner: runner, pages: NewPDFCPUBackend().PageCount}
+	return &Ghostscript{runner: runner, pages: NewPDFCPUBackend().PageCount, pdfaDefinition: discoverPDFAAssetsFromGhostscript}
 }
 
 // ID names the engine in status output and operation entries.
@@ -65,6 +70,65 @@ func (g *Ghostscript) Compress(ctx context.Context, input, output, preset string
 
 // Grayscale renders every page through a color transform so the output contains
 // only black, white, and grays.
+// PDFA converts input to the requested PDF/A conformance level. The caller
+// supplies only the level; Ghostscript support files are discovered locally.
+func (g *Ghostscript) PDFA(ctx context.Context, input, output, level string) error {
+	part, err := pdfaPart(level)
+	if err != nil {
+		return err
+	}
+	definition, icc, err := g.pdfaDefinition()
+	if err != nil {
+		return err
+	}
+	definitionData, err := os.ReadFile(definition)
+	if err != nil {
+		return fmt.Errorf("read PDF/A definition: %w", err)
+	}
+	patched := strings.ReplaceAll(string(definitionData), "/usr/share/ghostscript/iccprofiles/srgb.icc", icc)
+	patched = strings.ReplaceAll(patched, "srgb.icc", icc)
+	patchedDefinition := filepath.Join(filepath.Dir(output), ".PDFA_def.ps")
+	if err := os.WriteFile(patchedDefinition, []byte(patched), 0600); err != nil {
+		return fmt.Errorf("write PDF/A definition: %w", err)
+	}
+	defer os.Remove(patchedDefinition)
+	definition = patchedDefinition
+	if err := g.rejectLocked(ctx, input); err != nil {
+		return err
+	}
+	// PDFA_def.ps contains a relative ICCProfile reference on some systems.
+	// Run from its directory so that reference resolves without exposing an
+	// asset path in the client protocol.
+	args := []string{
+		"-I" + filepath.Dir(definition),
+		"-I" + filepath.Dir(icc),
+		"-dPDFA=" + part,
+		"-dPDFACompatibilityPolicy=1",
+		"-sColorConversionStrategy=RGB",
+		"-sProcessColorModel=DeviceRGB",
+		"-sDEVICE=pdfwrite",
+		"-dSAFER", "-dNOPAUSE", "-dBATCH", "-dQUIET",
+		"-sOutputFile=" + output,
+		definition,
+		input,
+	}
+	if err := g.runner(ctx, "gs", args); err != nil {
+		return fmt.Errorf("gs pdf/a: %w", err)
+	}
+	_ = icc // retained by discovery to ensure the definition references a real profile.
+	return nil
+}
+
+func pdfaPart(level string) (string, error) {
+	level = strings.ToLower(strings.TrimSpace(level))
+	switch level {
+	case "1b", "2b", "3b":
+		return level[:1], nil
+	default:
+		return "", fmt.Errorf("invalid PDF/A level %q; want 1b, 2b or 3b", level)
+	}
+}
+
 func (g *Ghostscript) Grayscale(ctx context.Context, input, output string) error {
 	if err := g.rejectLocked(ctx, input); err != nil {
 		return err
@@ -82,6 +146,49 @@ func (g *Ghostscript) Grayscale(ctx context.Context, input, output string) error
 		return fmt.Errorf("gs grayscale: %w", err)
 	}
 	return nil
+}
+
+func discoverPDFAAssetsFromGhostscript() (string, string, error) {
+	search := []string{}
+	if lib := os.Getenv("GS_LIB"); lib != "" {
+		search = append(search, strings.Split(lib, string(os.PathListSeparator))...)
+	}
+	// Ghostscript's search path is installation-specific. Include common roots
+	// and let the recursive asset lookup handle versioned distro directories.
+	search = append(search, "/usr/share/ghostscript", "/usr/local/share/ghostscript")
+	return discoverPDFAAssets(search)
+}
+
+func discoverPDFAAssets(roots []string) (string, string, error) {
+	var definition, icc string
+	for _, root := range roots {
+		if root == "" {
+			continue
+		}
+		err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+			if err != nil || info == nil || info.IsDir() {
+				return nil
+			}
+			switch info.Name() {
+			case "PDFA_def.ps":
+				if definition == "" {
+					definition = path
+				}
+			case "srgb.icc":
+				if icc == "" {
+					icc = path
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			continue
+		}
+	}
+	if definition == "" || icc == "" {
+		return "", "", fmt.Errorf("could not discover Ghostscript PDF/A assets (looked in %v)", roots)
+	}
+	return definition, icc, nil
 }
 
 // rejectLocked fails a password-protected input before Ghostscript runs.

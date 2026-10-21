@@ -28,7 +28,18 @@ func (o Operation) runExternal(ctx context.Context, tb Toolbox, inputs []string,
 			return tb.GS.Grayscale(ctx, inputs[0], output)
 		case "pdf-compress-light", "pdf-compress-balanced", "pdf-compress-strong":
 			return tb.GS.Compress(ctx, inputs[0], output, o.Preset)
+		case "pdf-to-pdfa":
+			level := p.PDFA
+			if level == "" {
+				level = "2b"
+			}
+			return tb.GS.PDFA(ctx, inputs[0], output, level)
 		}
+	case EngineLibreOffice:
+		if len(inputs) != 1 {
+			return fmt.Errorf("%s works on one file at a time", o.ID)
+		}
+		return tb.LibreOffice.Convert(ctx, inputs[0], output)
 	case EngineTesseract:
 		switch o.ID {
 		case "pdf-ocr":
@@ -38,6 +49,11 @@ func (o Operation) runExternal(ctx context.Context, tb Toolbox, inputs []string,
 		switch o.ID {
 		case "pdf-to-text":
 			return tb.Poppler.Text(ctx, inputs[0], output)
+		case "pdf-compare":
+			if len(inputs) != 2 {
+				return fmt.Errorf("%s needs two inputs", o.ID)
+			}
+			return tb.Poppler.Compare(ctx, inputs[0], inputs[1], output)
 		case "pdf-extract-images":
 			// Numbered operations do not write their own output; they fill the
 			// directory the job layer made and the job layer publishes each file.

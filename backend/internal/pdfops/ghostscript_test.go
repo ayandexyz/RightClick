@@ -41,6 +41,64 @@ func TestGhostscriptCompressFlags(t *testing.T) {
 	}
 }
 
+func TestGhostscriptPDFALevelBuildsDaemonDiscoveredArguments(t *testing.T) {
+	dir := t.TempDir()
+	definition := filepath.Join(dir, "PDFA_def.ps")
+	icc := filepath.Join(dir, "srgb.icc")
+	if err := os.WriteFile(definition, []byte("/ICCProfile (srgb.icc)\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(icc, []byte("icc"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rec := &recordRunner{}
+	gs := newTestGhostscript(rec.run)
+	gs.pdfaDefinition = func() (string, string, error) { return definition, icc, nil }
+	if err := gs.PDFA(context.Background(), "in.pdf", filepath.Join(dir, "out.pdf"), "2b"); err != nil {
+		t.Fatal(err)
+	}
+	if !containsString(rec.gotArgs, "-dPDFA=2") || !containsString(rec.gotArgs, "-dPDFACompatibilityPolicy=1") {
+		t.Fatalf("PDF/A args = %v", rec.gotArgs)
+	}
+	if !containsString(rec.gotArgs, filepath.Join(dir, ".PDFA_def.ps")) {
+		t.Fatalf("PDF/A args = %v, want discovered definition path", rec.gotArgs)
+	}
+	if containsString(rec.gotArgs, "-sICCProfile="+icc) {
+		t.Fatal("ICC profile must be supplied through the daemon-discovered definition search path")
+	}
+}
+
+func TestGhostscriptRejectsUnknownPDFALevel(t *testing.T) {
+	gs := newTestGhostscript(nil)
+	if err := gs.PDFA(context.Background(), "in.pdf", "out.pdf", "4b"); err == nil || !strings.Contains(err.Error(), "level") {
+		t.Fatalf("err = %v, want invalid level", err)
+	}
+}
+
+func TestDiscoverPDFAAssetsUsesDefinitionAndICC(t *testing.T) {
+	dir := t.TempDir()
+	lib := filepath.Join(dir, "lib")
+	iccDir := filepath.Join(dir, "iccprofiles")
+	if err := os.MkdirAll(lib, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(iccDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	definition := filepath.Join(lib, "PDFA_def.ps")
+	icc := filepath.Join(iccDir, "srgb.icc")
+	if err := os.WriteFile(definition, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(icc, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gotDef, gotICC, err := discoverPDFAAssets([]string{dir})
+	if err != nil || gotDef != definition || gotICC != icc {
+		t.Fatalf("assets = %q, %q, %v", gotDef, gotICC, err)
+	}
+}
+
 func TestGhostscriptRejectsUnknownPreset(t *testing.T) {
 	gs := newTestGhostscript(func(_ context.Context, _ string, _ []string) error { return nil })
 	err := gs.Compress(context.Background(), "in.pdf", "out.pdf", "extreme")

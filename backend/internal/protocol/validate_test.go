@@ -7,6 +7,50 @@ import (
 	"testing"
 )
 
+func TestValidatePDFFindRequestUsesUnderscoreMethod(t *testing.T) {
+	tests := []struct {
+		name string
+		params map[string]any
+		want string
+	}{
+		{"valid", map[string]any{"file": absolutePath("/tmp/input.pdf"), "terms": []string{"secret"}}, ""},
+		{"empty term", map[string]any{"file": absolutePath("/tmp/input.pdf"), "terms": []string{""}}, "term must not be empty"},
+		{"too many terms", map[string]any{"file": absolutePath("/tmp/input.pdf"), "terms": make([]string, 51)}, "at most 50 terms"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateRequest(Request{ID: 1, Method: "pdf_find", Params: mustMarshal(tc.params)})
+			if tc.want == "" {
+				if err != nil { t.Fatalf("ValidateRequest = %#v", err) }
+				return
+			}
+			if err == nil || !strings.Contains(err.Error.Message, tc.want) {
+				t.Fatalf("error = %#v, want message containing %q", err, tc.want)
+			}
+		})
+	}
+	if err := ValidateRequest(Request{ID: 1, Method: "pdf-find", Params: mustMarshal(map[string]any{"file": absolutePath("/tmp/input.pdf"), "terms": []string{"x"}})}); err == nil {
+		t.Fatal("hyphenated search method was accepted; protocol method must be pdf_find")
+	}
+}
+
+func TestValidateRedactionRejectsUnsafeRegions(t *testing.T) {
+	base := map[string]any{"files": []string{absolutePath("/tmp/input.pdf")}, "op": "pdf-redact", "params": map[string]any{"redact": map[string]any{"areas": []map[string]any{{"page": 1, "x": 0.1, "y": 0.1, "w": 0.2, "h": 0.2}}}}}
+	cases := []struct { name, want string; mutate func(map[string]any) }{
+		{"no areas or terms", "requires at least one area or term", func(p map[string]any) { p["params"] = map[string]any{"redact": map[string]any{}} }},
+		{"outside page", "must be within the page", func(p map[string]any) { p["params"].(map[string]any)["redact"].(map[string]any)["areas"] = []map[string]any{{"page": 1, "x": 0.9, "y": 0, "w": 0.2, "h": 0.1}} }},
+		{"zero width", "w must be greater than 0", func(p map[string]any) { p["params"].(map[string]any)["redact"].(map[string]any)["areas"] = []map[string]any{{"page": 1, "x": 0, "y": 0, "w": 0, "h": 0.1}} }},
+		{"invalid dpi", "dpi must be between 72 and 300", func(p map[string]any) { p["params"].(map[string]any)["redact"].(map[string]any)["dpi"] = 301 }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.mutate(base)
+			err := ValidateRequest(Request{ID: 1, Method: "run_operation", Params: mustMarshal(base)})
+			if err == nil || !strings.Contains(err.Error.Message, tc.want) { t.Fatalf("error = %#v, want %q", err, tc.want) }
+		})
+	}
+}
+
 func TestValidateRequest(t *testing.T) {
 	tests := []struct {
 		name     string

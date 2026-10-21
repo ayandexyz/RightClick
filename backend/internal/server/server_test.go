@@ -601,6 +601,9 @@ func (s *stubPDFBackend) Rotate(_ context.Context, input, output string, _ []int
 	return os.WriteFile(output, []byte("%PDF-1.7\nstub\n"), 0o600)
 }
 
+func (s *stubPDFBackend) StripMetadata(_ context.Context, input, output string) error {
+	return os.WriteFile(output, []byte("stub"), 0o600)
+}
 func (s *stubPDFBackend) ImportImages(_ context.Context, _ []string, _ string) error { return nil }
 func (s *stubPDFBackend) Assemble(_ context.Context, _ string, _ string, _ []pdfops.PageItem) error {
 	return nil

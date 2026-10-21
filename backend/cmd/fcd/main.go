@@ -46,11 +46,12 @@ func main() {
 	// optional engine reports itself unavailable if its binary is missing, so
 	// the menu only shows operations a user can actually run.
 	pdfToolbox := pdfops.Toolbox{
-		PDFCPU:  pdfops.NewPDFCPUBackend(),
-		QPDF:    pdfops.NewQPDF(nil),
-		GS:      pdfops.NewGhostscript(nil),
-		Poppler: pdfops.NewPoppler(nil),
-		OCR:     pdfops.NewOCR(nil),
+		PDFCPU:      pdfops.NewPDFCPUBackend(),
+		QPDF:        pdfops.NewQPDF(nil),
+		GS:          pdfops.NewGhostscript(nil),
+		Poppler:     pdfops.NewPoppler(nil),
+		OCR:         pdfops.NewOCR(nil),
+		LibreOffice: pdfops.NewLibreOffice(nil),
 	}
 	manager.SetPDFToolbox(pdfToolbox)
 	defer manager.Close()

@@ -46,6 +46,18 @@ const (
 	AMR  Format = "amr"
 	WMA  Format = "wma"
 	SVG  Format = "svg"
+	DOCX Format = "docx"
+	DOC  Format = "doc"
+	ODT  Format = "odt"
+	RTF  Format = "rtf"
+	TXT  Format = "txt"
+	XLSX Format = "xlsx"
+	XLS  Format = "xls"
+	ODS  Format = "ods"
+	CSV  Format = "csv"
+	PPTX Format = "pptx"
+	PPT  Format = "ppt"
+	ODP  Format = "odp"
 )
 
 var ErrUnsupported = errors.New("unsupported image format")
@@ -281,6 +293,30 @@ func FormatFromExtension(path string) (Format, bool) {
 		return PDF, true
 	case ".svg":
 		return SVG, true
+	case ".docx":
+		return DOCX, true
+	case ".doc":
+		return DOC, true
+	case ".odt":
+		return ODT, true
+	case ".rtf":
+		return RTF, true
+	case ".txt":
+		return TXT, true
+	case ".xlsx":
+		return XLSX, true
+	case ".xls":
+		return XLS, true
+	case ".ods":
+		return ODS, true
+	case ".csv":
+		return CSV, true
+	case ".pptx":
+		return PPTX, true
+	case ".ppt":
+		return PPT, true
+	case ".odp":
+		return ODP, true
 	default:
 		return "", false
 	}
@@ -310,6 +346,15 @@ func IsSVGFormat(format Format) bool {
 
 func IsPDFFormat(format Format) bool {
 	return format == PDF
+}
+
+func IsOfficeFormat(format Format) bool {
+	switch format {
+	case DOCX, DOC, ODT, RTF, TXT, XLSX, XLS, ODS, CSV, PPTX, PPT, ODP:
+		return true
+	default:
+		return false
+	}
 }
 
 func IsImageFormat(format Format) bool {

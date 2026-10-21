@@ -52,6 +52,9 @@ type command struct {
 	pdfEncryptUser  string
 	pdfEncryptOwner string
 	pdfPermissions  []string
+	pdfAreas        []string
+	pdfTerms        []string
+	pdfDPI          int
 	// pdfOpts holds the stamp, crop, resize and layout options by flag name,
 	// still as typed on the command line. They are converted per operation by
 	// pdfToolParams, because the same flag (--right, --margin) means different
@@ -368,6 +371,16 @@ func parsePDFArgs(args []string) (command, error) {
 				return command{}, err
 			}
 			cmd.pdfEdit, i = value, next
+		case "--level":
+			value, next, err := optionValue(rest, i)
+			if err != nil {
+				return command{}, err
+			}
+			if value != "1b" && value != "2b" && value != "3b" {
+				return command{}, fmt.Errorf("--level must be 1b, 2b or 3b")
+			}
+			cmd.setPDFOpt("--level", value)
+			i = next
 		case "--width":
 			value, next, err := optionValue(rest, i)
 			if err != nil {
@@ -426,6 +439,30 @@ func parsePDFArgs(args []string) (command, error) {
 			}
 			cmd.pdfPermissions = strings.Split(value, ",")
 			i = next
+		case "--area":
+			value, next, err := optionValue(rest, i)
+			if err != nil {
+				return command{}, err
+			}
+			cmd.pdfAreas = append(cmd.pdfAreas, value)
+			i = next
+		case "--dpi":
+			value, next, err := optionValue(rest, i)
+			if err != nil {
+				return command{}, err
+			}
+			dpi, err := strconv.Atoi(value)
+			if err != nil || dpi < 72 || dpi > 300 {
+				return command{}, fmt.Errorf("--dpi must be between 72 and 300")
+			}
+			cmd.pdfDPI, i = dpi, next
+		case "--term":
+			value, next, err := optionValue(rest, i)
+			if err != nil {
+				return command{}, err
+			}
+			cmd.pdfTerms = append(cmd.pdfTerms, value)
+			i = next
 		default:
 			if pdfToolBoolFlags[rest[i]] {
 				cmd.setPDFOpt(rest[i], "true")
@@ -455,6 +492,12 @@ func parsePDFArgs(args []string) (command, error) {
 	if cmd.pdfInfo {
 		if len(cmd.files) != 1 {
 			return command{}, fmt.Errorf("pdf info takes exactly one file")
+		}
+		return cmd, nil
+	}
+	if cmd.op == "pdf-redact" {
+		if len(cmd.files) != 1 {
+			return command{}, fmt.Errorf("pdf redact takes exactly one file")
 		}
 		return cmd, nil
 	}
@@ -620,6 +663,33 @@ func commandRequest(cmd command) protocol.Request {
 		} else if cmd.pdfEdit != "" {
 			items, _ := parseEditSpec(cmd.pdfEdit)
 			params["params"] = map[string]any{"edit": items}
+		} else if cmd.op == "pdf-to-pdfa" && cmd.pdfOpts["--level"] != "" {
+			params["params"] = map[string]any{"pdfa": cmd.pdfOpts["--level"]}
+		} else if cmd.op == "pdf-redact" {
+			areas := make([]map[string]any, 0, len(cmd.pdfAreas))
+			for _, rawArea := range cmd.pdfAreas {
+				parts := strings.Split(rawArea, ",")
+				if len(parts) != 5 {
+					return protocol.Request{ID: 1, Method: "run_operation", Params: raw(nil)}
+				}
+				page, err := strconv.Atoi(parts[0])
+				if err != nil {
+					return protocol.Request{ID: 1, Method: "run_operation", Params: raw(nil)}
+				}
+				values := make([]float64, 4)
+				for i := range values {
+					values[i], err = strconv.ParseFloat(parts[i+1], 64)
+					if err != nil {
+						return protocol.Request{ID: 1, Method: "run_operation", Params: raw(nil)}
+					}
+				}
+				areas = append(areas, map[string]any{"page": page, "x": values[0], "y": values[1], "w": values[2], "h": values[3]})
+			}
+			redact := map[string]any{"areas": areas, "terms": cmd.pdfTerms}
+			if cmd.pdfDPI != 0 {
+				redact["dpi"] = cmd.pdfDPI
+			}
+			params["params"] = map[string]any{"redact": redact}
 		} else if cmd.pdfRanges != "" {
 			params["params"] = map[string]any{"ranges": cmd.pdfRanges}
 		} else if cmd.pdfEvery != nil {
@@ -906,7 +976,7 @@ func absolutePaths(paths []string) []string {
 
 func raw(value any) json.RawMessage { data, _ := json.Marshal(value); return data }
 
-const usageText = "usage: fcctl hello | engines [--json] | targets FILE... [--menu] [--json] | menu show | menu set CATEGORY FORMAT... | menu reset [CATEGORY] | convert FILE... (--to png|jpeg|webp|jxl|avif|gif|bmp|tiff|ico|heic | --preset PRESET) [--quality 1-100] [--max-size PX] [--background COLOR] [--out-dir DIR] [--recursive] [--on-conflict POLICY] [--json] | cancel JOB [--json] | pdf (merge FILE FILE... [--pages-for N=SPEC]... | extract FILE... --pages SPEC | delete FILE... --pages SPEC | rotate FILE... --angle 90|180|270 [--pages SPEC] | reverse FILE... | edit FILE --edit ITEMS | split-ranges FILE --ranges SPEC;SPEC... | split-every FILE --every N | decrypt FILE --password-file FILE | encrypt FILE --user-password-file FILE --owner-password-file FILE | permissions FILE --owner-password-file FILE --permissions LIST | stamp-text FILE --text TEXT [--position P] [--opacity 0-100] [--rotation DEG] [--size PT] [--color #rrggbb] [--on-top] [--pages SPEC] | stamp-image FILE --image FILE [--position P] [--opacity 0-100] [--rotation DEG] [--pages SPEC] | page-numbers FILE [--format number|of-total] [--start N] [--position P] [--pages SPEC] | header-footer FILE [--left T] [--centre T] [--right T] [--edge top|bottom] [--pages SPEC] | bates FILE --start N [--prefix TEXT] [--position P] [--pages SPEC] | crop FILE --unit mm|pt|percent [--top N] [--right N] [--bottom N] [--left N] [--pages SPEC] | resize FILE --to A4|A3|A5|Letter|Legal [--pages SPEC] | nup FILE --per-sheet N [--orientation portrait|landscape] [--margin N] [--border] | booklet FILE --per-sheet 2|4 | metadata FILE [--title TEXT] [--author TEXT] [--subject TEXT] [--keywords TEXT] | NAME FILE... | list FILE | info FILE | thumbs FILE --pages SPEC) [--width PX] [--out-dir DIR] [--on-conflict POLICY] [--json] | cache clear [--json]"
+const usageText = "usage: fcctl hello | engines [--json] | targets FILE... [--menu] [--json] | menu show | menu set CATEGORY FORMAT... | menu reset [CATEGORY] | convert FILE... (--to png|jpeg|webp|jxl|avif|gif|bmp|tiff|ico|heic | --preset PRESET) [--quality 1-100] [--max-size PX] [--background COLOR] [--out-dir DIR] [--recursive] [--on-conflict POLICY] [--json] | cancel JOB [--json] | pdf (merge FILE FILE... [--pages-for N=SPEC]... | extract FILE... --pages SPEC | delete FILE... --pages SPEC | rotate FILE... --angle 90|180|270 [--pages SPEC] | reverse FILE... | edit FILE --edit ITEMS | split-ranges FILE --ranges SPEC;SPEC... | split-every FILE --every N | decrypt FILE --password-file FILE | encrypt FILE --user-password-file FILE --owner-password-file FILE | permissions FILE --owner-password-file FILE --permissions LIST | stamp-text FILE --text TEXT [--position P] [--opacity 0-100] [--rotation DEG] [--size PT] [--color #rrggbb] [--on-top] [--pages SPEC] | stamp-image FILE --image FILE [--position P] [--opacity 0-100] [--rotation DEG] [--pages SPEC] | page-numbers FILE [--format number|of-total] [--start N] [--position P] [--pages SPEC] | header-footer FILE [--left T] [--centre T] [--right T] [--edge top|bottom] [--pages SPEC] | bates FILE --start N [--prefix TEXT] [--position P] [--pages SPEC] | crop FILE --unit mm|pt|percent [--top N] [--right N] [--bottom N] [--left N] [--pages SPEC] | resize FILE --to A4|A3|A5|Letter|Legal [--pages SPEC] | nup FILE --per-sheet N [--orientation portrait|landscape] [--margin N] [--border] | booklet FILE --per-sheet 2|4 | compare FILE FILE | redact FILE [--area PAGE,X,Y,W,H] [--term TERM] | to-pdfa FILE [--level 1b|2b|3b] | metadata FILE [--title TEXT] [--author TEXT] [--subject TEXT] [--keywords TEXT] | NAME FILE... | list FILE | info FILE | thumbs FILE --pages SPEC) [--width PX] [--out-dir DIR] [--on-conflict POLICY] [--json] | cache clear [--json]"
 
 func usage()          { fmt.Fprintln(os.Stderr, usageText) }
 func fatal(err error) { fmt.Fprintln(os.Stderr, err); os.Exit(1) }
@@ -915,6 +985,9 @@ func fatal(err error) { fmt.Fprintln(os.Stderr, err); os.Exit(1) }
 // "pdf-" prefix and well-known longer names that do not lend themselves to a
 // straight strip (extract-images, from-images, to-text, compress-balanced).
 func pdfShortName(id string) string {
+	if id == "pdf-redact" {
+		return "redact"
+	}
 	short := strings.TrimPrefix(id, "pdf-")
 	switch id {
 	case "pdf-extract-images":
@@ -1042,6 +1115,7 @@ var pdfToolValueFlags = map[string]bool{
 	"--unit": true, "--top": true, "--bottom": true,
 	"--to":        true,
 	"--per-sheet": true, "--orientation": true, "--margin": true,
+	"--level": true, "--area": true, "--term": true,
 }
 
 var pdfToolBoolFlags = map[string]bool{"--on-top": true, "--border": true}
@@ -1058,6 +1132,16 @@ func (c *command) setPDFOpt(flag, value string) {
 // operation, and an error naming the flag when a value is not the type the
 // operation needs.
 func pdfToolParams(cmd command) (map[string]any, error) {
+	if cmd.op == "pdf-to-pdfa" {
+		if len(cmd.pdfOpts) == 0 {
+			return nil, nil
+		}
+		level, ok := cmd.pdfOpts["--level"]
+		if !ok {
+			return nil, fmt.Errorf("pdf-to-pdfa does not take %s", firstFlag(cmd.pdfOpts))
+		}
+		return map[string]any{"pdfa": level}, nil
+	}
 	group := ""
 	switch cmd.op {
 	case "pdf-stamp-text", "pdf-stamp-image", "pdf-page-numbers", "pdf-header-footer", "pdf-bates":

@@ -10,11 +10,12 @@ import (
 // binary is not installed; Availability of an operation is decided per engine so
 // a missing tool disables only its own operations.
 type Toolbox struct {
-	PDFCPU  Backend
-	QPDF    *QPDF
-	GS      *Ghostscript
-	Poppler *Poppler
-	OCR     *OCR
+	PDFCPU      Backend
+	QPDF        *QPDF
+	GS          *Ghostscript
+	Poppler     *Poppler
+	OCR         *OCR
+	LibreOffice *LibreOffice
 }
 
 // Available reports whether the named engine can run, or why it cannot. An
@@ -47,6 +48,11 @@ func (t Toolbox) Available(id string) error {
 			return errEngineMissing(id)
 		}
 		return t.OCR.Available()
+	case EngineLibreOffice:
+		if t.LibreOffice == nil {
+			return errEngineMissing(id)
+		}
+		return t.LibreOffice.Available()
 	default:
 		return errEngineMissing(id)
 	}
@@ -60,7 +66,7 @@ func (o Operation) engineFor(tb Toolbox) error { return tb.Available(o.Engine) }
 // them are always reported so a client can tell "not installed" apart from
 // "this daemon is older and has never heard of it".
 func EngineIDs() []string {
-	return []string{EnginePDFCPU, EngineQPDF, EngineGhostscript, EnginePoppler, EngineTesseract}
+	return []string{EnginePDFCPU, EngineQPDF, EngineGhostscript, EnginePoppler, EngineTesseract, EngineLibreOffice}
 }
 
 // unavailableReason explains why an operation cannot run against this toolbox
