@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -15,11 +16,15 @@ import (
 // profile so concurrent jobs never touch the user's LibreOffice session.
 type LibreOffice struct {
 	runner Runner
+	// isolated runs soffice in a network namespace of its own, so a document
+	// that links a remote image cannot reach anything. Only the real runner is
+	// wrapped; tests with a fake runner see the plain soffice command.
+	isolated bool
 }
 
 func NewLibreOffice(runner Runner) *LibreOffice {
 	if runner == nil {
-		runner = defaultRunTool
+		return &LibreOffice{runner: defaultRunTool, isolated: networkIsolation()}
 	}
 	return &LibreOffice{runner: runner}
 }
@@ -57,6 +62,9 @@ func (l *LibreOffice) Convert(ctx context.Context, input, output string) error {
 		return err
 	}
 	defer os.RemoveAll(profile)
+	if err := writeProfileSettings(profile); err != nil {
+		return err
+	}
 	outDir, err := os.MkdirTemp("", "file-converter-lo-out-")
 	if err != nil {
 		return err
@@ -72,6 +80,9 @@ func (l *LibreOffice) Convert(ctx context.Context, input, output string) error {
 	}
 	args := []string{"--headless", "--norestore", "--convert-to", "pdf", "--outdir", outDir,
 		"-env:UserInstallation=file://" + profile, input}
+	if l.isolated {
+		binary, args = "unshare", append([]string{"--map-root-user", "--net", "--", binary}, args...)
+	}
 	if err := l.runner(convertCtx, binary, args); err != nil {
 		if convertCtx.Err() != nil {
 			return convertCtx.Err()
@@ -120,4 +131,40 @@ func checkOfficeContent(path string) error {
 		return fmt.Errorf("%s is not a valid .%s document", filepath.Base(path), ext)
 	}
 	return nil
+}
+
+// profileSettings is written into the throwaway profile. Macros are set to the
+// strictest level, which is also the default for a fresh profile; stating it
+// keeps that from depending on a default.
+const profileSettings = `<?xml version="1.0" encoding="UTF-8"?>
+<oor:items xmlns:oor="http://openoffice.org/2001/registry" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+<item oor:path="/org.openoffice.Office.Common/Security/Scripting"><prop oor:name="MacroSecurityLevel" oor:op="fuse"><value>3</value></prop></item>
+</oor:items>
+`
+
+var (
+	isolationOnce   sync.Once
+	isolationAvails bool
+)
+
+// networkIsolation reports whether soffice can be run without a network. A
+// document can link an image on a web server, and LibreOffice fetches some of
+// those links while converting (a DOCX did, although an ODT did not), which
+// tells the sender when and from where the file was opened. Proxy settings and
+// the link-update options did not stop it; an empty network namespace does. It
+// needs unprivileged user namespaces, which some distributions restrict, in
+// which case conversion still works and the link can be fetched.
+func networkIsolation() bool {
+	isolationOnce.Do(func() {
+		isolationAvails = exec.Command("unshare", "--map-root-user", "--net", "--", "true").Run() == nil
+	})
+	return isolationAvails
+}
+
+func writeProfileSettings(profile string) error {
+	dir := filepath.Join(profile, "user")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, "registrymodifications.xcu"), []byte(profileSettings), 0o600)
 }
