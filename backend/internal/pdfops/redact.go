@@ -30,8 +30,8 @@ func redactPDF(ctx context.Context, input, output string, params RedactParams) e
 	if dpi == 0 {
 		dpi = 150
 	}
-	if dpi < 72 || dpi > 300 {
-		return fmt.Errorf("%w: dpi must be 72-300", ErrInvalidRedaction)
+	if dpi < 150 || dpi > 300 {
+		return fmt.Errorf("%w: dpi must be 150-300 (got %d)", ErrInvalidRedaction, dpi)
 	}
 	for _, a := range params.Areas {
 		if a.Page < 1 || a.X < 0 || a.Y < 0 || a.W <= 0 || a.H <= 0 || a.X+a.W > 1 || a.Y+a.H > 1 {
@@ -46,6 +46,11 @@ func redactPDF(ctx context.Context, input, output string, params RedactParams) e
 		params.Areas = append(params.Areas, matches...)
 	}
 	if len(params.Areas) == 0 {
+		if len(params.Terms) > 0 {
+			if text, err := runForOutput(ctx, nil, "pdftotext", input, "-"); err == nil && strings.TrimSpace(text) == "" {
+				return fmt.Errorf("%w: this page has no text layer; draw a box instead", ErrInvalidRedaction)
+			}
+		}
 		return fmt.Errorf("%w: no redaction terms matched", ErrInvalidRedaction)
 	}
 	pages, err := NewPDFCPUBackend().PageCount(ctx, input)

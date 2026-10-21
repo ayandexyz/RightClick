@@ -14,6 +14,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
 from gi.repository import Gdk, Gtk  # noqa: E402
 
+from .region_picker import RegionPicker  # noqa: E402
 from .regions import Region, RegionModel  # noqa: E402
 from .tools import RequestError  # noqa: E402
 
@@ -21,7 +22,9 @@ from .tools import RequestError  # noqa: E402
 class FieldRow(Gtk.Box):
     """One labelled field: its widget, a help line and an error line."""
 
-    def __init__(self, field, selection_spec):
+    def __init__(self, field, selection_spec, context=None):
+        context = context or {}
+        self._context = context
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         self.field = field
         self._selection = selection_spec
@@ -63,16 +66,24 @@ class FieldRow(Gtk.Box):
             self._widget = Gtk.Button(label="Choose…", halign=Gtk.Align.START)
             self._widget.connect("clicked", self._choose_file)
         elif kind == "regions":
-            # The boxes themselves are drawn on the page canvas, which hands
-            # them over through set(); this row keeps the list and says what
-            # it holds.
             self._regions = []
-            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            self._picker = RegionPicker(
+                self._context.get("path", ""),
+                int(self._context.get("page_count", 1)),
+                self._context.get("client_factory", lambda: None),
+                self._context.get("loader_factory", lambda *_args: None),
+                self._context.get("password"),
+                self._changed,
+            )
             self._summary = Gtk.Label(xalign=0, hexpand=True)
             clear = Gtk.Button(label="Clear")
             clear.connect("clicked", lambda _b: self.set([]))
-            box.append(self._summary)
-            box.append(clear)
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+            box.append(self._picker)
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            row.append(self._summary)
+            row.append(clear)
+            box.append(row)
             self._widget = box
             self._show_regions()
         elif kind == "terms":
@@ -120,10 +131,16 @@ class FieldRow(Gtk.Box):
 
     # -- value ---------------------------------------------------------------
 
+    def _changed(self):
+        if hasattr(self, "_picker"):
+            self._regions = self._picker.get()
+            self._show_regions()
+
     def get(self):
         kind = self.field.kind
         widget = self._widget
         if kind == "regions":
+            self._changed()
             return [dict(region) for region in self._regions]
         if kind in ("text", "password"):
             return widget.get_text()
@@ -150,6 +167,8 @@ class FieldRow(Gtk.Box):
         widget = self._widget
         if kind == "regions":
             self._regions = [dict(region) for region in value or ()]
+            if hasattr(self, "_picker"):
+                self._picker.set(self._regions)
             self._show_regions()
         elif kind in ("text", "password"):
             widget.set_text(value or "")
@@ -262,7 +281,7 @@ class ToolsView(Gtk.Box):
             return
         values = {**tool.defaults(self._context), **self._state.get(tool.id, {})}
         for f in tool.fields:
-            row = FieldRow(f, self._selection)
+            row = FieldRow(f, self._selection, self._context)
             row.set(values.get(f.key, f.default))
             self.rows[f.key] = row
             self._form.append(row)

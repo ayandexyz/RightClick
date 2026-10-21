@@ -372,7 +372,7 @@ TOOLS = (
     Tool("pdf-redact", "Redact content", "Security", "pdf-redact", (
         _f("areas", "Regions", "regions", (), help="Page-relative regions to permanently cover"),
         _f("terms", "Search terms", "terms", (), help="One term per line"),
-        _f("dpi", "Raster quality", "number", 150, minimum=72, maximum=300, integer=True),
+        _f("dpi", "Raster quality", "choice", 200, choices=((150, "150 DPI"), (200, "200 DPI"), (300, "300 DPI"))),
     ), _redact, frozenset({"redact"}), summary="Permanently remove visible content by rasterising every page."),
 )
 

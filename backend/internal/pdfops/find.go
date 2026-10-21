@@ -27,6 +27,20 @@ func (p *Poppler) Find(ctx context.Context, input string, terms []string) ([]Fin
 // Boxes are in the page as the reader sees it, including any /Rotate, which is
 // what pdftocairo renders and what redaction paints on.
 func (p *Poppler) FindPassword(ctx context.Context, input string, terms []string, password string) ([]FindMatch, error) {
+	if len(terms) == 0 {
+		return nil, fmt.Errorf("find requires at least one term")
+	}
+	if len(terms) > 50 {
+		return nil, fmt.Errorf("find allows at most 50 terms")
+	}
+	for _, term := range terms {
+		if strings.TrimSpace(term) == "" {
+			return nil, fmt.Errorf("find term must not be empty")
+		}
+		if len([]rune(term)) > 100 {
+			return nil, fmt.Errorf("find term must be at most 100 characters")
+		}
+	}
 	dir, err := os.MkdirTemp("", "fcd-find-")
 	if err != nil {
 		return nil, err

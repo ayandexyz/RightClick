@@ -272,7 +272,16 @@ class StudioWindow(Adw.ApplicationWindow):
         self._refresh_editor()
 
     def _tool_context(self):
-        return {"page_count": getattr(self, "_page_count", 0), "password": self._password}
+        return {
+            "page_count": getattr(self, "_page_count", 0),
+            "password": self._password,
+            "path": self._paths[0] if self._paths else "",
+            "client_factory": _make_client,
+            "loader_factory": lambda callback, error: ThumbnailLoader(
+                _make_client, self._paths[0], getattr(self, "_page_count", 0),
+                width=800, callback=callback, error_callback=error, password=self._password,
+            ),
+        }
 
     def _load_tool_availability(self):
         """Hide tools the daemon cannot run (an older daemon, a missing engine)."""
@@ -389,9 +398,44 @@ class StudioWindow(Adw.ApplicationWindow):
         files = self._merge.paths() if self._merge is not None else list(self._paths)
         request = {"files": files, "op": op, "params": params, "password": self._password}
         request.update(self._bar.output_options())
+        if op == "pdf-redact":
+            redact = params.get("redact")
+            if not isinstance(redact, dict):
+                return
+            areas = redact.get("areas", [])
+            pages = len({area["page"] for area in areas})
+            dialog = Adw.AlertDialog.new(
+                "Permanently redact content?",
+                f"This replaces {pages} page{'s' if pages != 1 else ''} with images. "
+                "Text, links and annotations on those pages will be lost. "
+                "The original is never overwritten.",
+            )
+            dialog.add_response("cancel", "Cancel")
+            dialog.add_response("redact", "Redact")
+            dialog.set_response_appearance("redact", Adw.ResponseAppearance.DESTRUCTIVE)
+            dialog.connect("response", self._redact_response, request)
+            self._pending_request = request
+            self._redact_dialog = dialog
+            dialog.present(self)
+            return
+        self._start_request(request)
+
+    def _redact_response(self, _dialog, response, request):
+        if response == "redact":
+            request["on_conflict"] = "rename"
+            self._start_request(request)
+
+    def _start_request(self, request):
+        if self._cancel_event is not None:
+            return
+        files = request["files"]
         cancel_event = self._cancel_event = threading.Event()
-        self._bar.set_applying(True)
-        self._bar.set_message("Applying…")
+        bar = self._bar
+        if bar is None:
+            self._cancel_event = None
+            return
+        bar.set_applying(True)
+        bar.set_message("Applying…")
 
         def report(state):
             GLib.idle_add(self._apply_state_changed, state)

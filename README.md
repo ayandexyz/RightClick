@@ -239,6 +239,6 @@ backend/            fcd daemon and fcctl development client
 2. Omarchy frontend: `fc-pick <files>` opens the overlay at the cursor
 3. Ubuntu frontend
 4. Windows frontend
-5. PDF, office documents, additional image formats (TGA, PPM, QOI, EXR), archives, packaging, and additional conversion engines
+5. Additional image formats (TGA, PPM, QOI, EXR), archives, packaging, and additional conversion engines
 
-Done: image, video, audio, and SVG rasterization.
+Done: image, video, audio, SVG rasterization, and PDF Tools phases 1–5 (including PDF compare, PDF/A conversion, redaction, and Office-to-PDF).

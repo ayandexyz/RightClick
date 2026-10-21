@@ -19,6 +19,14 @@ if os.environ.get("FC_DEBUG") == "1":
     logging.basicConfig(level=logging.DEBUG)
 
 PDF_MIME_TYPES = {"application/pdf", "application/x-pdf"}
+OFFICE_MIME_TYPES = {
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/msword", "application/vnd.oasis.opendocument.text", "application/rtf",
+    "text/rtf", "text/plain", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.ms-excel", "application/vnd.oasis.opendocument.spreadsheet", "text/csv",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "application/vnd.ms-powerpoint", "application/vnd.oasis.opendocument.presentation",
+}
 
 SUPPORTED_MIME_TYPES = {
     "image/png", "image/jpeg", "image/webp", "image/jxl", "image/avif",
@@ -72,13 +80,14 @@ class FileConverterMenuProvider(*((GObject.GObject, Nautilus.MenuProvider) if Na
         paths = []
         for file_info in files:
             path = _path(file_info)
-            if path is None or file_info.get_mime_type() not in SUPPORTED_MIME_TYPES:
+            if path is None or file_info.get_mime_type() not in SUPPORTED_MIME_TYPES | OFFICE_MIME_TYPES:
                 return []
             paths.append(path)
 
         client = FcClient(_socket_path())
+        all_office = all(file_info.get_mime_type() in OFFICE_MIME_TYPES for file_info in files)
         try:
-            targets = [target for target in client.targets(paths, menu=True) if target.enabled]
+            targets = [] if all_office else [target for target in client.targets(paths, menu=True) if target.enabled]
         except DaemonUnavailable as exc:
             log.debug("fcd unavailable while building menu: %s", exc)
             _spawn_helper("--warm")
@@ -98,12 +107,16 @@ class FileConverterMenuProvider(*((GObject.GObject, Nautilus.MenuProvider) if Na
             top.set_submenu(submenu)
             items.append(top)
 
-        pdf_tools = self._pdf_tools_menu(client, paths, all(file_info.get_mime_type() in PDF_MIME_TYPES for file_info in files))
+        pdf_tools = self._pdf_tools_menu(
+            client, paths,
+            all(file_info.get_mime_type() in PDF_MIME_TYPES for file_info in files),
+            all(file_info.get_mime_type() in OFFICE_MIME_TYPES for file_info in files),
+        )
         if pdf_tools is not None:
             items.append(pdf_tools)
         return items
 
-    def _pdf_tools_menu(self, client, paths, all_pdfs):
+    def _pdf_tools_menu(self, client, paths, all_pdfs, all_office=False):
         """Build the PDF Tools submenu, or return None when it does not apply.
 
         Studio operations need a page selection or an angle that the Nautilus
@@ -124,13 +137,17 @@ class FileConverterMenuProvider(*((GObject.GObject, Nautilus.MenuProvider) if Na
             return None
 
         instant = [op for op in operations if op.enabled and op.mode == "instant"]
-        if not instant and not (all_pdfs and _studio_available()):
+        if not instant and not ((all_pdfs or all_office) and _studio_available()):
             return None
         submenu = Nautilus.Menu()
         for op in instant:
             item = Nautilus.MenuItem(name=f"FileConverter::pdf::{op.id}", label=op.label)  # type: ignore[union-attr]
             item.connect("activate", self._activate_operation, paths, op.id)
             submenu.append_item(item)
+        if all_office and not all_pdfs and _studio_available():
+            studio = Nautilus.MenuItem(name="FileConverter::pdf::office", label="Convert to PDF")  # type: ignore[union-attr]
+            studio.connect("activate", self._activate_operation, paths, "office-to-pdf")
+            submenu.append_item(studio)
         if all_pdfs and _studio_available():
             studio = Nautilus.MenuItem(name="FileConverter::pdf::studio", label="Customise…")  # type: ignore[union-attr]
             studio.connect("activate", self._activate_studio, paths)
@@ -302,6 +319,9 @@ OPERATION_TITLES = {
     "pdf-extract-images": "Images extracted",
     "pdf-ocr": "PDF OCR'd",
     "pdf-from-images": "Images combined into PDF",
+    "pdf-compare": "PDFs compared",
+    "pdf-to-pdfa": "PDF converted to PDF/A",
+    "office-to-pdf": "Office document converted to PDF",
 }
 
 

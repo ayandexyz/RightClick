@@ -49,7 +49,7 @@ func TestValidateRedactionRejectsUnsafeRegions(t *testing.T) {
 		{"zero width", "w must be greater than 0", func(p map[string]any) {
 			p["params"].(map[string]any)["redact"].(map[string]any)["areas"] = []map[string]any{{"page": 1, "x": 0, "y": 0, "w": 0, "h": 0.1}}
 		}},
-		{"invalid dpi", "dpi must be between 72 and 300", func(p map[string]any) { p["params"].(map[string]any)["redact"].(map[string]any)["dpi"] = 301 }},
+		{"invalid dpi", "dpi must be between 150 and 300", func(p map[string]any) { p["params"].(map[string]any)["redact"].(map[string]any)["dpi"] = 149 }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -204,7 +204,7 @@ class RedactValidationTests(unittest.TestCase):
     def test_boxes_and_terms_become_the_daemons_redact_params(self):
         op, params = build("pdf-redact", areas=[self.BOX], terms="Secret\n\n  Jane Doe ")
         self.assertEqual(op, "pdf-redact")
-        self.assertEqual(params, {"redact": {"areas": [self.BOX], "terms": ["Secret", "Jane Doe"], "dpi": 150}})
+        self.assertEqual(params, {"redact": {"areas": [self.BOX], "terms": ["Secret", "Jane Doe"], "dpi": 200}})
         self.assertEqual(build("pdf-redact", terms=["x"])[1]["redact"]["areas"], [])
 
     def test_a_bad_box_is_refused_before_the_daemon_sees_it(self):

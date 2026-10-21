@@ -68,6 +68,48 @@ func TestRedactPNGRejectsPageWithoutAnArea(t *testing.T) {
 	}
 }
 
+func TestRedactPDFRejectsUnsafeValidationInputs(t *testing.T) {
+	input := buildTextPDF(t, 2)
+	for name, params := range map[string]RedactParams{
+		"no areas or terms": {},
+		"zero width":        {Areas: []RedactArea{{Page: 1, W: 0, H: 0.1}}},
+		"outside page":      {Areas: []RedactArea{{Page: 1, X: 0.9, W: 0.2, H: 0.1}}},
+		"missing page":      {Areas: []RedactArea{{Page: 3, W: 0.1, H: 0.1}}},
+		"low dpi":           {Areas: []RedactArea{{Page: 1, W: 0.1, H: 0.1}}, DPI: 149},
+		"high dpi":          {Areas: []RedactArea{{Page: 1, W: 0.1, H: 0.1}}, DPI: 301},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := redactPDF(context.Background(), input, filepath.Join(t.TempDir(), "out.pdf"), params); err == nil {
+				t.Fatal("unsafe redaction was accepted")
+			}
+		})
+	}
+}
+
+func TestRedactPDFReportsMissingTextLayer(t *testing.T) {
+	requireTool(t, "pdftocairo")
+	requireTool(t, "qpdf")
+	scan := filepath.Join(t.TempDir(), "scan.pdf")
+	pngPath := filepath.Join(t.TempDir(), "scan.png")
+	if err := os.WriteFile(pngPath, []byte("not an image"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A valid one-page image-only PDF is created by ImageMagick.
+	if _, err := exec.LookPath("magick"); err != nil {
+		t.Skip("magick is not installed")
+	}
+	if out, err := exec.Command("magick", "-size", "40x40", "xc:white", pngPath).CombinedOutput(); err != nil {
+		t.Skipf("magick fixture failed: %v: %s", err, out)
+	}
+	if out, err := exec.Command("magick", pngPath, scan).CombinedOutput(); err != nil {
+		t.Skipf("magick PDF fixture failed: %v: %s", err, out)
+	}
+	err := redactPDF(context.Background(), scan, filepath.Join(t.TempDir(), "out.pdf"), RedactParams{Terms: []string{"missing"}})
+	if err == nil || !strings.Contains(err.Error(), "this page has no text layer; draw a box instead") {
+		t.Fatalf("err = %v, want no-text-layer guidance", err)
+	}
+}
+
 func TestRedactPDFRemovesTextFromRedactedPage(t *testing.T) {
 	requireTool(t, "pdftocairo")
 	requireTool(t, "magick")
@@ -175,4 +217,61 @@ func wholeDocText(t *testing.T, path string) string {
 		t.Fatalf("pdftotext: %v", err)
 	}
 	return string(out)
+}
+
+// buildResiduePDF repeats SECRETWORD in every place besides page content that
+// could carry it: Info, XMP, a bookmark, and link and text annotations.
+func buildResiduePDF(t *testing.T) string {
+	t.Helper()
+	requireTool(t, "ps2pdf")
+	dir := t.TempDir()
+	script := "%!PS-Adobe-3.0\n%%Pages: 3\n%%EndComments\n" +
+		"[ /Title (SECRETWORD report) /Author (SECRETWORD author) /Keywords (SECRETWORD) /DOCINFO pdfmark\n" +
+		"[ /_objdef {meta} /type /stream /OBJ pdfmark\n" +
+		"[ {meta} << /Type /Metadata /Subtype /XML >> /PUT pdfmark\n" +
+		"[ {meta} (<?xpacket begin='' id='W5M0MpCehiHzreSzNTczkc9d'?><x:xmpmeta xmlns:x='adobe:ns:meta/'><rdf:RDF xmlns:rdf='http://www.w3.org/1999/02/22-rdf-syntax-ns#'><rdf:Description xmlns:dc='http://purl.org/dc/elements/1.1/'><dc:title>SECRETWORD xmp</dc:title></rdf:Description></rdf:RDF></x:xmpmeta><?xpacket end='w'?>) /PUT pdfmark\n" +
+		"[ {Catalog} << /Metadata {meta} >> /PUT pdfmark\n" +
+		"[ /Page 2 /View [/XYZ null null null] /Title (SECRETWORD bookmark) /OUT pdfmark\n" +
+		"/Helvetica findfont 48 scalefont setfont\n" +
+		"72 700 moveto (PAGE1 plain) show showpage\n" +
+		"72 700 moveto (PAGE2 SECRETWORD) show\n" +
+		"[ /Rect [72 600 200 650] /Subtype /Link /Border [0 0 0] /Contents (SECRETWORD link) /ANN pdfmark\n" +
+		"[ /Rect [72 500 200 550] /Subtype /Text /Contents (SECRETWORD note) /ANN pdfmark\n" +
+		"showpage\n72 700 moveto (PAGE3 plain) show showpage\n%%EOF\n"
+	source := filepath.Join(dir, "residue.ps")
+	if err := os.WriteFile(source, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pdf := filepath.Join(dir, "residue.pdf")
+	runTool(t, "ps2pdf", source, pdf)
+	return pdf
+}
+
+// TestRedactPDFDropsMetadataBookmarksAndAnnotations covers what page rasterising
+// alone would not: document-level places a redacted word can hide.
+func TestRedactPDFDropsMetadataBookmarksAndAnnotations(t *testing.T) {
+	for _, tool := range []string{"pdftocairo", "qpdf", "ps2pdf"} {
+		requireTool(t, tool)
+	}
+	input := buildResiduePDF(t)
+	before := decodedPDF(t, input)
+	for _, marker := range []string{"SECRETWORD xmp", "SECRETWORD bookmark", "SECRETWORD link", "SECRETWORD note", "SECRETWORD author"} {
+		if !strings.Contains(before, marker) {
+			t.Skipf("fixture does not carry %q", marker)
+		}
+	}
+	output := filepath.Join(t.TempDir(), "redacted.pdf")
+	area := RedactArea{Page: 2, X: 0.05, Y: 0.05, W: 0.9, H: 0.2}
+	if err := redactPDF(context.Background(), input, output, RedactParams{Areas: []RedactArea{area}, DPI: 150}); err != nil {
+		t.Fatal(err)
+	}
+	after := decodedPDF(t, output)
+	if strings.Contains(strings.ToLower(after), "secretword") {
+		t.Error("the secret survives in document properties, XMP, bookmarks or annotations")
+	}
+	for _, key := range []string{"/Outlines", "/Metadata", "/Annots", "/Author", "/Title"} {
+		if strings.Contains(after, key) {
+			t.Errorf("redacted file still carries %s", key)
+		}
+	}
 }

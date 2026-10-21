@@ -201,6 +201,17 @@ class FcClient:
                 result = self._request(sock, stream, "pdf_thumbnails", params, timeout=self.info_timeout)
         return list(result.get("pages") or [])
 
+    def pdf_find(self, file, terms, password=None):
+        """Find text boxes for redaction previews."""
+        with self._connect() as sock:
+            with sock.makefile("rwb") as stream:
+                self._hello(sock, stream)
+                params = {"file": file, "terms": list(terms)}
+                if password is not None:
+                    params["password"] = password
+                result = self._request(sock, stream, "pdf_find", params, timeout=self.info_timeout)
+        return list(result.get("matches") or [])
+
     def cancel_job(self, job_id):
         """Ask the daemon to cancel a running job."""
         with self._connect() as sock:

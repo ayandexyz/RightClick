@@ -128,7 +128,7 @@ Operations:
 | `pdf-to-text` | poppler | instant | 1 or more PDFs | `<stem>-text.txt` |
 | `pdf-compare` | poppler | instant | exactly 2 PDFs | `<first-stem>-compare-<second-stem>.txt`; skipped with `the two documents have identical text` when equal |
 | `pdf-to-pdfa` | ghostscript | instant | 1 PDF | `<stem>-pdfa.pdf`; `params.pdfa` is `1b`, `2b`, or `3b`, default `2b` |
-| `pdf-redact` | pdftocairo + Ghostscript | studio | exactly 1 PDF | `<stem>-redacted.pdf`; `params.redact` contains bounded fractional `areas`, optional search `terms`, and `dpi` (72-300, default 150) |
+| `pdf-redact` | pdftocairo + Ghostscript | studio | exactly 1 PDF | `<stem>-redacted.pdf`; `params.redact` contains bounded fractional `areas`, optional search `terms`, and `dpi` (150, 200, or 300; default 200) |
 | `office-to-pdf` | libreoffice | instant | exactly 1 Office file | `<stem>.pdf`; uses a private temporary LibreOffice profile and, where unprivileged user namespaces are allowed, runs with no network so a document cannot fetch linked images; a file whose bytes do not match its extension is refused |
 | `pdf-extract-images` | poppler | instant | 1 or more PDFs | `<stem>-image-1.png`, `<stem>-image-2.png`, ... |
 | `pdf-ocr` | tesseract | studio | 1 or more PDFs | not implemented; always `enabled: false` |

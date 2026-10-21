@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -65,6 +66,83 @@ func TestGhostscriptPDFALevelBuildsDaemonDiscoveredArguments(t *testing.T) {
 	}
 	if containsString(rec.gotArgs, "-sICCProfile="+icc) {
 		t.Fatal("ICC profile must be supplied through the daemon-discovered definition search path")
+	}
+}
+
+func TestGhostscriptRealPDFAProducesSelectableEmbeddedAndUnencryptedOutput(t *testing.T) {
+	requireTool(t, "gs")
+	requireTool(t, "pdftotext")
+	requireTool(t, "pdffonts")
+	requireTool(t, "pdfinfo")
+	input := buildTextPDF(t, 1)
+	output := filepath.Join(t.TempDir(), "output.pdf")
+	if err := NewGhostscript(nil).PDFA(context.Background(), input, output, "2b"); err != nil {
+		t.Fatal(err)
+	}
+	text, err := os.ReadFile(output)
+	if err != nil || len(text) == 0 {
+		t.Fatalf("PDF/A output unreadable: %v", err)
+	}
+	if out, err := exec.Command("pdftotext", output, "-").Output(); err != nil || !strings.Contains(string(out), "PAGE1") {
+		t.Fatalf("selectable text = %q, err = %v", out, err)
+	}
+	fonts, err := exec.Command("pdffonts", output).Output()
+	if err != nil || !strings.Contains(string(fonts), " yes ") {
+		t.Fatalf("fonts = %q, err = %v", fonts, err)
+	}
+	meta, err := exec.Command("pdfinfo", "-meta", output).Output()
+	if err != nil || !strings.Contains(string(meta), "pdfaid:part") || !strings.Contains(string(meta), "pdfaid:part='2'") {
+		t.Fatalf("XMP = %q, err = %v", meta, err)
+	}
+	encryption, err := exec.Command("pdfinfo", output).Output()
+	if err != nil || strings.Contains(string(encryption), "Encrypted:          yes") {
+		t.Fatalf("PDF/A output is encrypted: %q, err = %v", encryption, err)
+	}
+}
+
+func TestGhostscriptPDFADamagedInputIsInvalidPDF(t *testing.T) {
+	requireTool(t, "gs")
+	dir := t.TempDir()
+	input := filepath.Join(dir, "damaged.pdf")
+	output := filepath.Join(dir, "output.pdf")
+	if err := os.WriteFile(input, []byte("%PDF-1.7\nnot a PDF"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewGhostscript(nil).PDFA(context.Background(), input, output, "2b"); !errors.Is(err, ErrInvalidPDF) {
+		t.Fatalf("err = %v, want ErrInvalidPDF", err)
+	}
+	if _, err := os.Stat(output); !os.IsNotExist(err) {
+		t.Fatalf("damaged input left output: %v", err)
+	}
+}
+
+func TestGhostscriptPDFAFailureDoesNotLeaveOutput(t *testing.T) {
+	dir := t.TempDir()
+	definition := filepath.Join(dir, "PDFA_def.ps")
+	icc := filepath.Join(dir, "srgb.icc")
+	if err := os.WriteFile(definition, []byte("/ICCProfile (srgb.icc)\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(icc, []byte("icc"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(dir, "output.pdf")
+	gs := newTestGhostscript(func(context.Context, string, []string) error { return errors.New("cannot make compliant PDF/A") })
+	gs.pdfaDefinition = func() (string, string, error) { return definition, icc, nil }
+	if err := gs.PDFA(context.Background(), "input.pdf", output, "2b"); err == nil || !strings.Contains(err.Error(), "cannot make compliant PDF/A") {
+		t.Fatalf("err = %v, want Ghostscript failure", err)
+	}
+	if _, err := os.Stat(output); !os.IsNotExist(err) {
+		t.Fatalf("failed conversion left output: %v", err)
+	}
+}
+
+func TestGhostscriptPDFAcceptsAllSupportedLevels(t *testing.T) {
+	for _, level := range []string{"1b", "2b", "3b"} {
+		part, err := pdfaPart(level)
+		if err != nil || part != level[:1] {
+			t.Fatalf("pdfaPart(%q) = %q, %v", level, part, err)
+		}
 	}
 }
 

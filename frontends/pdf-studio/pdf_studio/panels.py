@@ -122,14 +122,18 @@ class ApplyBar(Gtk.Box):
             return False
         self.set_applying(False)
         outputs = [path for item in state.files for path in item.get("outputs", ())]
+        notices = [item.get("notice", "") for item in state.files if item.get("notice")]
         self._outputs = outputs
         self._reveal.set_visible(bool(outputs))
-        self._message.set_text({
+        message = {
             "completed": "Saved " + (", ".join(os.path.basename(p) for p in outputs[:3]) + ("…" if len(outputs) > 3 else "")),
             "completed-with-errors": "Saved with errors",
             "failed": state.error or "The operation failed",
             "cancelled": "Cancelled",
-        }[state.status])
+        }[state.status]
+        if notices and state.status in ("completed", "completed-with-errors"):
+            message += " — " + "; ".join(notices)
+        self._message.set_text(message)
         return True
 
     def cancelling(self):

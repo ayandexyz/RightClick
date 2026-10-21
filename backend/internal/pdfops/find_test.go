@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -68,9 +69,29 @@ func TestFindMatchesAPhraseAndPartOfAWord(t *testing.T) {
 	if got := find(t, path, "absent"); len(got) != 0 {
 		t.Errorf("a missing term matched %+v", got)
 	}
-	if got := find(t, path, "", "  "); len(got) != 0 {
-		t.Errorf("blank terms matched %+v", got)
+}
+
+func TestFindRejectsInvalidTermsBeforeRunningPdftotext(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "does-not-exist.pdf")
+	for name, terms := range map[string][]string{
+		"empty":    {""},
+		"overlong": {strings.Repeat("x", 101)},
+		"too many": makeTerms(51),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := NewPoppler(nil).Find(context.Background(), path, terms); err == nil {
+				t.Fatal("invalid terms were accepted")
+			}
+		})
 	}
+}
+
+func makeTerms(n int) []string {
+	terms := make([]string, n)
+	for i := range terms {
+		terms[i] = "term"
+	}
+	return terms
 }
 
 func TestFindReportsAPhraseSplitByALineBreakAsOneBoxPerLine(t *testing.T) {

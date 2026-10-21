@@ -93,7 +93,7 @@ func (g *Ghostscript) PDFA(ctx context.Context, input, output, level string) err
 	}
 	defer os.Remove(patchedDefinition)
 	definition = patchedDefinition
-	if err := g.rejectLocked(ctx, input); err != nil {
+	if _, err := g.pages(ctx, input); err != nil {
 		return err
 	}
 	// PDFA_def.ps contains a relative ICCProfile reference on some systems.

@@ -446,8 +446,21 @@ class WindowSmokeTests(unittest.TestCase):
         view = self.pick(window, "pdf-redact")
         self.assertEqual(view.rows["areas"].get(), [box], "boxes survive a tool switch")
         window._on_apply()
+        self.assertFalse(self.requests)
+        self.assertIsNotNone(window._redact_dialog)
+        window._redact_dialog.emit("response", "redact")
         self.assertTrue(self.pump(lambda: bool(self.requests)))
-        self.assertEqual(self.requests[0]["params"], {"redact": {"areas": [box], "terms": ["Secret", "Jane Doe"], "dpi": 150}})
+        self.assertEqual(self.requests[0]["params"], {"redact": {"areas": [box], "terms": ["Secret", "Jane Doe"], "dpi": 200}})
+
+    def test_cancelling_redaction_confirmation_sends_nothing(self):
+        window = self.open_tools()
+        view = self.pick(window, "pdf-redact")
+        view.rows["areas"].set([{"page": 2, "x": 0.1, "y": 0.2, "w": 0.3, "h": 0.1}])
+        window._on_apply()
+        self.assertIsNotNone(window._redact_dialog)
+        window._redact_dialog.emit("response", "cancel")
+        self.pump(lambda: False, seconds=0.1)
+        self.assertEqual(self.requests, [])
 
     def test_switching_tools_keeps_what_was_entered_but_never_a_password(self):
         window = self.open_tools()
@@ -672,6 +685,10 @@ class PanelTests(unittest.TestCase):
         self.assertTrue(bar.show_state(done))
         self.assertIn("a-edited.pdf", bar._message.get_text())
         self.assertFalse(bar._cancel.get_visible())
+        redacted = JobState("completed", 1.0, ({"outputs": ["/o/a-redacted.pdf"], "notice": 'redacted 2 boxes on 1 page; no match for "MISSING"'},))
+        bar.show_state(redacted)
+        self.assertIn("redacted 2 boxes on 1 page", bar._message.get_text())
+        self.assertIn('no match for "MISSING"', bar._message.get_text())
         self.assertTrue(bar._apply.get_sensitive())
         self.assertTrue(bar._reveal.get_visible())
         bar.set_applying(True)

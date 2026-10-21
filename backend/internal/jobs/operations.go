@@ -378,7 +378,51 @@ func (m *Manager) runOneOperation(j *job, op pdfops.Operation, index int, source
 		return fileResult{index: index, file: file}
 	}
 	file.Progress, file.Outputs = 1, []string{output}
+	if op.ID == "pdf-redact" {
+		file.Notice = redactionNotice(j.ctx, source, j.op.Params.Redact)
+	}
 	return fileResult{index: index, file: file}
+}
+
+func redactionNotice(ctx context.Context, source string, redact pdfops.RedactParams) string {
+	areas := len(redact.Areas)
+	matches := 0
+	pages := make(map[int]struct{})
+	for _, area := range redact.Areas {
+		pages[area.Page] = struct{}{}
+	}
+	var unmatched []string
+	if len(redact.Terms) > 0 {
+		// The operation has already resolved these terms. Repeat the read-only
+		// lookup only to make the completion notice useful to the client.
+		for _, term := range redact.Terms {
+			found, err := pdfops.NewPoppler(nil).Find(ctx, source, []string{term})
+			if err != nil || len(found) == 0 {
+				unmatched = append(unmatched, fmt.Sprintf("no match for %q", term))
+				continue
+			}
+			matches += len(found)
+			for _, match := range found {
+				pages[match.Page] = struct{}{}
+			}
+		}
+	}
+	boxes := areas + matches
+	notice := fmt.Sprintf("redacted %d box", boxes)
+	if boxes != 1 {
+		notice += "es"
+	}
+	notice += fmt.Sprintf(" on %d page", len(pages))
+	if len(pages) != 1 {
+		notice += "s"
+	}
+	// The output is rebuilt from page content only (see pdfops.redactPDF), so
+	// say what that dropped: a title or bookmark may repeat a redacted word.
+	notice += "; document properties, bookmarks and attachments removed"
+	if len(unmatched) > 0 {
+		notice += "; " + strings.Join(unmatched, "; ")
+	}
+	return notice
 }
 
 // operationErrorCode maps an engine error onto the protocol code. The mapping
