@@ -11,9 +11,10 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gio  # noqa: E402
+from gi.repository import Adw, Gdk, Gio, Gtk  # noqa: E402
 
 from .cli import PathProblem, check_paths  # noqa: E402
+from .omarchy_theme import accent_hex, readable_on  # noqa: E402
 from .window import StudioWindow  # noqa: E402
 
 APP_ID = "io.fileconverter.PdfStudio"
@@ -30,6 +31,25 @@ class StudioApp(Adw.Application):
         self.add_action(quit_action)
         self.set_accels_for_action("app.quit", ["<Primary>q"])
         self.set_accels_for_action("window.close", ["<Primary>w"])
+        self._apply_omarchy_accent()
+
+    def _apply_omarchy_accent(self):
+        """Retint libadwaita's accent (the Apply button included) to match
+        the running Omarchy theme, since GNOME's own accent-color setting
+        only has a handful of named colors and can't carry a theme's exact
+        hex (see omarchy_theme.py)."""
+        accent = accent_hex()
+        if accent is None:
+            return
+        provider = Gtk.CssProvider()
+        provider.load_from_string(
+            "@define-color accent_color {0}; "
+            "@define-color accent_bg_color {0}; "
+            "@define-color accent_fg_color {1};".format(accent, readable_on(accent))
+        )
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
 
     def do_activate(self):
         # Started with no files: show the empty window with an Open button.
