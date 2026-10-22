@@ -158,11 +158,12 @@ class SplitPanel(Gtk.Box):
         self._on_change = on_change or (lambda: None)
         self._modes = ("ranges", "every", "keep")
         self._mode = Gtk.DropDown.new_from_strings(["Page ranges", "Every N pages", "Keep pages"])
+        self._mode.set_selected(self._modes.index("keep"))
         self._mode.connect("notify::selected", self._mode_changed)
         self.append(self._mode)
 
         text_view = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        self._entry = Gtk.Entry()
+        self._entry = Gtk.Entry(width_chars=28, halign=Gtk.Align.START)
         self._entry.connect("changed", lambda _e: self._update())
         text_view.append(self._entry)
         self._preview = Gtk.Label(xalign=0, yalign=0, wrap=True, selectable=True)

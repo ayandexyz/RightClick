@@ -612,6 +612,7 @@ class PanelTests(unittest.TestCase):
         from pdf_studio.panels import SplitPanel
 
         panel = SplitPanel(10)
+        panel._mode.set_selected(0)
         panel._entry.set_text("1-3;4-")
         parts, text = panel.preview_text()
         self.assertEqual(text, "File 1: pages 1-3\nFile 2: pages 4-10")
@@ -636,7 +637,15 @@ class PanelTests(unittest.TestCase):
         from pdf_studio.panels import SplitPanel
 
         panel = SplitPanel(10)
+        panel._mode.set_selected(0)
         self.assertFalse(panel._entry.has_css_class("error"))
+
+    def test_split_defaults_to_keep_pages(self):
+        from pdf_studio.panels import SplitPanel
+
+        panel = SplitPanel(5)
+        self.assertEqual(panel._content.get_visible_child_name(), "keep")
+        self.assertEqual(panel._keep_grid.kept_positions(), [1, 2, 3, 4, 5])
 
     def test_keep_pages_starts_with_every_page_ticked(self):
         from pdf_studio.panels import SplitPanel

@@ -309,6 +309,25 @@ if GTK_AVAILABLE:
     PageGrid = _GtkPageGrid
 
 
+    _keep_css_installed = False
+
+    def _install_keep_css():
+        """A translucent accent tint for kept pages, echoing the Edit tab's
+        selected-page highlight (which comes from GridView's own ":selected"
+        styling that this NoSelection grid doesn't get for free)."""
+        global _keep_css_installed
+        if _keep_css_installed:
+            return
+        provider = _Gtk.CssProvider()
+        provider.load_from_string(
+            ".keep-page-kept { background-color: alpha(@accent_bg_color, 0.35); border-radius: 12px; }"
+        )
+        _Gtk.StyleContext.add_provider_for_display(
+            _Gdk.Display.get_default(), provider, _Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+        _keep_css_installed = True
+
+
     class _KeepRow(_GObject.Object):
         def __init__(self, position):
             super().__init__()
@@ -322,6 +341,7 @@ if GTK_AVAILABLE:
 
         def __init__(self):
             super().__init__(orientation=_Gtk.Orientation.VERTICAL, spacing=4)
+            _install_keep_css()
             self.set_margin_start(6)
             self.set_margin_end(6)
             self.set_margin_top(6)
@@ -349,8 +369,15 @@ if GTK_AVAILABLE:
             self._check.set_margin_top(6)
             self._check.add_css_class("osd")
             self._check.set_tooltip_text("Keep this page")
+            # The checkbox is a display-only indicator; the click gesture below
+            # toggles it from anywhere on the thumbnail, the corner included.
+            self._check.set_can_target(False)
             self._toggle_handler = self._check.connect("toggled", self._on_toggled)
             self._frame.add_overlay(self._check)
+
+            click = _Gtk.GestureClick.new()
+            click.connect("released", self._on_frame_clicked)
+            self._frame.add_controller(click)
 
             self._caption = _Gtk.Label()
             self.append(self._caption)
@@ -363,7 +390,17 @@ if GTK_AVAILABLE:
             self._caption.set_label(f"Page {row.position}")
             with self._check.handler_block(self._toggle_handler):
                 self._check.set_active(row.kept)
+            self._update_kept_style(row.kept)
             self._set_thumbnail(row.thumbnail)
+
+        def _on_frame_clicked(self, _gesture, _n_press, _x, _y):
+            self._check.set_active(not self._check.get_active())
+
+        def _update_kept_style(self, kept):
+            if kept:
+                self.add_css_class("keep-page-kept")
+            else:
+                self.remove_css_class("keep-page-kept")
 
         def _set_thumbnail(self, thumbnail):
             if thumbnail:
@@ -382,6 +419,7 @@ if GTK_AVAILABLE:
             if self.row is None:
                 return
             self.row.kept = self._check.get_active()
+            self._update_kept_style(self.row.kept)
             if self._on_toggle:
                 self._on_toggle()
 
@@ -487,6 +525,7 @@ if GTK_AVAILABLE:
                 if cell.row is not None:
                     with cell._check.handler_block(cell._toggle_handler):
                         cell._check.set_active(cell.row.kept)
+                    cell._update_kept_style(cell.row.kept)
             self._on_change()
 
         def close(self):
