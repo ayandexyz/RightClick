@@ -11,7 +11,7 @@ if _here not in sys.path:
 from fc_client.client import FcClient, FcError, DaemonUnavailable, RequestError
 from fc_client.daemon import ensure_daemon
 from fc_client.messages import friendly_error
-from fc_client.notify import send
+from fc_client.notify import reveal, send
 
 
 log = logging.getLogger("file_converter")
@@ -225,6 +225,7 @@ def _notify_job(job):
     done = [item for item in files if item.get("state") == "done"]
     failed = [item for item in files if item.get("state") == "failed"]
     skipped = [item for item in files if item.get("state") == "skipped"]
+    reveal(_outputs(done))
     if state == "completed" and not skipped:
         body = f"{len(done)} files converted" if len(done) != 1 else "Conversion complete"
         if len(done) == 1 and done[0].get("outputs"):
@@ -249,6 +250,7 @@ def _notify_operation(job, op):
     done = [item for item in files if item.get("state") == "done"]
     failed = [item for item in files if item.get("state") == "failed"]
     skipped = [item for item in files if item.get("state") == "skipped"]
+    reveal(_outputs(done))
     title = OPERATION_TITLES.get(op, "PDF operation complete")
     if state == "completed" and not failed:
         body = " ".join(_sizes(done)) or f"{len(done)} done, {len(skipped)} skipped"
@@ -267,6 +269,14 @@ def _notify_operation(job, op):
         send(f"{title} cancelled", "")
     else:
         send(title, f"{len(done)} done, {len(skipped)} skipped, {len(failed)} failed")
+
+
+def _outputs(done):
+    """Flatten every output path across a job's done files, in order."""
+    paths = []
+    for item in done:
+        paths.extend(item.get("outputs") or [])
+    return paths
 
 
 def _sizes(done):

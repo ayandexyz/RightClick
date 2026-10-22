@@ -325,3 +325,82 @@ func TestPlanNamedOutputRejectsUnsupportedExtension(t *testing.T) {
 		t.Fatal("an unsupported output extension should be rejected")
 	}
 }
+
+// TestCommitLeavesTheDestinationAsTheOnlyLinkToTheData checks that the usual,
+// hard-link path both publishes the right bytes and cleans up the temp name;
+// a leftover hidden temp file would sit beside the real output forever.
+func TestCommitLeavesTheDestinationAsTheOnlyLinkToTheData(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "photo.png")
+	if err := os.WriteFile(source, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := PlanOutput(dir, source, "jpg", "rename")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(plan.Temp, []byte("converted"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output, err := plan.Commit()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output != plan.Destination {
+		t.Fatalf("Commit() = %q, want %q", output, plan.Destination)
+	}
+	data, err := os.ReadFile(plan.Destination)
+	if err != nil || string(data) != "converted" {
+		t.Fatalf("Destination content = %q, %v", data, err)
+	}
+	if _, err := os.Stat(plan.Temp); !os.IsNotExist(err) {
+		t.Fatalf("hidden temp name %q should be gone after Commit, got err=%v", plan.Temp, err)
+	}
+}
+
+// TestCopyIntoPlaceFallsBackWhenHardLinksAreUnavailable exercises the path
+// Commit takes on filesystems that reject os.Link (FAT/exFAT, some FUSE and
+// network mounts): the destination must still end up as a plain new file
+// rather than a rename from the hidden temp name, which is the one thing
+// that keeps Nautilus from needing a manual refresh to show it.
+func TestCopyIntoPlaceFallsBackWhenHardLinksAreUnavailable(t *testing.T) {
+	dir := t.TempDir()
+	temp := filepath.Join(dir, ".file-converter-temp")
+	if err := os.WriteFile(temp, []byte("converted"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(dir, "photo.jpg")
+	if err := copyIntoPlace(temp, destination); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(destination)
+	if err != nil || string(data) != "converted" {
+		t.Fatalf("destination content = %q, %v", data, err)
+	}
+	info, err := os.Stat(destination)
+	if err != nil || info.Mode().Perm() != 0o640 {
+		t.Fatalf("destination mode = %v, %v, want 0640", info.Mode().Perm(), err)
+	}
+	if _, err := os.Stat(temp); err != nil {
+		t.Fatalf("copyIntoPlace must leave the temp file for the caller to remove: %v", err)
+	}
+}
+
+func TestCopyIntoPlaceRefusesToClobberAnExistingDestination(t *testing.T) {
+	dir := t.TempDir()
+	temp := filepath.Join(dir, ".file-converter-temp")
+	if err := os.WriteFile(temp, []byte("converted"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(dir, "photo.jpg")
+	if err := os.WriteFile(destination, []byte("already here"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyIntoPlace(temp, destination); err == nil {
+		t.Fatal("copyIntoPlace should not silently overwrite an existing destination")
+	}
+	data, err := os.ReadFile(destination)
+	if err != nil || string(data) != "already here" {
+		t.Fatalf("existing destination was clobbered: %q, %v", data, err)
+	}
+}

@@ -318,7 +318,7 @@ class PDFToolsMenuTests(ExtensionMenuTests):
 class OperationNotificationTests(ExtensionMenuTests):
     def notify(self, job, op_id="pdf-reverse"):
         module = self.module
-        with mock.patch.object(module, "send") as send:
+        with mock.patch.object(module, "send") as send, mock.patch.object(module, "reveal"):
             module._notify_operation(job, op_id)
         return send.call_args
 

@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -339,10 +340,41 @@ func (p OutputPlan) Commit() (string, error) {
 		_ = os.Remove(p.Temp)
 		return p.Destination, nil
 	}
-	if err := os.Rename(p.Temp, p.Destination); err != nil {
+	// Some filesystems (FAT/exFAT, several FUSE and network mounts) do not
+	// support hard links. Falling back to a rename would reproduce the same
+	// Nautilus bug the hard link exists to avoid, since the source is still
+	// the hidden temp name, so copy the bytes into a freshly created
+	// destination instead: that is also a plain "created" event.
+	if err := copyIntoPlace(p.Temp, p.Destination); err != nil {
 		return "", err
 	}
+	_ = os.Remove(p.Temp)
 	return p.Destination, nil
+}
+
+// copyIntoPlace copies temp's bytes into a brand new file at destination,
+// rather than renaming temp into place, so the destination is always
+// observed as a creation rather than a rename from a hidden name.
+func copyIntoPlace(temp, destination string) error {
+	info, err := os.Stat(temp)
+	if err != nil {
+		return err
+	}
+	src, err := os.Open(temp)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+	dst, err := os.OpenFile(destination, os.O_WRONLY|os.O_CREATE|os.O_EXCL, info.Mode().Perm())
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(dst, src); err != nil {
+		dst.Close()
+		_ = os.Remove(destination)
+		return err
+	}
+	return dst.Close()
 }
 func (p OutputPlan) RemoveTemp() {
 	if p.Temp != "" {
