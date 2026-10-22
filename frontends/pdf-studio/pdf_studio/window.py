@@ -41,6 +41,18 @@ _ICONS = {
     "failed": "dialog-error-symbolic",
 }
 
+# Edit-toolbar actions common enough to recognise by icon alone; the rest
+# (insert blank, the move actions) stay labelled since there's no equally
+# obvious symbol for them.
+_EDIT_ACTION_ICONS = {
+    "undo": "edit-undo-symbolic",
+    "redo": "edit-redo-symbolic",
+    "rotate-left": "object-rotate-left-symbolic",
+    "rotate-right": "object-rotate-right-symbolic",
+    "delete": "edit-delete-symbolic",
+    "duplicate": "edit-copy-symbolic",
+}
+
 
 def _make_client():
     return FcClient(socket_path())
@@ -236,7 +248,10 @@ class StudioWindow(Adw.ApplicationWindow):
         toolbar.set_margin_start(8)
         toolbar.set_margin_end(8)
         for action_id in ("undo", "redo", "rotate-left", "rotate-right", "delete", "duplicate", "insert-blank", "move-left", "move-right", "move-start", "move-end"):
-            button = Gtk.Button(label=action_id.replace("-", " ").title())
+            label = action_id.replace("-", " ").title()
+            icon = _EDIT_ACTION_ICONS.get(action_id)
+            button = Gtk.Button(icon_name=icon) if icon else Gtk.Button(label=label)
+            button.set_tooltip_text(label)
             button.set_action_name(f"win.{action_id}")
             toolbar.append(button)
         # The row is wider than a tiled window, so it scrolls instead of clipping.
