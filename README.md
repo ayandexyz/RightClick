@@ -197,6 +197,15 @@ Audio conversions use FFmpeg. Video inputs may extract audio using FFmpeg's `-vn
 
 ImageMagick is required at runtime for raster image conversion and SVG JPEG/WebP output. The backend looks for `magick` first and then `convert`. SVG rasterization requires `rsvg-convert`.
 
+### Background removal
+
+The Nautilus "Remove Background" menu item runs local inference with the `isnet-general-use` ONNX model (the same model `rembg` uses) and writes a transparent `<name>-no-bg.png`.
+
+- Requires `onnxruntime` at runtime (`libonnxruntime.so`), looked up from `ONNXRUNTIME_LIB_PATH` or common distro paths; install with `pacman -S onnxruntime` or see https://onnxruntime.ai for other distros.
+- The model (~170MB) is downloaded once, checksum-verified, and cached under `$XDG_DATA_HOME/file-converter/models` (`~/.local/share/file-converter/models` by default).
+- Available for PNG, JPEG, GIF, WebP, BMP, and TIFF inputs; AVIF, JXL, HEIC, ICO, and SVG are excluded because the Go image decoder doesn't support them.
+- Inference is CPU-only and serialized (one image at a time), capped at 60MB per input file.
+
 ## Build and run
 
 ```bash

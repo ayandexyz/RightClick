@@ -22,6 +22,13 @@ import (
 // was trained with (mirroring rembg's DisSession.predict).
 const isnetMean, isnetStd = 0.5, 1.0
 
+// maxInputBytes caps the source file size before it's decoded, to avoid
+// decoding an arbitrarily large image fully into memory.
+const maxInputBytes = 60_000_000
+
+// ErrImageTooLarge is returned by RemoveFile when src exceeds maxInputBytes.
+var ErrImageTooLarge = fmt.Errorf("image exceeds the %d MB limit for background removal", maxInputBytes/1_000_000)
+
 // Remove runs background removal on img and returns an image the same size
 // as img, with the background's alpha set to zero. The foreground's original
 // colors are preserved; only the alpha channel changes.
@@ -125,6 +132,9 @@ func grayFrom(v float64) color.Gray {
 // dst as a PNG (the only common format that keeps the transparent alpha
 // channel). modelPath should come from EnsureModel.
 func RemoveFile(ctx context.Context, modelPath, src, dst string) error {
+	if info, err := os.Stat(src); err == nil && info.Size() > maxInputBytes {
+		return ErrImageTooLarge
+	}
 	in, err := os.Open(src)
 	if err != nil {
 		return err

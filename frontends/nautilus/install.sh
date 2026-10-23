@@ -150,6 +150,23 @@ ENGINES = [
      "pacman -S tesseract tesseract-data-eng / apt-get install tesseract-ocr"),
 ]
 
+# onnxruntime isn't a binary on PATH, so it's checked separately: as a shared
+# library at one of the paths bgremove's resolveLibraryPath also checks (or
+# ONNXRUNTIME_LIB_PATH, if set).
+ONNXRUNTIME_LIB_PATHS = [
+    "/usr/lib/libonnxruntime.so",
+    "/usr/lib64/libonnxruntime.so",
+    "/usr/local/lib/libonnxruntime.so",
+    "/usr/lib/x86_64-linux-gnu/libonnxruntime.so",
+]
+
+
+def onnxruntime_available():
+    env_path = os.environ.get("ONNXRUNTIME_LIB_PATH")
+    if env_path:
+        return os.path.exists(env_path)
+    return any(os.path.exists(path) for path in ONNXRUNTIME_LIB_PATHS)
+
 
 def report_missing_engines():
     """Print one line per missing PDF engine, or a short all-present note."""
@@ -158,14 +175,18 @@ def report_missing_engines():
         for name, binaries, operations, install in ENGINES
         if not any(shutil.which(binary) for binary in binaries)
     ]
-    if not missing:
+    onnx_missing = not onnxruntime_available()
+    if not missing and not onnx_missing:
         print("All PDF engines are installed.")
         return
     print()
-    print("Optional PDF engines are missing; the menu hides the operations that need them:")
+    print("Optional engines are missing; the menu hides the operations that need them:")
     for name, operations, install in missing:
         print(f"  {name}: {operations}")
         print(f"    install with: {install}")
+    if onnx_missing:
+        print("  onnxruntime: Remove Background")
+        print("    install with: pacman -S onnxruntime / see https://onnxruntime.ai for other distros")
 
 
 if __name__ == "__main__":

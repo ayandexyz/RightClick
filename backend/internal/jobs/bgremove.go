@@ -7,7 +7,10 @@ import (
 	"strings"
 	"sync"
 
+	"errors"
+
 	"file-converter/backend/internal/batch"
+	"file-converter/backend/internal/bgremove"
 	"file-converter/backend/internal/engine"
 	"file-converter/backend/internal/formats"
 	"file-converter/backend/internal/protocol"
@@ -109,6 +112,20 @@ func (m *Manager) SubmitBackgroundRemoval(req BGRemoveRequest) (string, error) {
 	return j.id, nil
 }
 
+// bgRemoveErrorCode maps a RemoveFile error to a protocol error code so the
+// frontend can show something more useful than a raw internal message for
+// the common failure modes.
+func bgRemoveErrorCode(err error) string {
+	switch {
+	case errors.Is(err, bgremove.ErrImageTooLarge):
+		return "image-too-large"
+	case strings.Contains(err.Error(), "decode"):
+		return "decode-failed"
+	default:
+		return "internal"
+	}
+}
+
 // bgOutputName builds the output file's base name: the source stem with
 // "-no-bg" appended, so a PNG input (the common case) never collides with its
 // own name the way a bare extension swap would.
@@ -186,7 +203,7 @@ func (m *Manager) runOneBackgroundRemoval(j *job, index int, source string) file
 			return fileResult{index: index, file: file}
 		}
 		file.State = "failed"
-		file.Error = &protocol.FileError{Code: "internal", Message: err.Error()}
+		file.Error = &protocol.FileError{Code: bgRemoveErrorCode(err), Message: err.Error()}
 		return fileResult{index: index, file: file}
 	}
 	output, file := m.publishPlan(j, plan, file)
