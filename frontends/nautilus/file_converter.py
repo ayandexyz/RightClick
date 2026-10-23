@@ -28,6 +28,15 @@ OFFICE_MIME_TYPES = {
     "application/vnd.ms-powerpoint", "application/vnd.oasis.opendocument.presentation",
 }
 
+# The formats bgremove can actually decode (Go's stdlib png/jpeg/gif plus
+# golang.org/x/image's bmp/tiff/webp). Narrower than SUPPORTED_MIME_TYPES on
+# purpose: svg is vector, and avif/jxl/heic/ico have no decoder wired up, so
+# offering the menu item for them would just fail on activation.
+BGREMOVE_MIME_TYPES = {
+    "image/png", "image/jpeg", "image/gif", "image/webp",
+    "image/bmp", "image/x-ms-bmp", "image/tiff",
+}
+
 SUPPORTED_MIME_TYPES = {
     "image/png", "image/jpeg", "image/webp", "image/jxl", "image/avif",
     "image/svg+xml", "image/svg", "image/svg-xml", "image/x-svg+xml",
@@ -107,6 +116,11 @@ class FileConverterMenuProvider(*((GObject.GObject, Nautilus.MenuProvider) if Na
             top.set_submenu(submenu)
             items.append(top)
 
+        if files and all(file_info.get_mime_type() in BGREMOVE_MIME_TYPES for file_info in files):
+            item = Nautilus.MenuItem(name="FileConverter::RemoveBackground", label="Remove Background")
+            item.connect("activate", self._activate_bgremove, paths)
+            items.append(item)
+
         pdf_tools = self._pdf_tools_menu(
             client, paths,
             all(file_info.get_mime_type() in PDF_MIME_TYPES for file_info in files),
@@ -165,6 +179,9 @@ class FileConverterMenuProvider(*((GObject.GObject, Nautilus.MenuProvider) if Na
     def _activate_studio(self, _item, paths):
         _spawn_helper("--studio", *paths)
 
+    def _activate_bgremove(self, _item, paths):
+        _spawn_helper("--bgremove", *paths)
+
     @staticmethod
     def _convert(paths, preset):
         try:
@@ -192,6 +209,23 @@ class FileConverterMenuProvider(*((GObject.GObject, Nautilus.MenuProvider) if Na
                 send("File Converter is not running", "Start it with: systemctl --user start fcd")
             else:
                 send("PDF operation failed", str(exc))
+
+    @staticmethod
+    def _remove_background(paths):
+        try:
+            final = None
+            # The model loads lazily on first use and downloads on first-ever
+            # run, so give that more room than a plain conversion before
+            # treating silence as a dead daemon.
+            for event in FcClient(_socket_path(), silence_timeout=300.0).remove_background(paths):
+                if event.get("event") == "job.finished":
+                    final = event.get("data", {})
+            _notify_bgremove(final or {})
+        except FcError as exc:
+            if isinstance(exc, DaemonUnavailable):
+                send("File Converter is not running", "Start it with: systemctl --user start fcd")
+            else:
+                send("Background removal failed", str(exc))
 
 
 def _spawn_helper(*args):
@@ -271,6 +305,25 @@ def _notify_operation(job, op):
         send(title, f"{len(done)} done, {len(skipped)} skipped, {len(failed)} failed")
 
 
+def _notify_bgremove(job):
+    state = job.get("state")
+    files = job.get("files", [])
+    done = [item for item in files if item.get("state") == "done"]
+    failed = [item for item in files if item.get("state") == "failed"]
+    reveal(_outputs(done))
+    if state == "completed" and not failed:
+        if len(done) == 1:
+            send("Background removed", os.path.basename(done[0].get("outputs", [""])[0]))
+        else:
+            send("Backgrounds removed", f"{len(done)} images done")
+    elif state == "cancelled":
+        send("Background removal cancelled", "")
+    else:
+        message = failed[0].get("error", {}).get("message", "") if failed else ""
+        send("Background removal failed" if not done else "Background removal finished with errors",
+             f"{len(done)} done, {len(failed)} failed" + (f": {message}" if message else ""))
+
+
 def _outputs(done):
     """Flatten every output path across a job's done files, in order."""
     paths = []
@@ -342,6 +395,8 @@ if __name__ == "__main__":
         FileConverterMenuProvider._convert(sys.argv[3:], sys.argv[2])
     elif sys.argv[1:2] == ["--operation"] and len(sys.argv) > 3:
         FileConverterMenuProvider._run_operation(sys.argv[3:], sys.argv[2])
+    elif sys.argv[1:2] == ["--bgremove"] and len(sys.argv) > 2:
+        FileConverterMenuProvider._remove_background(sys.argv[2:])
     elif sys.argv[1:2] == ["--studio"] and len(sys.argv) > 1:
         launcher = _studio_launcher()
         subprocess.Popen([str(launcher), *sys.argv[2:]], start_new_session=True)

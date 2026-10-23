@@ -90,6 +90,8 @@ func ValidateRequest(req Request) *Error {
 		code, msg = validateCacheClear(req.Params)
 	case "run_operation":
 		code, msg = validateRunOperation(req.Params)
+	case "remove_background":
+		code, msg = validateRemoveBackground(req.Params)
 	case "cancel":
 		code, msg = validateCancel(req.Params)
 	case "menu":
@@ -225,6 +227,35 @@ func validateConvert(params json.RawMessage) (string, string) {
 		if (strings.EqualFold(p.Preset, "image-to-jpeg") || strings.EqualFold(p.Preset, "image-to-bmp") || strings.EqualFold(p.Preset, "image-to-gif")) && (background == "transparent" || len(background) == 5 || len(background) == 9) {
 			return "bad_request", "transparent background is not supported for this format"
 		}
+	}
+	return "", ""
+}
+
+// validateRemoveBackground checks the shape of a remove_background request.
+// Whether each file is actually an image is the daemon's answer, not a reason
+// to reject the request here.
+func validateRemoveBackground(params json.RawMessage) (string, string) {
+	var p struct {
+		Files      []string `json:"files"`
+		OutputDir  string   `json:"output_dir,omitempty"`
+		OnConflict string   `json:"on_conflict,omitempty"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return "bad_request", "invalid remove_background params"
+	}
+	if len(p.Files) == 0 {
+		return "bad_request", "files list cannot be empty"
+	}
+	for _, file := range p.Files {
+		if !filepath.IsAbs(file) {
+			return "bad_request", fmt.Sprintf("path must be absolute: %s", file)
+		}
+	}
+	if p.OutputDir != "" && !filepath.IsAbs(p.OutputDir) {
+		return "bad_request", "output_dir must be absolute"
+	}
+	if p.OnConflict != "" && !isConflictPolicy(p.OnConflict) {
+		return "bad_request", fmt.Sprintf("invalid on_conflict: %s (must be rename, skip, or overwrite)", p.OnConflict)
 	}
 	return "", ""
 }

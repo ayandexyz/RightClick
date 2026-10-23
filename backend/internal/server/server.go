@@ -227,6 +227,37 @@ func (s *Server) handle(conn net.Conn) {
 			if write(protocol.Response{ID: req.ID, Result: map[string]string{"job": id}}) != nil {
 				return
 			}
+		case "remove_background":
+			var p struct {
+				Files     []string `json:"files"`
+				OutputDir string   `json:"output_dir"`
+				Conflict  string   `json:"on_conflict"`
+			}
+			if json.Unmarshal(req.Params, &p) != nil {
+				if writeError(write, req.ID, "bad_request", "invalid remove_background params") != nil {
+					return
+				}
+				continue
+			}
+			if p.Conflict == "" {
+				p.Conflict = "rename"
+			}
+			id, err := s.deps.Jobs.SubmitBackgroundRemoval(jobs.BGRemoveRequest{
+				Files: p.Files, OutputDir: p.OutputDir, Conflict: protocol.ConflictPolicy(p.Conflict), Events: writeEvent(write),
+			})
+			if err != nil {
+				code := "unsupported"
+				if errors.Is(err, formats.ErrInvalidInput) {
+					code = "bad_request"
+				}
+				if writeError(write, req.ID, code, err.Error()) != nil {
+					return
+				}
+				continue
+			}
+			if write(protocol.Response{ID: req.ID, Result: map[string]string{"job": id}}) != nil {
+				return
+			}
 		case "operations":
 			if write(protocol.Response{ID: req.ID, Result: s.handleOperations(req.Params)}) != nil {
 				return
@@ -529,6 +560,13 @@ func (s *Server) EngineStatus() []protocol.EngineStatus {
 		entry := protocol.EngineStatus{ID: id, Available: true}
 		if err := s.deps.PDFToolbox.Available(id); err != nil {
 			entry.Available, entry.Reason = false, err.Error()
+		}
+		status = append(status, entry)
+	}
+	if s.deps.Jobs != nil {
+		entry := protocol.EngineStatus{ID: "bgremove", Available: true}
+		if available, reason := s.deps.Jobs.BackgroundRemovalStatus(); !available {
+			entry.Available, entry.Reason = false, reason
 		}
 		status = append(status, entry)
 	}

@@ -258,8 +258,8 @@ class PDFToolsMenuTests(ExtensionMenuTests):
             [], [op("pdf-from-images", "Images to PDF", group="import")]
         )
         menu = provider.get_file_items([FakeFile("/tmp/a.png"), FakeFile("/tmp/b.png")])
-        self.assertEqual([item.label for item in menu], ["PDF Tools"])
-        self.assertEqual([i.label for i in menu[0].submenu.items], ["Images to PDF"])
+        self.assertEqual([item.label for item in menu], ["Remove Background", "PDF Tools"])
+        self.assertEqual([i.label for i in menu[1].submenu.items], ["Images to PDF"])
 
     def test_mixed_pdf_and_image_selection_has_no_pdf_tools(self):
         provider = self.provider_with([], [])
@@ -304,7 +304,7 @@ class PDFToolsMenuTests(ExtensionMenuTests):
         with mock.patch.object(module, "_studio_launcher") as launcher:
             launcher.return_value.is_file.return_value = True
             menu = provider.get_file_items([FakeFile("/tmp/a.png")])
-        self.assertNotIn("Customise…", [item.label for item in menu[0].submenu.items])
+        self.assertNotIn("Customise…", [item.label for item in menu[-1].submenu.items])
 
     def test_activating_an_operation_spawns_the_helper_with_op_and_paths(self):
         module = self.module
@@ -357,3 +357,78 @@ class OperationNotificationTests(ExtensionMenuTests):
         body = send_args.args[1]
         self.assertIn("→", body)
         self.assertIn("big.pdf", body)
+
+
+class BackgroundRemovalMenuTests(ExtensionMenuTests):
+    def provider_with(self, targets, operations):
+        module = self.module
+        patcher = mock.patch.object(module, "FcClient")
+        self.addCleanup(patcher.stop)
+        client = patcher.start().return_value
+        client.targets.return_value = targets
+        client.operations.return_value = operations
+        return module.FileConverterMenuProvider()
+
+    def test_supported_image_selection_offers_remove_background(self):
+        provider = self.provider_with([], [])
+        menu = provider.get_file_items([FakeFile("/tmp/a.jpg", "image/jpeg")])
+        self.assertIn("Remove Background", [item.label for item in menu])
+
+    def test_unsupported_image_format_has_no_remove_background(self):
+        # avif has no decoder wired up on the backend, so offering the item
+        # would just fail on activation.
+        provider = self.provider_with([], [])
+        menu = provider.get_file_items([FakeFile("/tmp/a.avif", "image/avif")])
+        self.assertNotIn("Remove Background", [item.label for item in menu])
+
+    def test_mixed_image_and_pdf_selection_has_no_remove_background(self):
+        provider = self.provider_with([], [])
+        menu = provider.get_file_items([FakeFile("/tmp/a.png"), FakeFile("/tmp/b.pdf", "application/pdf")])
+        self.assertNotIn("Remove Background", [item.label for item in menu])
+
+    def test_activating_remove_background_spawns_the_helper_with_paths(self):
+        module = self.module
+        provider = self.provider_with([], [])
+        menu = provider.get_file_items([FakeFile("/tmp/a.png"), FakeFile("/tmp/b.jpg", "image/jpeg")])
+        item = next(i for i in menu if i.label == "Remove Background")
+        with mock.patch.object(module, "_spawn_helper") as spawn:
+            item.activate()
+        spawn.assert_called_once_with("--bgremove", "/tmp/a.png", "/tmp/b.jpg")
+
+
+class BackgroundRemovalNotificationTests(ExtensionMenuTests):
+    def notify(self, job):
+        module = self.module
+        with mock.patch.object(module, "send") as send, mock.patch.object(module, "reveal"):
+            module._notify_bgremove(job)
+        return send.call_args
+
+    def test_single_file_completion_names_the_output(self):
+        send_args = self.notify(
+            {"state": "completed", "files": [{"state": "done", "source": "/tmp/a.jpg", "outputs": ["/tmp/a-no-bg.png"]}]}
+        )
+        self.assertEqual(send_args.args[0], "Background removed")
+        self.assertEqual(send_args.args[1], "a-no-bg.png")
+
+    def test_multiple_files_completion_reports_a_count(self):
+        send_args = self.notify({
+            "state": "completed",
+            "files": [
+                {"state": "done", "source": "/tmp/a.jpg", "outputs": ["/tmp/a-no-bg.png"]},
+                {"state": "done", "source": "/tmp/b.jpg", "outputs": ["/tmp/b-no-bg.png"]},
+            ],
+        })
+        self.assertEqual(send_args.args[0], "Backgrounds removed")
+        self.assertIn("2", send_args.args[1])
+
+    def test_failure_reports_the_error_message(self):
+        send_args = self.notify({
+            "state": "failed",
+            "files": [{"state": "failed", "source": "/tmp/a.jpg", "error": {"code": "internal", "message": "decode failed"}}],
+        })
+        self.assertEqual(send_args.args[0], "Background removal failed")
+        self.assertIn("decode failed", send_args.args[1])
+
+    def test_cancelled_job_is_reported(self):
+        send_args = self.notify({"state": "cancelled", "files": []})
+        self.assertEqual(send_args.args[0], "Background removal cancelled")

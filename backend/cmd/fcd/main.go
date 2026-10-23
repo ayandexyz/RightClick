@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"file-converter/backend/internal/bgremove"
 	"file-converter/backend/internal/engine"
 	"file-converter/backend/internal/jobs"
 	"file-converter/backend/internal/pdfops"
@@ -54,6 +55,9 @@ func main() {
 		LibreOffice: pdfops.NewLibreOffice(nil),
 	}
 	manager.SetPDFToolbox(pdfToolbox)
+	// The model is downloaded and loaded lazily on first use, so this never
+	// delays startup; a missing onnxruntime library is still reported now.
+	manager.SetBackgroundRemover(bgremove.NewRemover())
 	defer manager.Close()
 	pdfInfo := pdfops.NewInfo(nil, pdfToolbox.PDFCPU)
 

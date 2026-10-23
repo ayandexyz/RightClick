@@ -138,7 +138,7 @@ func main() {
 		}
 		// convert and pdf run a job, so wait for job.finished; everything else
 		// answers with a single result and is done.
-		waitsForJob := cmd.name == "convert" || (cmd.name == "pdf" && !cmd.pdfList && !cmd.pdfInfo && !cmd.pdfThumbs)
+		waitsForJob := cmd.name == "convert" || cmd.name == "bgremove" || (cmd.name == "pdf" && !cmd.pdfList && !cmd.pdfInfo && !cmd.pdfThumbs)
 		if !waitsForJob {
 			if _, hasResult := value["result"]; hasResult {
 				return
@@ -241,10 +241,10 @@ func parseCommonArgs(args []string) (command, error) {
 			}
 		}
 	}
-	if cmd.name != "hello" && cmd.name != "engines" && cmd.name != "menu" && cmd.name != "targets" && cmd.name != "convert" && cmd.name != "cancel" && cmd.name != "cache" {
+	if cmd.name != "hello" && cmd.name != "engines" && cmd.name != "menu" && cmd.name != "targets" && cmd.name != "convert" && cmd.name != "bgremove" && cmd.name != "cancel" && cmd.name != "cache" {
 		return command{}, fmt.Errorf("unknown command: %s", cmd.name)
 	}
-	if cmd.name == "targets" || cmd.name == "convert" {
+	if cmd.name == "targets" || cmd.name == "convert" || cmd.name == "bgremove" {
 		if len(cmd.files) == 0 {
 			return command{}, fmt.Errorf("at least one file is required")
 		}
@@ -269,7 +269,10 @@ func parseCommonArgs(args []string) (command, error) {
 	if cmd.name == "cancel" && cmd.job == "" {
 		return command{}, fmt.Errorf("job id is required")
 	}
-	if cmd.name != "convert" && (cmd.outputDir != "" || cmd.preset != "" || cmd.quality != nil || cmd.maxSize != nil || cmd.background != "") {
+	if cmd.name != "convert" && cmd.name != "bgremove" && cmd.outputDir != "" {
+		return command{}, fmt.Errorf("conversion options require convert")
+	}
+	if cmd.name != "convert" && (cmd.preset != "" || cmd.quality != nil || cmd.maxSize != nil || cmd.background != "") {
 		return command{}, fmt.Errorf("conversion options require convert")
 	}
 	return cmd, nil
@@ -621,6 +624,9 @@ func commandRequest(cmd command) protocol.Request {
 		return protocol.Request{ID: 1, Method: "cache_clear", Params: raw(map[string]any{})}
 	case "cancel":
 		return protocol.Request{ID: 1, Method: "cancel", Params: raw(map[string]any{"job": cmd.job})}
+	case "bgremove":
+		params := map[string]any{"files": absolutePaths(cmd.files), "output_dir": absolutePath(cmd.outputDir), "on_conflict": cmd.conflict}
+		return protocol.Request{ID: 1, Method: "remove_background", Params: raw(params)}
 	case "pdf":
 		files := absolutePaths(cmd.files)
 		if cmd.pdfList {
@@ -976,7 +982,7 @@ func absolutePaths(paths []string) []string {
 
 func raw(value any) json.RawMessage { data, _ := json.Marshal(value); return data }
 
-const usageText = "usage: fcctl hello | engines [--json] | targets FILE... [--menu] [--json] | menu show | menu set CATEGORY FORMAT... | menu reset [CATEGORY] | convert FILE... (--to png|jpeg|webp|jxl|avif|gif|bmp|tiff|ico|heic | --preset PRESET) [--quality 1-100] [--max-size PX] [--background COLOR] [--out-dir DIR] [--recursive] [--on-conflict POLICY] [--json] | cancel JOB [--json] | pdf (merge FILE FILE... [--pages-for N=SPEC]... | extract FILE... --pages SPEC | delete FILE... --pages SPEC | rotate FILE... --angle 90|180|270 [--pages SPEC] | reverse FILE... | edit FILE --edit ITEMS | split-ranges FILE --ranges SPEC;SPEC... | split-every FILE --every N | decrypt FILE --password-file FILE | encrypt FILE --user-password-file FILE --owner-password-file FILE | permissions FILE --owner-password-file FILE --permissions LIST | stamp-text FILE --text TEXT [--position P] [--opacity 0-100] [--rotation DEG] [--size PT] [--color #rrggbb] [--on-top] [--pages SPEC] | stamp-image FILE --image FILE [--position P] [--opacity 0-100] [--rotation DEG] [--pages SPEC] | page-numbers FILE [--format number|of-total] [--start N] [--position P] [--pages SPEC] | header-footer FILE [--left T] [--centre T] [--right T] [--edge top|bottom] [--pages SPEC] | bates FILE --start N [--prefix TEXT] [--position P] [--pages SPEC] | crop FILE --unit mm|pt|percent [--top N] [--right N] [--bottom N] [--left N] [--pages SPEC] | resize FILE --to A4|A3|A5|Letter|Legal [--pages SPEC] | nup FILE --per-sheet N [--orientation portrait|landscape] [--margin N] [--border] | booklet FILE --per-sheet 2|4 | compare FILE FILE | redact FILE [--area PAGE,X,Y,W,H] [--term TERM] | to-pdfa FILE [--level 1b|2b|3b] | metadata FILE [--title TEXT] [--author TEXT] [--subject TEXT] [--keywords TEXT] | NAME FILE... | list FILE | info FILE | thumbs FILE --pages SPEC) [--width PX] [--out-dir DIR] [--on-conflict POLICY] [--json] | cache clear [--json]"
+const usageText = "usage: fcctl hello | engines [--json] | targets FILE... [--menu] [--json] | menu show | menu set CATEGORY FORMAT... | menu reset [CATEGORY] | convert FILE... (--to png|jpeg|webp|jxl|avif|gif|bmp|tiff|ico|heic | --preset PRESET) [--quality 1-100] [--max-size PX] [--background COLOR] [--out-dir DIR] [--recursive] [--on-conflict POLICY] [--json] | bgremove FILE... [--out-dir DIR] [--on-conflict POLICY] [--json] | cancel JOB [--json] | pdf (merge FILE FILE... [--pages-for N=SPEC]... | extract FILE... --pages SPEC | delete FILE... --pages SPEC | rotate FILE... --angle 90|180|270 [--pages SPEC] | reverse FILE... | edit FILE --edit ITEMS | split-ranges FILE --ranges SPEC;SPEC... | split-every FILE --every N | decrypt FILE --password-file FILE | encrypt FILE --user-password-file FILE --owner-password-file FILE | permissions FILE --owner-password-file FILE --permissions LIST | stamp-text FILE --text TEXT [--position P] [--opacity 0-100] [--rotation DEG] [--size PT] [--color #rrggbb] [--on-top] [--pages SPEC] | stamp-image FILE --image FILE [--position P] [--opacity 0-100] [--rotation DEG] [--pages SPEC] | page-numbers FILE [--format number|of-total] [--start N] [--position P] [--pages SPEC] | header-footer FILE [--left T] [--centre T] [--right T] [--edge top|bottom] [--pages SPEC] | bates FILE --start N [--prefix TEXT] [--position P] [--pages SPEC] | crop FILE --unit mm|pt|percent [--top N] [--right N] [--bottom N] [--left N] [--pages SPEC] | resize FILE --to A4|A3|A5|Letter|Legal [--pages SPEC] | nup FILE --per-sheet N [--orientation portrait|landscape] [--margin N] [--border] | booklet FILE --per-sheet 2|4 | compare FILE FILE | redact FILE [--area PAGE,X,Y,W,H] [--term TERM] | to-pdfa FILE [--level 1b|2b|3b] | metadata FILE [--title TEXT] [--author TEXT] [--subject TEXT] [--keywords TEXT] | NAME FILE... | list FILE | info FILE | thumbs FILE --pages SPEC) [--width PX] [--out-dir DIR] [--on-conflict POLICY] [--json] | cache clear [--json]"
 
 func usage()          { fmt.Fprintln(os.Stderr, usageText) }
 func fatal(err error) { fmt.Fprintln(os.Stderr, err); os.Exit(1) }

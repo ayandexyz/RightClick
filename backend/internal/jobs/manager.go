@@ -74,6 +74,8 @@ type Manager struct {
 	router      Router
 	pdf         pdfops.Toolbox // set by SetPDFToolbox; zero until then
 	pdfMu       sync.Mutex
+	bgRemover   BackgroundRemover // set by SetBackgroundRemover; nil until then
+	bgMu        sync.Mutex
 	mu          sync.Mutex
 	outputMu    sync.Mutex
 	reserved    map[string]struct{} // destinations planned but not yet written; guarded by outputMu
@@ -99,6 +101,9 @@ type job struct {
 	preSkip map[int]string
 	// op is set for PDF operation jobs; run dispatches to runOperation then.
 	op *OperationRequest
+	// bg is set for background-removal jobs; run dispatches to
+	// runBackgroundRemoval then.
+	bg *BGRemoveRequest
 
 	publicationMu sync.Mutex
 	published     bool
@@ -395,6 +400,19 @@ func (m *Manager) run(j *job) {
 		}
 		opFiles := m.runOperation(j, op)
 		copy(files, opFiles)
+		emitter.files = files
+		if j.ctx.Err() == nil {
+			emitter.emit("job.updated", true)
+		}
+		m.finishJob(j, emitter, files)
+		return
+	}
+	if j.bg != nil {
+		for i := range files {
+			files[i].State = "running"
+		}
+		bgFiles := m.runBackgroundRemoval(j)
+		copy(files, bgFiles)
 		emitter.files = files
 		if j.ctx.Err() == nil {
 			emitter.emit("job.updated", true)

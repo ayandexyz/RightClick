@@ -170,6 +170,38 @@ class FcClient:
         fields = ("id", "label", "group", "mode", "engine", "enabled", "reason")
         return [Operation(**{key: operation.get(key, "") for key in fields}) for operation in result.get("operations", [])]
 
+    def remove_background(self, paths, output_dir=None, on_conflict=None):
+        """Remove the background from a set of images and yield job events
+        until it finishes. The output is always a transparent PNG."""
+        sock = self._connect()
+        file = sock.makefile("rwb")
+        try:
+            self._hello(sock, file)
+            payload = {"files": paths}
+            if output_dir:
+                payload["output_dir"] = output_dir
+            if on_conflict:
+                payload["on_conflict"] = on_conflict
+            result = self._request(sock, file, "remove_background", payload, self.convert_timeout)
+            job_id = result.get("job")
+            if not job_id:
+                raise ProtocolError("remove_background response did not include a job")
+            while True:
+                sock.settimeout(self.silence_timeout)
+                line = file.readline()
+                if not line:
+                    raise DaemonUnavailable("fcd closed the connection while removing the background")
+                message = json.loads(line)
+                if message.get("event") in ("job.updated", "job.finished"):
+                    yield message
+                if message.get("event") == "job.finished" and message.get("data", {}).get("id") == job_id:
+                    return
+        except socket.timeout as exc:
+            raise DaemonUnavailable("no fcd job event for 60 seconds") from exc
+        finally:
+            file.close()
+            sock.close()
+
     def pdf_info(self, path, password=None):
         """Page count and sizes of one PDF.
 
