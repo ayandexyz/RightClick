@@ -228,13 +228,24 @@ class FileConverterMenuProvider(*((GObject.GObject, Nautilus.MenuProvider) if Na
                 send("Background removal failed", str(exc))
 
 
+def _helper_python():
+    # `env python3` can resolve to a user-managed Python (pyenv/mise/etc.) that
+    # shadows the system one on PATH and lacks PyGObject, which this helper
+    # needs for --studio. The system interpreter is the one guaranteed to have
+    # the gi bindings the installer just checked for, so prefer it if present.
+    for candidate in ("/usr/bin/python3", sys.executable):
+        if candidate and os.path.isfile(candidate):
+            return candidate
+    return "python3"
+
+
 def _spawn_helper(*args):
     # Python threads inside Nautilus only run while its main loop is busy (they stalled until F5),
     # so the blocking work runs in a separate process. sys.executable is nautilus itself here.
     from gi.repository import Gio, GLib
     try:
         Gio.Subprocess.new(
-            ["/usr/bin/env", "python3", os.path.abspath(__file__), *args],
+            [_helper_python(), os.path.abspath(__file__), *args],
             Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_SILENCE,
         )
     except GLib.Error:

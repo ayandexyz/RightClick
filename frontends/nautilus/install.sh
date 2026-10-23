@@ -3,6 +3,7 @@ import glob
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -80,7 +81,7 @@ def install_studio():
     launcher = Path.home() / ".local/bin/fc-pdf-studio"
     launcher.parent.mkdir(parents=True, exist_ok=True)
     launcher.write_text(
-        "#!/usr/bin/env python3\n"
+        f"#!{sys.executable}\n"
         "import os, sys\n"
         "sys.path.insert(0, os.path.expanduser('~/.local/share/file-converter/studio'))\n"
         "from pdf_studio.cli import main\n"
