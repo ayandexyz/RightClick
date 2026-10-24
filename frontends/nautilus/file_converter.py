@@ -64,6 +64,10 @@ except ImportError:
 
 
 def _studio_launcher():
+    """Where PDF Studio's launcher lives, whichever installer put it there."""
+    for candidate in (Path("/usr/bin/fc-pdf-studio"), Path.home() / ".local/bin/fc-pdf-studio"):
+        if candidate.is_file():
+            return candidate
     return Path.home() / ".local/bin/fc-pdf-studio"
 
 
