@@ -73,8 +73,10 @@ class ExtensionMenuTests(unittest.TestCase):
         spec.loader.exec_module(cls.module)
 
     def test_unsupported_selection_has_no_menu(self):
+        # text/plain is deliberately excluded: it is an Office mime type (TXT
+        # converts to PDF), so it would not exercise the unsupported path.
         provider = self.module.FileConverterMenuProvider()
-        self.assertEqual(provider.get_file_items([FakeFile("/tmp/a.txt", "text/plain")]), [])
+        self.assertEqual(provider.get_file_items([FakeFile("/tmp/a.zip", "application/zip")]), [])
 
     def test_video_selection_builds_convert_menu(self):
         targets = [
@@ -223,7 +225,8 @@ class PDFToolsMenuTests(ExtensionMenuTests):
             [op("pdf-rotate-cw", "Rotate 90° clockwise"),
              op("pdf-merge", "Merge", enabled=False, reason="needs at least 2 files")],
         )
-        menu = provider.get_file_items([FakeFile("/tmp/a.pdf", "application/pdf")])
+        with mock.patch.object(self.module, "_studio_available", return_value=False):
+            menu = provider.get_file_items([FakeFile("/tmp/a.pdf", "application/pdf")])
         self.assertEqual([item.label for item in menu], ["Convert to", "PDF Tools"])
         # Merge needs two files, so the daemon disables it here and the menu drops it.
         self.assertEqual([i.label for i in menu[1].submenu.items], ["Rotate 90° clockwise"])
@@ -232,9 +235,10 @@ class PDFToolsMenuTests(ExtensionMenuTests):
         provider = self.provider_with(
             [], [op("pdf-merge", "Merge"), op("pdf-rotate-180", "Rotate 180°")]
         )
-        menu = provider.get_file_items(
-            [FakeFile("/tmp/a.pdf", "application/pdf"), FakeFile("/tmp/b.pdf", "application/pdf")]
-        )
+        with mock.patch.object(self.module, "_studio_available", return_value=False):
+            menu = provider.get_file_items(
+                [FakeFile("/tmp/a.pdf", "application/pdf"), FakeFile("/tmp/b.pdf", "application/pdf")]
+            )
         self.assertEqual([item.label for item in menu], ["PDF Tools"])
         self.assertEqual([i.label for i in menu[0].submenu.items], ["Merge", "Rotate 180°"])
 
@@ -242,7 +246,8 @@ class PDFToolsMenuTests(ExtensionMenuTests):
         provider = self.provider_with(
             [], [op("pdf-rotate", "Rotate", mode="studio"), op("pdf-extract", "Extract pages", mode="studio")]
         )
-        self.assertEqual(provider.get_file_items([FakeFile("/tmp/a.pdf", "application/pdf")]), [])
+        with mock.patch.object(self.module, "_studio_available", return_value=False):
+            self.assertEqual(provider.get_file_items([FakeFile("/tmp/a.pdf", "application/pdf")]), [])
 
     def test_disabled_operation_is_hidden(self):
         provider = self.provider_with(
@@ -250,7 +255,8 @@ class PDFToolsMenuTests(ExtensionMenuTests):
             [op("pdf-repair", "Repair", enabled=False, reason="qpdf is not installed"),
              op("pdf-reverse", "Reverse pages")],
         )
-        menu = provider.get_file_items([FakeFile("/tmp/a.pdf", "application/pdf")])
+        with mock.patch.object(self.module, "_studio_available", return_value=False):
+            menu = provider.get_file_items([FakeFile("/tmp/a.pdf", "application/pdf")])
         self.assertEqual([i.label for i in menu[0].submenu.items], ["Reverse pages"])
 
     def test_images_build_a_pdf_tools_submenu(self):

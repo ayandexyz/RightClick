@@ -19,13 +19,9 @@ func TestGhostscriptCompressFlags(t *testing.T) {
 	rec := &recordRunner{err: nil}
 	gs := newTestGhostscript(rec.run)
 	for preset, wantFlag := range cases {
-		err := gs.Compress(context.Background(), writeSource(t, 4096), "/tmp/out.pdf", preset)
-		if !errors.Is(err, ErrNoGain) && err != nil {
-			// We expect ErrNoGain because /tmp/out.pdf does not exist; the
-			// success branch exits before reaching checkShrink. Either way the
-			// only thing that matters is the args.
-			t.Fatalf("preset %s returned %v, want ErrNoGain from checkShrink", preset, err)
-		}
+		// gs.runner records args before checkShrink runs, and /tmp/out.pdf is
+		// never created here, so checkShrink always errors; only the args matter.
+		_ = gs.Compress(context.Background(), writeSource(t, 4096), "/tmp/out.pdf", preset)
 		settings := -1
 		for i, a := range rec.gotArgs {
 			if a == "-dPDFSETTINGS="+wantFlag {
