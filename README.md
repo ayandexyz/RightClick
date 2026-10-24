@@ -3,6 +3,37 @@
 Convert files from where you are: pick a file, choose a target format in a radial menu, done.
 One backend, a native frontend per platform.
 
+## Install
+
+### Omarchy / Arch Linux
+
+```bash
+git clone https://github.com/ayandexyz/RightClick.git
+cd RightClick/packaging/arch
+makepkg -si
+```
+
+This installs `fcd`/`fcctl`, the Nautilus extension, PDF Studio, and the `fcd` systemd user unit to standard system paths (not published to the AUR — see `packaging/arch/PKGBUILD` for why). Once it finishes, enable the daemon and reload Nautilus as your own user:
+
+```bash
+systemctl --user enable --now fcd.service
+nautilus -q
+```
+
+PDF Studio and several PDF tools need optional packages (Ghostscript, qpdf, Poppler, ImageMagick, LibreOffice, ...); see the PKGBUILD's `optdepends` for the full list. Nothing fails without them — the Nautilus menu just hides whatever engine isn't installed.
+
+### Ubuntu / Debian
+
+No native package yet; build from source and run the installer:
+
+```bash
+git clone https://github.com/ayandexyz/RightClick.git
+cd RightClick
+./frontends/nautilus/install.sh
+```
+
+This needs a Go toolchain (`sudo apt-get install golang-go`) to build `fcd`/`fcctl`. The installer then installs the Nautilus extension and a per-user systemd service under `~/.local`, installs `python3-nautilus` for you if it's missing, and installs PDF Studio if GTK 4.12+ and libadwaita 1.5+ (`gir1.2-gtk-4.0 gir1.2-adw-1 python3-gi`) are available.
+
 ## PDF tools
 
 Beyond rasterizing pages, the backend offers structural PDF tools. The Nautilus menu and `fcctl pdf` reach every one through the same `operations` catalogue, with each tool recorded as one of three modes: `instant` (one click, no further input), `studio` (needs a page selection or angle), `import` (assembles a new PDF).
@@ -237,9 +268,10 @@ The complete wire contract is documented in [`docs/PROTOCOL.md`](docs/PROTOCOL.m
 ```
 frontends/nautilus  Nautilus extension, fcd systemd unit, installer (Omarchy and Ubuntu)
 frontends/omarchy   Omarchy-only Quattro bar widget and progress panel
-frontends/windows   native Windows client
+frontends/windows   Windows frontend (not yet built)
         │  NDJSON over Unix socket / named pipe   (docs/PROTOCOL.md)
-backend/            fcd daemon and fcctl development client
+backend/            fcd daemon and fcctl CLI
+packaging/arch      Arch/Omarchy PKGBUILD
 ```
 
 ## Roadmap
