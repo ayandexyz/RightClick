@@ -1,0 +1,33 @@
+post_install() {
+    cat <<EOF
+
+file-converter installed. As your own user (not root):
+
+  systemctl --user enable --now fcd.service
+  nautilus -q
+
+PDF Studio, Office-to-PDF, and several PDF tools need optional packages;
+run 'pacman -Qi file-converter' to see them, or just try a conversion --
+the Nautilus menu hides anything whose engine is missing.
+EOF
+}
+
+post_upgrade() {
+    cat <<EOF
+
+file-converter upgraded. Restart the daemon and reload Nautilus:
+
+  systemctl --user restart fcd.service
+  nautilus -q
+EOF
+}
+
+post_remove() {
+    cat <<EOF
+
+file-converter removed. If it was running for your user:
+
+  systemctl --user disable --now fcd.service
+  nautilus -q
+EOF
+}

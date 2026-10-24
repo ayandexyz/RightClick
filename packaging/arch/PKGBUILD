@@ -1,0 +1,87 @@
+# Maintainer: Ayan De <deayan252@gmail.com>
+#
+# This PKGBUILD builds from the git checkout it ships in (packaging/arch/),
+# not from a downloaded tarball. Install with:
+#   git clone https://github.com/ayandexyz/RightClick.git
+#   cd RightClick/packaging/arch && makepkg -si
+#
+# It is not written for AUR submission (no versioned source URL / checksums);
+# bump pkgver by hand when cutting a new release.
+
+pkgname=file-converter
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Convert files from a Nautilus context menu: images, video, audio, and a full PDF toolset, backed by a local daemon and CLI"
+arch=('x86_64')
+url="https://github.com/ayandexyz/RightClick"
+license=('MIT')
+depends=('python-nautilus' 'glib2')
+makedepends=('go')
+optdepends=(
+    'gtk4: PDF Studio'
+    'libadwaita: PDF Studio'
+    'python-gobject: PDF Studio and the Nautilus extension'
+    'ghostscript: PDF compress, grayscale, and PDF/A conversion'
+    'qpdf: PDF repair, linearize, and flatten'
+    'poppler: PDF text/image extraction, thumbnails, and compare'
+    'imagemagick: raster image conversion'
+    'librsvg: SVG rasterization'
+    'tesseract: future PDF OCR support'
+    'ffmpeg: video and audio conversion'
+    'libreoffice-fresh: Office document to PDF conversion'
+)
+install=file-converter.install
+source=()
+sha256sums=()
+
+_repo_root() {
+    cd "$startdir/../.." && pwd
+}
+
+build() {
+    local repo
+    repo=$(_repo_root)
+    cd "$repo/backend"
+    go build -o "$srcdir/fcd" ./cmd/fcd
+    go build -o "$srcdir/fcctl" ./cmd/fcctl
+}
+
+package() {
+    local repo
+    repo=$(_repo_root)
+
+    install -Dm755 "$srcdir/fcd" "$pkgdir/usr/bin/fcd"
+    install -Dm755 "$srcdir/fcctl" "$pkgdir/usr/bin/fcctl"
+
+    install -Dm644 "$repo/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+
+    install -Dm644 "$startdir/fcd.service" "$pkgdir/usr/lib/systemd/user/fcd.service"
+
+    # Nautilus extension: the menu provider plus the shared fc_client package
+    # it imports, laid out exactly as frontends/nautilus/install.sh does for
+    # a per-user install, but under the system extensions directory.
+    local nautilus_ext="$pkgdir/usr/share/nautilus-python/extensions"
+    install -Dm644 "$repo/frontends/nautilus/file_converter.py" "$nautilus_ext/file_converter.py"
+    cp -r "$repo/frontends/common/fc_client" "$nautilus_ext/fc_client"
+
+    # PDF Studio: GTK4/libadwaita app, launched by a small wrapper on PATH.
+    local studio="$pkgdir/usr/share/file-converter/studio"
+    install -d "$studio"
+    cp -r "$repo/frontends/pdf-studio/pdf_studio" "$studio/pdf_studio"
+    cp -r "$repo/frontends/common/fc_client" "$studio/fc_client"
+
+    install -d "$pkgdir/usr/bin"
+    cat > "$pkgdir/usr/bin/fc-pdf-studio" <<'EOF'
+#!/usr/bin/env python3
+import sys
+sys.path.insert(0, "/usr/share/file-converter/studio")
+from pdf_studio.cli import main
+sys.exit(main())
+EOF
+    chmod 755 "$pkgdir/usr/bin/fc-pdf-studio"
+
+    install -Dm644 "$repo/frontends/pdf-studio/io.fileconverter.PdfStudio.desktop" \
+        "$pkgdir/usr/share/applications/io.fileconverter.PdfStudio.desktop"
+
+    find "$pkgdir" -name '__pycache__' -type d -exec rm -rf {} +
+}
