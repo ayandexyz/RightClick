@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
+import fnmatch
 import glob
+import hashlib
+import json
 import os
+import platform
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -15,6 +22,11 @@ PACKAGES = {
     "arch": ["pacman", "-S", "--needed", "python-nautilus"],
     "debian": ["apt-get", "install", "-y", "python3-nautilus"],
 }
+
+GITHUB_RELEASE_API = "https://api.github.com/repos/ayandexyz/RightClick/releases/latest"
+# Matches the asset names published alongside each release; add an entry
+# here once a release ships binaries for another architecture.
+ARCH_SUFFIXES = {"x86_64": "amd64", "aarch64": "arm64"}
 
 
 def distro_family():
@@ -96,12 +108,71 @@ def install_studio():
     print("PDF Studio installed")
 
 
+def _github_get(url, timeout=10):
+    request = urllib.request.Request(url, headers={"User-Agent": "file-converter-installer"})
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return response.read()
+
+
+def _fetch_prebuilt_binaries(build_dir):
+    """Download fcd/fcctl from the latest GitHub release for this machine.
+
+    Returns {"fcd": path, "fcctl": path} in build_dir, or None if there is
+    no matching release asset (unsupported architecture, no network, or a
+    checksum mismatch) -- callers should fall back to building from source.
+    """
+    suffix = ARCH_SUFFIXES.get(platform.machine())
+    if suffix is None:
+        return None
+    try:
+        release = json.loads(_github_get(GITHUB_RELEASE_API))
+        assets = {asset["name"]: asset["browser_download_url"] for asset in release.get("assets", [])}
+        tarball_name = next(
+            (name for name in assets if fnmatch.fnmatch(name, f"file-converter-*-linux-{suffix}.tar.gz")), None
+        )
+        if tarball_name is None or "SHA256SUMS" not in assets:
+            return None
+        tarball = _github_get(assets[tarball_name], timeout=60)
+        checksums = _github_get(assets["SHA256SUMS"]).decode()
+        wanted = next((line.split()[0] for line in checksums.splitlines() if line.endswith(tarball_name)), None)
+        if wanted is None or hashlib.sha256(tarball).hexdigest() != wanted:
+            print(f"warning: checksum mismatch for {tarball_name}; building from source instead")
+            return None
+        archive_path = build_dir / tarball_name
+        archive_path.write_bytes(tarball)
+        with tarfile.open(archive_path) as tar:
+            wanted_members = [m for m in tar.getmembers() if m.name in ("fcd", "fcctl") and m.isfile()]
+            if {m.name for m in wanted_members} != {"fcd", "fcctl"}:
+                return None
+            tar.extractall(build_dir, members=wanted_members, filter="data")
+        print(f"Using prebuilt fcd/fcctl from {release.get('tag_name', 'the latest release')}")
+        return {"fcd": build_dir / "fcd", "fcctl": build_dir / "fcctl"}
+    except (urllib.error.URLError, OSError, ValueError, KeyError, tarfile.TarError):
+        return None
+
+
+def _build_from_source(build_dir):
+    fcd = build_dir / "fcd"
+    fcctl = build_dir / "fcctl"
+    subprocess.run(["go", "build", "-o", str(fcd), "./cmd/fcd"], cwd=BACKEND, check=True)
+    subprocess.run(["go", "build", "-o", str(fcctl), "./cmd/fcctl"], cwd=BACKEND, check=True)
+    return {"fcd": fcd, "fcctl": fcctl}
+
+
+def _install_binary(source, bin_dir, name):
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    # Copy beside the target and rename: a running fcd keeps its old inode, so this works while the service runs.
+    staged = bin_dir / f".{name}.new"
+    shutil.copy2(source, staged)
+    staged.chmod(0o755)
+    os.replace(staged, bin_dir / name)
+
+
 def main():
     ensure_nautilus_python()
     build_dir = Path(tempfile.mkdtemp(prefix="file-converter-build-"))
     try:
-        binary = build_dir / "fcd"
-        subprocess.run(["go", "build", "-o", str(binary), "./cmd/fcd"], cwd=BACKEND, check=True)
+        binaries = _fetch_prebuilt_binaries(build_dir) or _build_from_source(build_dir)
         extension_dir = Path.home() / ".local/share/nautilus-python/extensions"
         extension_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(FRONTEND / "file_converter.py", extension_dir / "file_converter.py")
@@ -111,12 +182,8 @@ def main():
         # frontend, but the installed layout is unchanged: extensions/fc_client/.
         shutil.copytree(ROOT / "frontends" / "common" / "fc_client", package)
         bin_dir = Path.home() / ".local/bin"
-        bin_dir.mkdir(parents=True, exist_ok=True)
-        # Copy beside the target and rename: a running fcd keeps its old inode, so this works while the service runs.
-        staged = bin_dir / ".fcd.new"
-        shutil.copy2(binary, staged)
-        staged.chmod(0o755)
-        os.replace(staged, bin_dir / "fcd")
+        _install_binary(binaries["fcd"], bin_dir, "fcd")
+        _install_binary(binaries["fcctl"], bin_dir, "fcctl")
         unit_dir = Path.home() / ".config/systemd/user"
         unit_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(FRONTEND / "systemd/fcd.service", unit_dir / "fcd.service")
