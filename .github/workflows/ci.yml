@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+      - name: Install PDF/media engines
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ghostscript qpdf poppler-utils imagemagick librsvg2-bin tesseract-ocr ffmpeg
+      - name: go vet
+        working-directory: backend
+        run: go vet ./...
+      - name: go test
+        working-directory: backend
+        run: go test ./...
+
+  frontends:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install GTK bindings
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gir1.2-gtk-4.0 gir1.2-adw-1 python3-gi python3-gi-cairo
+      - name: Test frontends/common
+        working-directory: frontends/common
+        run: python3 -m pytest -q
+      - name: Test frontends/nautilus
+        working-directory: frontends/nautilus
+        run: python3 -m pytest -q
+      - name: Test frontends/omarchy
+        working-directory: frontends/omarchy
+        run: python3 -m pytest -q
+      - name: Test frontends/pdf-studio
+        working-directory: frontends/pdf-studio
+        run: python3 -m pytest -q
